@@ -184,4 +184,33 @@ export function validateCharacterSheet(raw: unknown): string | null {
   return null;
 }
 
+// ── Modèle de PNJ (bibliothèque MJ) ──────────────────────────────
+
+export interface NpcTemplateInput {
+  name: string;
+  ca: number;
+  pvMax: number;
+  initBonus: number;
+  color: string;
+  conditions: string[];
+  notes: string;
+}
+
+export function validateNpcTemplate(raw: unknown): string | null {
+  if (!isObj(raw)) return "Modèle invalide";
+  const t = raw;
+  return check([
+    str(t.name, 80, "nom"),
+    t.name !== undefined && !(typeof t.name === "string" && t.name.trim().length > 0)
+      ? "nom : requis"
+      : null,
+    int(t.ca, 1, 30, "CA"),
+    int(t.pvMax, 1, 999, "PV max"),
+    int(t.initBonus, -10, 20, "bonus d'initiative"),
+    str(t.color, 20, "couleur"),
+    strArray(t.conditions, 10, 40, "états"),
+    str(t.notes, TEXT_MAX, "notes"),
+  ]);
+}
+
 // EOF validation.ts

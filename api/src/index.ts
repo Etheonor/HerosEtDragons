@@ -7,6 +7,7 @@ import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";
 import notes from "./routes/notes";
+import npcTemplates from "./routes/npc-templates";
 
 export { GameTableDO } from "./do/game-table";
 
@@ -93,6 +94,7 @@ app.route("/api/campaigns", campaigns);
 app.route("/api/characters", characters);
 app.route("/api/maps", maps);
 app.route("/api/notes", notes);
+app.route("/api/npc-templates", npcTemplates);
 
 // WebSocket route for game tables
 app.get("/api/tables/:campaignId/ws", async (c) => {

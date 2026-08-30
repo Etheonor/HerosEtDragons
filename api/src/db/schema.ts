@@ -194,6 +194,32 @@ export const journal = sqliteTable(
   (table) => [index("journal_campaign_idx").on(table.campaignId)],
 );
 
+export const npcTemplates = sqliteTable(
+  "npc_templates",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    ca: integer("ca").notNull().default(10),
+    pvMax: integer("pv_max").notNull().default(1),
+    initBonus: integer("init_bonus").notNull().default(0),
+    color: text("color").notNull().default("#C0392B"),
+    conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
+    notes: text("notes").notNull().default(""),
+    // { category, slug } vers le compendium (phase 8) — null pour un modèle maison.
+    source: text("source", { mode: "json" }).$type<{ category: string; slug: string } | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("npc_templates_campaign_idx").on(table.campaignId)],
+);
+
 export const notes = sqliteTable(
   "notes",
   {

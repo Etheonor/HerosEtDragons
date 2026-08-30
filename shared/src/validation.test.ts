@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateCharacterSheet } from "./validation";
+import { validateCharacterSheet, validateNpcTemplate } from "./validation";
 
 function baseSheet(): Record<string, unknown> {
   return {
@@ -76,5 +76,36 @@ describe("validateCharacterSheet", () => {
   it("refuse un objet non-objet / null", () => {
     expect(validateCharacterSheet(null)).toBe("Feuille invalide");
     expect(validateCharacterSheet("nope")).toBe("Feuille invalide");
+  });
+});
+
+describe("validateNpcTemplate", () => {
+  const base = {
+    name: "Gobelin",
+    ca: 15,
+    pvMax: 7,
+    initBonus: 2,
+    color: "#C0392B",
+    conditions: [] as string[],
+    notes: "Attaque +4, 1d6+1",
+  };
+
+  it("accepte un modèle conforme", () => {
+    expect(validateNpcTemplate(base)).toBeNull();
+  });
+
+  it("refuse un nom vide", () => {
+    expect(validateNpcTemplate({ ...base, name: "   " })).toMatch(/nom/);
+  });
+
+  it("refuse CA et PV hors bornes", () => {
+    expect(validateNpcTemplate({ ...base, ca: 45 })).toMatch(/CA/);
+    expect(validateNpcTemplate({ ...base, pvMax: 0 })).toMatch(/PV max/);
+  });
+
+  it("refuse une liste d'états trop longue", () => {
+    expect(validateNpcTemplate({ ...base, conditions: Array(30).fill("À terre") })).toMatch(
+      /états/,
+    );
   });
 });
