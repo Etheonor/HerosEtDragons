@@ -53,7 +53,7 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
         eq(schema.characters.active, true),
       ),
     )
-    .orderBy(asc(schema.characters.createdAt))
+    .orderBy(asc(schema.characters.name))
     .limit(1);
 
   const upgrade = c.req.raw.headers.get("Upgrade");
