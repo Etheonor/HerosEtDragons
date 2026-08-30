@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { auth, type Session } from '$lib/auth-client';
 
   let session = $state<Session | null>(null);
   let loading = $state(true);
-  let error = $state('');
+  let error = $state(page.url.searchParams.get('denied')
+    ? "Compte non autorisé. Ouvre le lien d'invitation envoyé par ton MJ, ou demande-lui de t'ajouter."
+    : '');
 
   onMount(async () => {
     try {

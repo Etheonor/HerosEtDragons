@@ -1,51 +1,45 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "herosetdragons",
-	"main": "api/src/index.ts",
-	"compatibility_date": "2025-07-10",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"workers_dev": true,
-	"assets": {
-		"directory": "./web/build",
-		"binding": "ASSETS",
-		"not_found_handling": "single-page-application",
-		"run_worker_first": [
-			"/api/*"
-		]
-	},
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "rollwith-hd",
-			"database_id": "d197d5b1-0349-4125-a0e1-2eb2e28d9860",
-			"migrations_dir": "api/migrations"
-		}
-	],
-	"r2_buckets": [
-		{
-			"binding": "MAPS",
-			"bucket_name": "rollwith-hd-maps"
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "GAME_TABLE",
-				"class_name": "GameTableDO"
-			}
-		]
-	},
-	"migrations": [
-		{
-			"tag": "v1",
-			"new_sqlite_classes": [
-				"GameTableDO"
-			]
-		}
-	],
-	"observability": {
-		"enabled": true
-	}
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "herosetdragons",
+  "main": "api/src/index.ts",
+  "compatibility_date": "2025-07-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./web/build",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rollwith-hd",
+      "database_id": "d197d5b1-0349-4125-a0e1-2eb2e28d9860",
+      "migrations_dir": "api/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MAPS",
+      "bucket_name": "rollwith-hd-maps",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_TABLE",
+        "class_name": "GameTableDO",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GameTableDO"],
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
 }

@@ -13,9 +13,16 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get("/api/health", (c) => c.json({ ok: true, name: "rollwith-hd", time: Date.now() }));
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => {
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const auth = createAuth(c.env, c.req.raw);
-  return auth.handler(c.req.raw);
+  const res = await auth.handler(c.req.raw);
+  // Le rejet de la whitelist se traduit par une erreur interne mieux-auth →
+  // on redirige vers l'accueil avec l'état « refusé » plutôt qu'un 500 brut
+  // (design : écran de connexion a un état refus explicit).
+  if (res.status >= 500) {
+    return c.redirect("/login?denied=1", 302);
+  }
+  return res;
 });
 
 // ── Acceptation d'invitation (publique — audit §3.2) ──────────
