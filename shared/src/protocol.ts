@@ -148,6 +148,21 @@ export interface NpcDuplicateMsg {
   charId: string;
 }
 
+/** Le MJ pose une créature depuis un modèle de sa bibliothèque (×count possible). */
+export interface NpcAddFromTemplateMsg {
+  type: "npc.addFromTemplate";
+  templateId: string;
+  x: number;
+  y: number;
+  count?: number;
+}
+
+/** Le MJ enregistre un PNJ posé (état courant) comme modèle réutilisable. */
+export interface NpcSaveAsTemplateMsg {
+  type: "npc.saveAsTemplate";
+  charId: string;
+}
+
 export interface CharHpMsg {
   type: "char.hp";
   charId: string;
@@ -293,6 +308,8 @@ export type ClientMessage =
   | TokenPutMsg
   | TokenRemoveMsg
   | NpcDuplicateMsg
+  | NpcAddFromTemplateMsg
+  | NpcSaveAsTemplateMsg
   | CharHpMsg
   | CharConditionMsg
   | NpcAddMsg
@@ -421,6 +438,8 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "token.put",
     "token.remove",
     "npc.duplicate",
+    "npc.addFromTemplate",
+    "npc.saveAsTemplate",
     "char.hp",
     "char.condition",
     "npc.add",

@@ -320,6 +320,12 @@ export class GameTableDO extends DurableObject<Env> {
         case "npc.duplicate":
           await this.handleNpcDuplicate(ws, attachment, msg);
           break;
+        case "npc.addFromTemplate":
+          await this.handleNpcAddFromTemplate(ws, attachment, msg);
+          break;
+        case "npc.saveAsTemplate":
+          await this.handleNpcSaveAsTemplate(ws, attachment, msg);
+          break;
         case "npc.add":
           await this.handleNpcAdd(ws, attachment, msg);
           break;
@@ -633,6 +639,7 @@ export class GameTableDO extends DurableObject<Env> {
       : 0;
     const x = Number.isFinite(msg.x) ? (msg.x as number) : null;
     const y = Number.isFinite(msg.y) ? (msg.y as number) : null;
+    const saveAsTemplate = msg.saveAsTemplate === true;
 
     await this.ensureNpcIds();
     const db = this.getDb();
@@ -657,6 +664,22 @@ export class GameTableDO extends DurableObject<Env> {
       conditions: [],
     });
     this.npcIds.add(id);
+    if (saveAsTemplate) {
+      await db.insert(schema.npcTemplates).values({
+        id: crypto.randomUUID(),
+        campaignId: this.campaignId,
+        name,
+        ca,
+        pvMax: pv,
+        initBonus: init,
+        color: "#C0392B",
+        conditions: [],
+        notes: "",
+        source: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
 
     const card: CharacterCard = {
       id,
@@ -699,6 +722,166 @@ export class GameTableDO extends DurableObject<Env> {
       }
     }
     this.broadcastRoleAware(patch);
+  }
+
+  /** Pose n instances d'un modèle de la bibliothèque MJ sur la carte active. */
+  private async handleNpcAddFromTemplate(
+    _ws: WebSocket,
+    att: WsAttachment,
+    msg: Record<string, unknown>,
+  ) {
+    if (att.role !== "mj") return;
+    const templateId = typeof msg.templateId === "string" ? msg.templateId : "";
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    const count = Number.isFinite(msg.count)
+      ? Math.max(1, Math.min(20, Math.trunc(msg.count as number)))
+      : 1;
+    if (!templateId || Number.isNaN(x) || Number.isNaN(y)) return;
+
+    const state = await this.getState();
+    if (!state.mapId) return;
+
+    const db = this.getDb();
+    const [tpl] = await db
+      .select()
+      .from(schema.npcTemplates)
+      .where(
+        and(
+          eq(schema.npcTemplates.id, templateId),
+          eq(schema.npcTemplates.campaignId, this.campaignId),
+        ),
+      )
+      .limit(1);
+    if (!tpl) return;
+
+    await this.ensureNpcIds();
+    const tokens = { ...this.tokensOf(state) };
+    const charactersPatch: Record<string, CharacterCard> = {};
+    const ids: string[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const name = count > 1 ? `${tpl.name} ${String.fromCharCode(65 + i)}` : tpl.name;
+      const id = crypto.randomUUID();
+      const sheet = blankSheet(name);
+      sheet.pvMax = tpl.pvMax;
+      sheet.ca = tpl.ca;
+      sheet.initiativeBonus = tpl.initBonus;
+
+      await db.insert(schema.characters).values({
+        id,
+        campaignId: this.campaignId,
+        ownerId: null,
+        kind: "pnj",
+        name,
+        color: tpl.color,
+        active: true,
+        sheet,
+        pv: tpl.pvMax,
+        pvMax: tpl.pvMax,
+        pvTemp: 0,
+        conditions: [...tpl.conditions],
+      });
+      this.npcIds.add(id);
+      ids.push(id);
+      tokens[id] = { charId: id, x: this.clamp(x + i * 4), y: this.clamp(y + i * 3) };
+      charactersPatch[id] = {
+        id,
+        kind: "pnj",
+        ownerId: null,
+        name,
+        color: tpl.color,
+        active: true,
+        ca: tpl.ca,
+        sub: "",
+        initiativeBonus: tpl.initBonus,
+        pv: tpl.pvMax,
+        pvMax: tpl.pvMax,
+        pvTemp: 0,
+        conditions: [...tpl.conditions],
+      };
+    }
+
+    await this.patchState(this.patchTokens(state, tokens));
+
+    const label = count > 1 ? `${tpl.name} ×${count}` : tpl.name;
+    const entry = this.makeJournalEntry(
+      "system",
+      att.name ?? null,
+      att.color,
+      `\u2726 Le MJ pose ${label}.`,
+    );
+    await this.appendJournal(entry);
+    this.broadcastAll({ type: "journal", entry });
+    this.broadcastRoleAware({ characters: charactersPatch, tokens });
+
+    for (const id of ids) {
+      if (state.mode === "combat" && state.combat && tpl.pvMax > 0) {
+        await this.addLateParticipant(id, tpl.initBonus);
+      }
+    }
+  }
+
+  /** Enregistre un PNJ posé (état courant : PV, états…) comme modèle. */
+  private async handleNpcSaveAsTemplate(
+    _ws: WebSocket,
+    att: WsAttachment,
+    msg: Record<string, unknown>,
+  ) {
+    if (att.role !== "mj") return;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    if (!charId) return;
+
+    const db = this.getDb();
+    const [char] = await db
+      .select()
+      .from(schema.characters)
+      .where(
+        and(
+          eq(schema.characters.id, charId),
+          eq(schema.characters.kind, "pnj"),
+          eq(schema.characters.campaignId, this.campaignId),
+        ),
+      )
+      .limit(1);
+    if (!char) return;
+
+    const [existing] = await db
+      .select({ id: schema.npcTemplates.id })
+      .from(schema.npcTemplates)
+      .where(
+        and(
+          eq(schema.npcTemplates.campaignId, this.campaignId),
+          eq(schema.npcTemplates.name, char.name),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      _ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "EXISTS",
+          msg: `Un modèle « ${char.name} » existe déjà.`,
+        }),
+      );
+      return;
+    }
+
+    const now = new Date();
+    await db.insert(schema.npcTemplates).values({
+      id: crypto.randomUUID(),
+      campaignId: this.campaignId,
+      name: char.name,
+      ca: char.sheet.ca,
+      pvMax: char.pvMax,
+      initBonus: char.sheet.initiativeBonus,
+      color: char.color,
+      conditions: [...char.conditions],
+      notes: "",
+      source: null,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   /** Ajoute un participant (typiquement un PNJ) à un combat déjà en cours. */

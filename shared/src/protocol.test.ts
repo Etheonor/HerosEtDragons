@@ -93,6 +93,10 @@ describe("isClientMessageValid", () => {
     expect(isClientMessageValid({ type: "token.put", charId: "a", x: 1, y: 2 })).toBe(true);
     expect(isClientMessageValid({ type: "token.remove", charId: "a" })).toBe(true);
     expect(isClientMessageValid({ type: "npc.duplicate", charId: "a" })).toBe(true);
+    expect(
+      isClientMessageValid({ type: "npc.addFromTemplate", templateId: "t", x: 1, y: 2, count: 3 }),
+    ).toBe(true);
+    expect(isClientMessageValid({ type: "npc.saveAsTemplate", charId: "a" })).toBe(true);
     expect(isClientMessageValid({ type: "chat.say", text: "hi" })).toBe(true);
     expect(isClientMessageValid({ type: "combat.next" })).toBe(true);
   });
