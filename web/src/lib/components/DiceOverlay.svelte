@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DiceAnim } from '$lib/ws';
 
-  let { anim }: { anim: DiceAnim | null } = $props();
+  let { anim, fixed = false }: { anim: DiceAnim | null; fixed?: boolean } = $props();
 
   let currentFace = $state<number | string>('?');
   let rotating = $state(false);
@@ -79,7 +79,7 @@
 </script>
 
 {#if visible && anim}
-  <div class="dice-overlay">
+  <div class="dice-overlay" class:fixed>
     <div class="dice-column">
       <div
         class="dice-shape"
@@ -102,6 +102,9 @@
 <style>
   .dice-overlay {
     position: absolute;
+  }
+  .dice-overlay.fixed {
+    position: fixed;
     inset: 0;
     display: flex;
     align-items: center;

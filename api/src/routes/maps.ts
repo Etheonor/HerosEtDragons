@@ -12,6 +12,17 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/webp": "webp",
 };
 
+/** Vérifie la signature réelle du fichier (magic bytes), pas seulement le
+ *  Content-Type déclaré par le client (audit §5.6). Retourne l'extension ou null. */
+async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null> {
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const ascii = (from: number, to: number) => String.fromCharCode(...head.slice(from, to));
+  if (head[0] === 0x89 && ascii(1, 4) === "PNG") return "png";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "jpg";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "webp";
+  return null;
+}
+
 // ── Lister les cartes d'une campagne ──────────────────────────
 
 app.get("/campaigns/:campaignId", requireAuth, async (c) => {
@@ -69,11 +80,14 @@ app.post("/campaigns/:campaignId", requireAuth, async (c) => {
     if (file.size > MAX_IMAGE_BYTES) {
       return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
     }
-    const ext = ALLOWED_TYPES[file.type];
-    if (!ext) {
+    if (!ALLOWED_TYPES[file.type]) {
       return c.json({ error: "Format non supporté (png/jpg/webp uniquement)" }, 400);
     }
-    r2Key = `${campaignId}/${id}.${ext}`;
+    const sniffed = await sniffImageType(file);
+    if (!sniffed) {
+      return c.json({ error: "Contenu d'image invalide (signature inconnue)" }, 400);
+    }
+    r2Key = `${campaignId}/${id}.${sniffed}`;
     await c.env.MAPS.put(r2Key, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type },
     });
@@ -123,11 +137,14 @@ app.patch("/:mapId", requireAuth, async (c) => {
     if (file.size > MAX_IMAGE_BYTES) {
       return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
     }
-    const ext = ALLOWED_TYPES[file.type];
-    if (!ext) {
+    if (!ALLOWED_TYPES[file.type]) {
       return c.json({ error: "Format non supporté (png/jpg/webp uniquement)" }, 400);
     }
-    const newKey = `${map.campaignId}/${mapId}.${ext}`;
+    const sniffed = await sniffImageType(file);
+    if (!sniffed) {
+      return c.json({ error: "Contenu d'image invalide (signature inconnue)" }, 400);
+    }
+    const newKey = `${map.campaignId}/${mapId}.${sniffed}`;
     await c.env.MAPS.put(newKey, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type },
     });

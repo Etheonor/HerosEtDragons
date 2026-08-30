@@ -162,6 +162,14 @@ export const api = {
       }),
     join: (token: string) =>
       fetchJson<JoinResult>(`/api/campaigns/join/${token}`, { method: "POST" }),
+    journalPage: (campaignId: string, before?: number, limit = 50) => {
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (before !== undefined) qs.set("before", String(before));
+      return fetchJson<{
+        entries: import("@rollwith/shared/protocol").JournalEntry[];
+        hasMore: boolean;
+      }>(`/api/campaigns/${campaignId}/journal?${qs.toString()}`);
+    },
   },
   characters: {
     list: (campaignId: string) =>

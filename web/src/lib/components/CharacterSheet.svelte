@@ -22,7 +22,17 @@
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import { api } from '$lib/api';
 
-  let { char }: { char: CharacterDetail } = $props();
+  let {
+    char,
+    onRoll,
+    onPvDelta,
+  }: {
+    char: CharacterDetail;
+    /** Présent quand la feuille est connectée à la table (WS) : les jets
+     *  passent par le serveur et alimentent le journal (R10.2). */
+    onRoll?: (mod: number, label: string) => void;
+    onPvDelta?: (delta: number) => void;
+  } = $props();
 
   let sheet = $state<CharacterSheet>(char.sheet);
   let pv = $state(char.pv);
@@ -47,11 +57,20 @@
 
   let pvPct = $derived(Math.max(0, Math.min(100, (pv / char.pvMax) * 100)));
 
-  async function pvMinus() {
-    if (loading || !char.canEdit) return;
+  function adjustPv(delta: number) {
+    if (!char.canEdit) return;
+    if (onPvDelta) {
+      onPvDelta(delta);
+      return;
+    }
+    pvRest(delta);
+  }
+
+  async function pvRest(delta: number) {
+    if (loading) return;
     loading = true;
     try {
-      const res = await api.characters.updatePv(char.id, -1);
+      const res = await api.characters.updatePv(char.id, delta);
       pv = res.pv;
     } catch {
       /* ignore for now */
@@ -59,17 +78,7 @@
     loading = false;
   }
 
-  async function pvPlus() {
-    if (loading || !char.canEdit) return;
-    loading = true;
-    try {
-      const res = await api.characters.updatePv(char.id, 1);
-      pv = res.pv;
-    } catch {
-      /* ignore */
-    }
-    loading = false;
-  }
+
 
   async function toggleInspiration() {
     if (loading || !char.canEdit) return;
@@ -83,11 +92,27 @@
     loading = false;
   }
 
-  function onCaracClick(_carac: CaracKey) {}
-  function onSaveClick(_carac: CaracKey) {}
-  function onSkillClick(_skill: string) {}
-  function onInitClick() {}
-  function onAttackClick(_atkId: string) {}
+  function rollWith(mod: number, label: string) {
+    if (onRoll) onRoll(mod, label);
+  }
+
+  function onCaracClick(carac: CaracKey) {
+    rollWith(getMod(sheet, carac), `Test de ${CARAC_LABELS[carac].toLowerCase()}`);
+  }
+  function onSaveClick(carac: CaracKey) {
+    rollWith(getSaveBonus(sheet, carac), `Sauvegarde de ${saveNames[carac].toLowerCase()}`);
+  }
+  function onSkillClick(skill: (typeof SKILLS)[number]) {
+    rollWith(getSkillBonus(sheet, skill), `${skill}`);
+  }
+  function onInitClick() {
+    const bonus = getInitiativeBonus(sheet) ?? 0;
+    rollWith(bonus, "Initiative");
+  }
+  function onAttackClick(atkId: string) {
+    const atk = sheet.attaques.find((a) => a.id === atkId);
+    if (atk) rollWith(atk.bonus, `Attaque — ${atk.name}`);
+  }
 </script>
 
 <div class="sheet">
@@ -229,8 +254,8 @@
             <div class="pv-bar-fill" style="width: {pvPct}%;"></div>
           </div>
           {#if char.canEdit}
-            <button class="pv-btn minus" onclick={pvMinus} disabled={loading}>−</button>
-            <button class="pv-btn plus" onclick={pvPlus} disabled={loading}>+</button>
+            <button class="pv-btn minus" onclick={() => adjustPv(-1)} disabled={loading}>−</button>
+            <button class="pv-btn plus" onclick={() => adjustPv(1)} disabled={loading}>+</button>
           {/if}
         </div>
         <div class="pv-extras">

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, lt, desc } from "drizzle-orm";
 import { requireAuth, type AuthVariables } from "../middleware";
 import { consumeInvitation } from "../invitations";
 
@@ -222,6 +222,54 @@ app.post("/:campaignId/invitations", requireAuth, async (c) => {
   });
 
   return c.json({ token, usesLeft, expiresAt }, 201);
+});
+
+// ── Journal paginé (R7.3) : avant = id de la plus ancienne entrée vue ──
+
+app.get("/:campaignId/journal", requireAuth, async (c) => {
+  const campaignId = getCampaignId(c);
+  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+
+  const db = createDb(c.env.DB);
+  const userId = c.get("user").id;
+
+  const [membership] = await db
+    .select()
+    .from(schema.members)
+    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
+    .limit(1);
+  if (!membership) return c.json({ error: "Accès refusé" }, 403);
+
+  const limitRaw = parseInt(c.req.query("limit") ?? "50", 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, limitRaw)) : 50;
+  const beforeRaw = parseInt(c.req.query("before") ?? "", 10);
+
+  const conds = [eq(schema.journal.campaignId, campaignId)];
+  if (Number.isFinite(beforeRaw)) conds.push(lt(schema.journal.id, beforeRaw));
+
+  const rows = await db
+    .select()
+    .from(schema.journal)
+    .where(and(...conds))
+    .orderBy(desc(schema.journal.id))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const entries = rows.slice(0, limit).reverse();
+
+  return c.json({
+    entries: entries.map((r) => ({
+      id: r.id,
+      ts: r.ts,
+      kind: r.kind,
+      who: r.who,
+      whoColor: r.whoColor,
+      text: r.text,
+      roll: r.roll,
+      ref: r.ref,
+    })),
+    hasMore,
+  });
 });
 
 // ── Rejoindre via invitation ──────────────────────────────────

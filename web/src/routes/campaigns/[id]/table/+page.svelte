@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { wsClient, type TableStore } from '$lib/ws';
   import { api, type MapSummary } from '$lib/api';
+  import type { JournalEntry } from '@rollwith/shared/protocol';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
@@ -29,6 +30,23 @@
   });
 
   let chatText = $state('');
+  let olderEntries = $state<JournalEntry[]>([]);
+  let hasMoreOlder = $state(true);
+  let loadingOlder = $state(false);
+
+  async function loadOlder() {
+    if (loadingOlder) return;
+    const before = olderEntries[0]?.id ?? store.journal[0]?.id;
+    loadingOlder = true;
+    try {
+      const res = await api.campaigns.journalPage(campaignId, before);
+      olderEntries = [...res.entries, ...olderEntries];
+      hasMoreOlder = res.hasMore;
+    } catch {
+      /* ignore */
+    }
+    loadingOlder = false;
+  }
   let activeTab = $state<'journal' | 'dice' | 'inv'>('journal');
   let diceMod = $state(0);
   let diceHistory: { id: number; label: string }[] = $state([]);
@@ -709,7 +727,12 @@
       {#if activeTab === 'journal'}
         <div class="journal-tab">
           <div class="journal-list">
-            {#each store.journal as entry (entry.id)}
+            {#if hasMoreOlder}
+              <button class="older-btn" disabled={loadingOlder} onclick={loadOlder}>
+                {loadingOlder ? '…' : 'Entrées antérieures'}
+              </button>
+            {/if}
+            {#each [...olderEntries, ...store.journal] as entry (entry.id)}
               <div class="journal-entry entry-{entry.kind}">
                 <span class="journal-time">{formatTime(entry.ts)}</span>
                 {#if entry.kind === 'say'}
@@ -1132,6 +1155,13 @@
     display: flex; flex-direction: column; gap: 11px; font-size: 13px; line-height: 1.5; min-height: 0;
   }
   .journal-entry { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+  .older-btn {
+    font-family: var(--font-body); font-size: 12px; font-weight: 500;
+    align-self: center; padding: 3px 12px; margin-bottom: 4px;
+    background: transparent; border: 2px dashed var(--border); border-radius: 10px;
+    color: var(--text-2); cursor: pointer;
+  }
+  .older-btn:hover { border-color: var(--text-2); color: var(--text); }
   .journal-time { font-weight: 700; font-size: 10.5px; color: var(--text-3); }
   .journal-who { font-weight: 600; }
   .journal-text { color: var(--text); }

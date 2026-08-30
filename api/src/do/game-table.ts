@@ -179,6 +179,13 @@ export class GameTableDO extends DurableObject<Env> {
     const color = url.searchParams.get("color") ?? "#C0392B";
     const campaignId = url.searchParams.get("campaignId") ?? "";
 
+    // A5 : refuser qu'on réveille ce DO pour une AUTRE campagne (le worker
+    // doit être le seul chemin, mais on ne lui fait pas une confiance aveugle).
+    const derivedId = this.env.GAME_TABLE.idFromName(campaignId).toString();
+    if (derivedId !== this.ctx.id.toString()) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     this.campaignId = campaignId;
     await this.ctx.storage.put("campaignId", campaignId);
 
@@ -330,6 +337,51 @@ export class GameTableDO extends DurableObject<Env> {
     // Best practice hibernation : un socket en erreur part sans webSocketClose ;
     // on rafraîchit la présence pour que la liste ne garde pas un fantôme.
     this.broadcastPresence();
+  }
+
+  /**
+   * RPC appelé par les routes REST après une modification de personnage hors WS
+   * (feuille, PV REST…) — audit §3.4 : la table voit la changement immédiatement.
+   * Diffuse la carte complète via le canal role-aware (masque PV PNJ si besoin).
+   */
+  async notifyCharacterUpdated(charId: string): Promise<void> {
+    if (this.ctx.getWebSockets().length === 0) return; // table fermée : rien à faire
+    await this.ensureCampaignId();
+    if (!this.campaignId) return;
+    await this.getState();
+    await this.ensureNpcIds();
+    await this.ensureSettings();
+
+    const db = this.getDb();
+    const [ch] = await db
+      .select()
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
+      .limit(1);
+    if (!ch) return;
+
+    const hidePv = this.hidePnjPvFor("player");
+    const card: CharacterCard = {
+      id: ch.id,
+      kind: ch.kind,
+      ownerId: ch.ownerId,
+      name: ch.name,
+      color: ch.color,
+      active: ch.active,
+      ca: ch.sheet.ca,
+      sub:
+        ch.kind === "pj"
+          ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
+          : "",
+      initiativeBonus: ch.sheet.initiativeBonus,
+      pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
+      pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
+      pvTemp: ch.pvTemp,
+      conditions: ch.conditions,
+    };
+    this.broadcastRoleAware({ characters: { [charId]: card } });
   }
 
   // ── Handlers : chat & dés ─────────────────────────────────────

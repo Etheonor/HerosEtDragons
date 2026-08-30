@@ -1,11 +1,24 @@
 import { Hono } from "hono";
 import { createDb, schema, type CharacterSheet } from "../db";
+import type { AppContext } from "../middleware";
+import type { GameTableDO } from "../do/game-table";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireMember, requireMj, type AuthVariables } from "../middleware";
 import { validateCharacterSheet } from "@rollwith/shared/validation";
 import { kaelithSheet } from "../db/seed";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+/** Notifie le DO de la campagne après une mutation REST d'un personnage (§3.4). */
+async function notifyTable(c: AppContext, campaignId: string, charId: string): Promise<void> {
+  try {
+    const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+    const stub = ns.get(ns.idFromName(campaignId));
+    await stub.notifyCharacterUpdated(charId);
+  } catch {
+    /* table fermée ou DO absent : rien d'urgent, le prochain snapshot verra jour */
+  }
+}
 
 // ── Lister les personnages d'une campagne ─────────────────────
 
@@ -231,6 +244,7 @@ app.patch("/:charId/pv", requireAuth, async (c) => {
     .set({ pv: newPv, updatedAt: new Date() })
     .where(eq(schema.characters.id, charId));
 
+  await notifyTable(c, char.campaignId, charId);
   return c.json({ pv: newPv, pvMax: char.pvMax });
 });
 
@@ -276,6 +290,7 @@ app.patch("/:charId/pv-temp", requireAuth, async (c) => {
     .set({ pvTemp, updatedAt: new Date() })
     .where(eq(schema.characters.id, charId));
 
+  await notifyTable(c, char.campaignId, charId);
   return c.json({ pvTemp });
 });
 
@@ -315,6 +330,7 @@ app.patch("/:charId/inspiration", requireAuth, async (c) => {
     .set({ sheet, updatedAt: new Date() })
     .where(eq(schema.characters.id, charId));
 
+  await notifyTable(c, char.campaignId, charId);
   return c.json({ inspiration: sheet.inspiration });
 });
 
@@ -380,6 +396,7 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
     .set({ sheet: body, pvMax: body.pvMax, updatedAt: new Date() })
     .where(eq(schema.characters.id, charId));
 
+  await notifyTable(c, char.campaignId, charId);
   return c.json({ ok: true });
 });
 

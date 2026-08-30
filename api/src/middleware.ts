@@ -14,7 +14,7 @@ export interface AuthVariables {
   memberRole: "mj" | "player";
 }
 
-type AppContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
+export type AppContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
 
 export async function requireAuth(c: AppContext, next: Next) {
   const auth = createAuth(c.env, c.req.raw);
