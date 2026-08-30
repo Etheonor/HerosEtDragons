@@ -6,6 +6,7 @@ import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";
+import notes from "./routes/notes";
 
 export { GameTableDO } from "./do/game-table";
 
@@ -91,6 +92,7 @@ app.get("/api/invitations/:token", async (c) => {
 app.route("/api/campaigns", campaigns);
 app.route("/api/characters", characters);
 app.route("/api/maps", maps);
+app.route("/api/notes", notes);
 
 // WebSocket route for game tables
 app.get("/api/tables/:campaignId/ws", async (c) => {

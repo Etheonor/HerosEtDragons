@@ -467,6 +467,117 @@
   });
 
   const diceTypes = [4, 6, 8, 10, 12, 20];
+
+  // ── Menu contextuel sur les pions (MJ) ───────────────────────
+  let ctxMenu = $state<{ x: number; y: number; charId: string; kind: 'pj' | 'pnj' } | null>(null);
+  let ctxEl: HTMLDivElement | null = null;
+
+  function onTokenContextMenu(e: MouseEvent, charId: string, kind: 'pj' | 'pnj') {
+    if (!isMj) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, charId, kind };
+  }
+
+  function ctxDuplicate() {
+    if (ctxMenu) wsClient.send({ type: 'npc.duplicate', charId: ctxMenu.charId });
+    ctxMenu = null;
+  }
+  function ctxRemoveToken() {
+    if (ctxMenu) wsClient.send({ type: 'token.remove', charId: ctxMenu.charId });
+    ctxMenu = null;
+  }
+  function ctxDeleteNpc() {
+    if (ctxMenu) wsClient.send({ type: 'npc.remove', charId: ctxMenu.charId });
+    ctxMenu = null;
+  }
+
+  $effect(() => {
+    if (!ctxMenu) return;
+    const close = (e: Event) => {
+      if (ctxEl && e.target instanceof Node && ctxEl.contains(e.target)) return;
+      ctxMenu = null;
+    };
+    // en capture : la fermeture précède le pointerdown du drag sur un autre pion
+    window.addEventListener('pointerdown', close, true);
+    window.addEventListener('contextmenu', close, true);
+    return () => {
+      window.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('contextmenu', close, true);
+    };
+  });
+
+  // ── Raccourcis clavier ───────────────────────────────────────
+  function focusChat() {
+    activeTab = 'journal';
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>('.chat-input')?.focus();
+    });
+  }
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (
+      t &&
+      (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+    ) {
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'escape') {
+      ctxMenu = null;
+      if (isMj) tool = 'move';
+      return;
+    }
+    if (k === '/') {
+      e.preventDefault();
+      focusChat();
+      return;
+    }
+    if (!isMj) return;
+    switch (k) {
+      case 'v':
+        tool = 'move';
+        break;
+      case 'p':
+        toolSelect('pnj');
+        break;
+      case 'r':
+        toolSelect('marker');
+        break;
+      case 'b':
+        fogToggle();
+        break;
+      case '1':
+        quickRoll(4);
+        break;
+      case '2':
+        quickRoll(6);
+        break;
+      case '3':
+        quickRoll(8);
+        break;
+      case '4':
+        quickRoll(10);
+        break;
+      case '5':
+        quickRoll(12);
+        break;
+      case '6':
+        quickRoll(20);
+        break;
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener('keydown', onWindowKeydown);
+    return () => window.removeEventListener('keydown', onWindowKeydown);
+  });
+
+  function tokenTitle(c: { name: string; ca: number; pv: number | null; pvMax: number | null }): string {
+    return isMj ? `${c.name} — CA ${c.ca} · PV ${c.pv ?? '–'}/${c.pvMax ?? '–'}` : c.name;
+  }
 </script>
 
 <div class="table-screen">
@@ -649,21 +760,21 @@
           <span class="mj-label">Outils du MJ</span>
           <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
           <div class="tsep"></div>
-          <button class="tool-btn {tool === 'move' ? 'active' : ''}" onclick={() => toolSelect('move')}>Déplacer</button>
-          <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" onclick={() => toolSelect('pnj')}>+ PNJ</button>
+          <button class="tool-btn {tool === 'move' ? 'active' : ''}" title="Raccourci : V" onclick={() => toolSelect('move')}>Déplacer</button>
+          <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" title="Raccourci : P" onclick={() => toolSelect('pnj')}>+ PNJ</button>
           {#if tool === 'pnj'}
             <input class="npc-input" bind:value={npcName} placeholder="nom" />
             <input class="npc-input narrow" type="number" bind:value={npcPv} title="PV" />
             <input class="npc-input narrow" type="number" bind:value={npcCa} title="CA" />
             <input class="npc-input narrow" type="number" bind:value={npcInit} title="Init" />
           {/if}
-          <button class="tool-btn {tool === 'marker' ? 'active' : ''}" onclick={() => toolSelect('marker')}>Repère</button>
+          <button class="tool-btn {tool === 'marker' ? 'active' : ''}" title="Raccourci : R" onclick={() => toolSelect('marker')}>Repère</button>
           {#if tool === 'marker'}
             <input class="marker-input" bind:value={markerText} placeholder="texte du repère…" />
           {/if}
           <button class="ghost-btn danger" onclick={clearMarkers}>Effacer les repères</button>
           <div class="tsep"></div>
-          <button class="tool-btn {tool === 'fog' ? 'active' : ''}" onclick={fogToggle}>Brouillard</button>
+          <button class="tool-btn {tool === 'fog' ? 'active' : ''}" title="Raccourci : B" onclick={fogToggle}>Brouillard</button>
           {#if fogOn}
             <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
             <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
@@ -726,8 +837,9 @@
                 <div
                   class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''}"
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize}px; height: {store.settings.tokenSize}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
-                  title={c.name}
+                  title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
+                  oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
                 >
                   {c.name.slice(0, 1).toUpperCase()}
                   <span class="token-label">{c.name}</span>
@@ -844,6 +956,25 @@
 
   <!-- Dé animé overlay -->
   <DiceOverlay anim={store.diceAnim} />
+
+  {#if ctxMenu}
+    <div
+      class="ctx-menu"
+      bind:this={ctxEl}
+      role="menu"
+      style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;"
+      onclick={(e) => e.stopPropagation()}
+      onpointerdown={(e) => e.stopPropagation()}
+    >
+      {#if ctxMenu.kind === 'pnj'}
+        <button class="ctx-item" onclick={ctxDuplicate}>Dupliquer le PNJ</button>
+      {/if}
+      <button class="ctx-item" onclick={ctxRemoveToken}>Retirer de la carte</button>
+      {#if ctxMenu.kind === 'pnj'}
+        <button class="ctx-item danger" onclick={ctxDeleteNpc}>Supprimer le PNJ</button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -998,6 +1129,27 @@
     color: var(--text-2); cursor: pointer; align-self: flex-start;
   }
   .place-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+
+  .ctx-menu {
+    position: fixed;
+    z-index: 80;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 14px 4px 16px 5px;
+    box-shadow: 0 10px 30px var(--shadow-2);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 170px;
+  }
+  .ctx-item {
+    font-family: var(--font-body); font-size: 13px; text-align: left;
+    padding: 6px 10px; background: transparent; border: none; border-radius: 8px;
+    color: var(--text); cursor: pointer;
+  }
+  .ctx-item:hover { background: var(--selected); color: var(--heading); }
+  .ctx-item.danger:hover { background: var(--accent); color: var(--accent-fg); }
 
   /* ── Carte ── */
   .map-area {

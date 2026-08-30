@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { api, type MapSummary } from '$lib/api';
 
   let {
@@ -25,6 +26,48 @@
   let replaceFileInput = $state<HTMLInputElement | null>(null);
   let replaceTargetId = $state<string | null>(null);
   let importFileInput = $state<HTMLInputElement | null>(null);
+
+  let notes = $state<Record<string, string>>({});
+  let noteFor = $state<string | null>(null);
+  let noteDraft = $state('');
+  let noteSaving = $state(false);
+
+  async function loadNotes() {
+    try {
+      const res = await api.notes.list(campaignId);
+      const map: Record<string, string> = {};
+      for (const n of res.notes) {
+        if (n.targetType === 'map') map[n.targetId] = n.content;
+      }
+      notes = map;
+    } catch {
+      /* le MJ verra des notes vides si la route échoue */
+    }
+  }
+
+  onMount(loadNotes);
+
+  function toggleNote(id: string) {
+    if (noteFor === id) {
+      noteFor = null;
+      return;
+    }
+    noteFor = id;
+    noteDraft = notes[id] ?? '';
+  }
+
+  async function saveNote(id: string) {
+    if (noteSaving) return;
+    noteSaving = true;
+    try {
+      await api.notes.set(campaignId, 'map', id, noteDraft.trim());
+      notes = { ...notes, [id]: noteDraft.trim() };
+      noteFor = null;
+    } catch {
+      /* garder l'éditeur ouvert */
+    }
+    noteSaving = false;
+  }
 
   $effect(() => {
     if (!open) return;
@@ -182,6 +225,7 @@
       {:else}
         <div class="rows">
           {#each maps as m (m.id)}
+            <div class="row-wrap">
             <div class="row" class:active={m.id === activeMapId}>
               <button class="row-main" onclick={() => pick(m.id)} title="Afficher cette carte">
                 {#if m.hasImage}
@@ -210,6 +254,7 @@
               {#if renamingId !== m.id}
                 <span class="row-actions">
                   <button class="mini" title="Renommer" onclick={() => startRename(m)}>✎</button>
+                  <button class="mini" class:has-note={!!notes[m.id]} title="Note du MJ" onclick={() => toggleNote(m.id)}>✒</button>
                   <button class="mini" title="Remplacer l'image" onclick={() => triggerReplace(m.id)}>↺</button>
                   <button class="mini del" class:armed={pendingDeleteId === m.id} title="Supprimer" onclick={() => armDelete(m.id)}>✕</button>
                 </span>
@@ -221,6 +266,21 @@
                   <button class="confirm-no" onclick={() => (pendingDeleteId = null)}>Annuler</button>
                 </span>
               {/if}
+            </div>
+            {#if noteFor === m.id}
+              <div class="note-editor">
+                <textarea
+                  class="note-input"
+                  rows="4"
+                  placeholder="Note du MJ sur cette carte (pièges, PNJ attendus, mystères à préserver…) — invisible pour les joueurs"
+                  bind:value={noteDraft}
+                ></textarea>
+                <div class="note-actions">
+                  <button class="foot-btn small" disabled={noteSaving} onclick={() => saveNote(m.id)}>{noteSaving ? '…' : 'Enregistrer'}</button>
+                  <button class="foot-btn small" onclick={() => (noteFor = null)}>Annuler</button>
+                </div>
+              </div>
+            {/if}
             </div>
           {/each}
         </div>
@@ -392,6 +452,47 @@
     outline: none;
   }
 
+  .row-wrap {
+    display: flex;
+    flex-direction: column;
+  }
+  .mini.has-note {
+    color: var(--accent-text);
+    opacity: 1;
+  }
+  .note-editor {
+    padding: 2px 7px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .note-input {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    line-height: 1.45;
+    padding: 7px 9px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+    resize: vertical;
+    outline: none;
+  }
+  .note-input:focus {
+    border-color: var(--accent);
+    border-style: solid;
+  }
+  .note-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .foot-btn.small {
+    flex: none;
+    padding: 3px 12px;
+    font-size: 12px;
+    font-weight: 700;
+  }
   .row-actions {
     display: flex;
     gap: 2px;

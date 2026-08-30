@@ -213,4 +213,20 @@ export const api = {
     remove: (mapId: string) => fetchJson<{ ok: true }>(`/api/maps/${mapId}`, { method: "DELETE" }),
     imageUrl: (mapId: string) => `/api/maps/${mapId}/image`,
   },
+  notes: {
+    list: (campaignId: string) =>
+      fetchJson<{
+        notes: {
+          targetType: "map" | "campaign";
+          targetId: string;
+          content: string;
+          updatedAt: number;
+        }[];
+      }>(`/api/notes/campaigns/${campaignId}`),
+    set: (campaignId: string, targetType: "map" | "campaign", targetId: string, content: string) =>
+      fetchJson<{ ok: true }>(
+        `/api/notes/campaigns/${campaignId}/${targetType}/${encodeURIComponent(targetId)}`,
+        { method: "PUT", body: JSON.stringify({ content }) },
+      ),
+  },
 };

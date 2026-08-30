@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, index, primaryKey } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  index,
+  uniqueIndex,
+  primaryKey,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ── Better Auth tables (singular names as expected by the library) ───────────
@@ -185,6 +192,31 @@ export const journal = sqliteTable(
     ref: text("ref", { mode: "json" }),
   },
   (table) => [index("journal_campaign_idx").on(table.campaignId)],
+);
+
+export const notes = sqliteTable(
+  "notes",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    // target_type/target_id : où s'accroche la note. « map » + id de carte
+    // aujourd'hui ; « campaign » + "" pour la note de séance. Extensible
+    // (token, character…) sans nouvelle migration.
+    targetType: text("target_type", { enum: ["map", "campaign"] })
+      .notNull()
+      .default("map"),
+    targetId: text("target_id").notNull().default(""),
+    content: text("content").notNull().default(""),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    index("notes_campaign_idx").on(table.campaignId),
+    uniqueIndex("notes_target_idx").on(table.campaignId, table.targetType, table.targetId),
+  ],
 );
 
 // ── Types ────────────────────────────────────────────────────────────────────

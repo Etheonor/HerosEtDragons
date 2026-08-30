@@ -7,7 +7,7 @@
 ## 1. Modèle de données
 
 Nouvelle table D1 `npc_templates` (les PNJ de séance actuels, `characters.kind='pnj'`,
-restent ce qu'ils sont : des *instances*).
+restent ce qu'ils sont : des _instances_).
 
 ```
 npc_templates
@@ -40,6 +40,7 @@ Nouveau message client → serveur :
 ```
 
 Le DO (MJ only) :
+
 1. charge le template (vérifie `campaignId`),
 2. instancie un `characters` (kind pnj) avec les stats **copiées** (pas de lien
    vivant : modifier le modèle ne change pas les PNJ déjà posés),

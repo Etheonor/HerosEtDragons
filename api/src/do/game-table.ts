@@ -314,6 +314,12 @@ export class GameTableDO extends DurableObject<Env> {
         case "token.put":
           await this.handleTokenPut(ws, attachment, msg);
           break;
+        case "token.remove":
+          await this.handleTokenRemove(ws, attachment, msg);
+          break;
+        case "npc.duplicate":
+          await this.handleNpcDuplicate(ws, attachment, msg);
+          break;
         case "npc.add":
           await this.handleNpcAdd(ws, attachment, msg);
           break;
@@ -868,6 +874,117 @@ export class GameTableDO extends DurableObject<Env> {
     };
     await this.patchState(this.patchTokens(state, tokens));
     this.broadcastRoleAware({ tokens: { [charId]: tokens[charId]! } });
+  }
+
+  /** Retire le pion de la carte active sans supprimer le personnage. */
+  private async handleTokenRemove(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+    if (att.role !== "mj") return;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    if (!charId) return;
+
+    const state = await this.getState();
+    const current = this.tokensOf(state);
+    if (!current[charId]) return;
+
+    const { [charId]: _drop, ...rest } = current;
+    await this.patchState(this.patchTokens(state, rest));
+    this.broadcastRoleAware({ tokens: { [charId]: null } });
+  }
+
+  /** Nom de la copie suivante : Gobelin → Gobelin B → Gobelin C… */
+  private nextCopyName(name: string): string {
+    const m = /^(.*\s)([A-Z])$/.exec(name);
+    if (m && m[2]! < "Z") {
+      return m[1]! + String.fromCharCode(m[2]!.charCodeAt(0) + 1);
+    }
+    return name + " B";
+  }
+
+  private async handleNpcDuplicate(
+    _ws: WebSocket,
+    att: WsAttachment,
+    msg: Record<string, unknown>,
+  ) {
+    if (att.role !== "mj") return;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    if (!charId) return;
+
+    const state = await this.getState();
+    const source = this.tokensOf(state)[charId];
+
+    const db = this.getDb();
+    const [src] = await db
+      .select()
+      .from(schema.characters)
+      .where(
+        and(
+          eq(schema.characters.id, charId),
+          eq(schema.characters.kind, "pnj"),
+          eq(schema.characters.campaignId, this.campaignId),
+        ),
+      )
+      .limit(1);
+    if (!src) return;
+
+    const newName = this.nextCopyName(src.name);
+    const id = crypto.randomUUID();
+    const sheet = { ...src.sheet, identite: { ...src.sheet.identite, nom: newName } };
+
+    await db.insert(schema.characters).values({
+      id,
+      campaignId: this.campaignId,
+      ownerId: null,
+      kind: "pnj",
+      name: newName,
+      color: src.color,
+      active: true,
+      sheet,
+      pv: src.pv,
+      pvMax: src.pvMax,
+      pvTemp: src.pvTemp,
+      conditions: [...src.conditions],
+    });
+    this.npcIds.add(id);
+
+    const card: CharacterCard = {
+      id,
+      kind: "pnj",
+      ownerId: null,
+      name: newName,
+      color: src.color,
+      active: true,
+      ca: src.sheet.ca,
+      sub: "",
+      initiativeBonus: src.sheet.initiativeBonus,
+      pv: src.pv,
+      pvMax: src.pvMax,
+      pvTemp: src.pvTemp,
+      conditions: [...src.conditions],
+    };
+
+    const patch: Record<string, unknown> = { characters: { [id]: card } };
+    if (source && state.mapId) {
+      const tokens = {
+        ...this.tokensOf(state),
+        [id]: { charId: id, x: this.clamp(source.x + 5), y: this.clamp(source.y + 5) },
+      };
+      await this.patchState(this.patchTokens(state, tokens));
+      patch.tokens = { [id]: tokens[id] };
+
+      if (state.mode === "combat" && state.combat && src.pv > 0) {
+        await this.addLateParticipant(id, src.sheet.initiativeBonus);
+      }
+    }
+
+    const entry = this.makeJournalEntry(
+      "system",
+      att.name ?? null,
+      att.color,
+      `✦ Le MJ duplique ${src.name}.`,
+    );
+    await this.appendJournal(entry);
+    this.broadcastAll({ type: "journal", entry });
+    this.broadcastRoleAware(patch);
   }
 
   private async handleMapSelect(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {

@@ -135,6 +135,19 @@ export interface TokenPutMsg {
   y: number;
 }
 
+/** Le MJ retire le pion d'un personnage de la carte active (le personnage
+ *  reste dans la compagnie, il pourra être replacé plus tard). */
+export interface TokenRemoveMsg {
+  type: "token.remove";
+  charId: string;
+}
+
+/** Le MJ duplique un PNJ (nouvelle instance, stats copiées, pion décalé). */
+export interface NpcDuplicateMsg {
+  type: "npc.duplicate";
+  charId: string;
+}
+
 export interface CharHpMsg {
   type: "char.hp";
   charId: string;
@@ -278,6 +291,8 @@ export interface InvDropMsg {
 export type ClientMessage =
   | TokenMoveMsg
   | TokenPutMsg
+  | TokenRemoveMsg
+  | NpcDuplicateMsg
   | CharHpMsg
   | CharConditionMsg
   | NpcAddMsg
@@ -404,6 +419,8 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
   const validTypes: ClientMessage["type"][] = [
     "token.move",
     "token.put",
+    "token.remove",
+    "npc.duplicate",
     "char.hp",
     "char.condition",
     "npc.add",
