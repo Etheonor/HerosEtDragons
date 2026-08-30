@@ -17,7 +17,7 @@ import {
   formatExpression,
 } from "@rollwith/shared/dice";
 import { sortInitiative, type InitiativeEntry } from "@rollwith/shared/initiative";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 
 interface WsAttachment {
   userId: string;
@@ -36,6 +36,7 @@ interface LiveState {
   combat: CombatState | null;
 }
 
+const MAX_CHAT_LENGTH = 2000;
 const FOG_REVEAL_RADIUS_PCT = 9;
 const FOG_REVEAL_MIN_SPACING_PCT = 3;
 const FOG_MAX_REVEALS = 600;
@@ -164,7 +165,25 @@ export class GameTableDO extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  override async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
+  // Les handlers DO font des cycles lecture/modification/écriture (cache liveState
+  // + D1 + broadcast). Sans sérialisation, deux actions concurrentes peuvent
+  // écraser l'état de l'autre (audit A1 : lost updates).
+  private mutationChain: Promise<void> = Promise.resolve();
+
+  override webSocketMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    this.mutationChain = this.mutationChain
+      .then(() => this.handleWsMessage(ws, message))
+      .catch(() => {
+        try {
+          ws.send(JSON.stringify({ type: "error", code: "INTERNAL", msg: "Erreur interne" }));
+        } catch {
+          /* socket fermée */
+        }
+      });
+    return this.mutationChain;
+  }
+
+  private async handleWsMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let msg: Record<string, unknown>;
     try {
@@ -177,6 +196,8 @@ export class GameTableDO extends DurableObject<Env> {
     const attachment = ws.deserializeAttachment() as WsAttachment | null;
     if (!attachment) return;
     await this.ensureCampaignId();
+    await this.getState();
+    await this.ensureNpcIds();
 
     const type = msg.type as string;
     try {
@@ -270,11 +291,17 @@ export class GameTableDO extends DurableObject<Env> {
     ws.close(code, reason);
   }
 
+  override async webSocketError(_ws: WebSocket): Promise<void> {
+    // Best practice hibernation : un socket en erreur part sans webSocketClose ;
+    // on rafraîchit la présence pour que la liste ne garde pas un fantôme.
+    this.broadcastPresence();
+  }
+
   // ── Handlers : chat & dés ─────────────────────────────────────
 
   private async handleChatSay(ws: WebSocket, att: WsAttachment, text: string) {
     if (!text?.trim()) return;
-    const trimmed = text.trim();
+    const trimmed = text.trim().slice(0, MAX_CHAT_LENGTH);
 
     const diceParsed = parseDiceCommand(trimmed);
     if (diceParsed) {
@@ -288,20 +315,33 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   private async handleDiceRoll(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const sides = (msg.sides as number) ?? 20;
-    const n = (msg.n as number) ?? 1;
-    const mod = (msg.mod as number) ?? 0;
-    const label = (msg.label as string) || undefined;
-    const expr = label ?? formatExpression({ n, sides, mod });
-    await this.executeDiceRoll(ws, att, n, sides, mod, expr);
+    const sides = Number.isFinite(msg.sides) ? Math.trunc(msg.sides as number) : 20;
+    const n = Number.isFinite(msg.n) ? Math.trunc(msg.n as number) : 1;
+    const mod = Number.isFinite(msg.mod) ? Math.trunc(msg.mod as number) : 0;
+    // Bornes R6.3 : pas de DoS CPU (n = 10⁹) ni de dés absurdes.
+    if (n < 1 || n > 20 || sides < 2 || sides > 100) {
+      ws.send(
+        JSON.stringify({ type: "error", code: "INVALID", msg: "Paramètres de jet hors bornes" }),
+      );
+      return;
+    }
+    const modC = Math.max(-100, Math.min(100, mod));
+    const label = (typeof msg.label === "string" ? msg.label.slice(0, 120) : "") || undefined;
+    const expr = label ?? formatExpression({ n, sides, mod: modC });
+    await this.executeDiceRoll(ws, att, n, sides, modC, expr);
   }
 
   private makeRng() {
     return {
-      nextInt(max: number): number {
-        const arr = new Uint8Array(4);
-        crypto.getRandomValues(arr);
-        return new DataView(arr.buffer).getUint32(0) % max;
+      nextInt(maxExclusive: number): number {
+        // Rejection sampling (design §5) : supprime le biais modulo.
+        const range = 0x100000000;
+        const limit = range - (range % maxExclusive);
+        const arr = new Uint32Array(1);
+        for (;;) {
+          crypto.getRandomValues(arr);
+          if (arr[0]! < limit) return arr[0]! % maxExclusive;
+        }
       },
     };
   }
@@ -347,15 +387,18 @@ export class GameTableDO extends DurableObject<Env> {
   // ── Handlers : personnages ─────────────────────────────────────
 
   private async handleCharHp(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const charId = msg.charId as string;
-    const delta = msg.delta as number;
-    if (!charId || typeof delta !== "number") return;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    const deltaRaw = Number.isFinite(msg.delta) ? Math.trunc(msg.delta as number) : 0;
+    const delta = Math.max(-100, Math.min(100, deltaRaw));
+    if (!charId || delta === 0) return;
 
     const db = this.getDb();
     const [char] = await db
       .select()
       .from(schema.characters)
-      .where(eq(schema.characters.id, charId))
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
       .limit(1);
 
     if (!char) return;
@@ -369,7 +412,9 @@ export class GameTableDO extends DurableObject<Env> {
     await db
       .update(schema.characters)
       .set({ pv: newPv, updatedAt: new Date() })
-      .where(eq(schema.characters.id, charId));
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
 
     if (newPv === 0 && char.pv > 0) {
       const entry = this.makeJournalEntry("system", null, null, `✦ ${char.name} tombe à 0 PV !`);
@@ -389,16 +434,18 @@ export class GameTableDO extends DurableObject<Env> {
     msg: Record<string, unknown>,
   ) {
     if (att.role !== "mj") return;
-    const charId = msg.charId as string;
-    const cond = msg.cond as string;
-    const on = msg.on as boolean;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    const cond = typeof msg.cond === "string" ? msg.cond.slice(0, 40) : "";
+    const on = msg.on === true;
     if (!charId || !cond) return;
 
     const db = this.getDb();
     const [char] = await db
       .select()
       .from(schema.characters)
-      .where(eq(schema.characters.id, charId))
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
       .limit(1);
     if (!char) return;
 
@@ -409,7 +456,9 @@ export class GameTableDO extends DurableObject<Env> {
     await db
       .update(schema.characters)
       .set({ conditions, updatedAt: new Date() })
-      .where(eq(schema.characters.id, charId));
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
 
     const entry = this.makeJournalEntry(
       "system",
@@ -424,12 +473,21 @@ export class GameTableDO extends DurableObject<Env> {
 
   private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
     if (att.role !== "mj") return;
-    const name = ((msg.name as string) || "PNJ").trim() || "PNJ";
-    const pv = (msg.pv as number) ?? 1;
-    const ca = (msg.ca as number) ?? 10;
-    const init = (msg.init as number) ?? 0;
-    const x = typeof msg.x === "number" ? (msg.x as number) : null;
-    const y = typeof msg.y === "number" ? (msg.y as number) : null;
+    const name = (((typeof msg.name === "string" ? msg.name : "") || "PNJ").trim() || "PNJ").slice(
+      0,
+      80,
+    );
+    const pv = Number.isFinite(msg.pv)
+      ? Math.max(1, Math.min(999, Math.trunc(msg.pv as number)))
+      : 1;
+    const ca = Number.isFinite(msg.ca)
+      ? Math.max(1, Math.min(30, Math.trunc(msg.ca as number)))
+      : 10;
+    const init = Number.isFinite(msg.init)
+      ? Math.max(-10, Math.min(20, Math.trunc(msg.init as number)))
+      : 0;
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : null;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : null;
 
     await this.ensureNpcIds();
     const db = this.getDb();
@@ -562,11 +620,21 @@ export class GameTableDO extends DurableObject<Env> {
     const [char] = await db
       .select()
       .from(schema.characters)
-      .where(and(eq(schema.characters.id, charId), eq(schema.characters.kind, "pnj")))
+      .where(
+        and(
+          eq(schema.characters.id, charId),
+          eq(schema.characters.kind, "pnj"),
+          eq(schema.characters.campaignId, this.campaignId),
+        ),
+      )
       .limit(1);
     if (!char) return;
 
-    await db.delete(schema.characters).where(eq(schema.characters.id, charId));
+    await db
+      .delete(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
     this.npcIds.delete(charId);
 
     const state = await this.getState();
@@ -603,14 +671,15 @@ export class GameTableDO extends DurableObject<Env> {
   // ── Handlers : carte, pions ─────────────────────────────────────
 
   private clamp(v: number): number {
+    if (!Number.isFinite(v)) return 50;
     return Math.max(2, Math.min(98, v));
   }
 
   private async handleTokenMove(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const tokenId = msg.tokenId as string;
-    const x = msg.x as number;
-    const y = msg.y as number;
-    if (!tokenId || typeof x !== "number" || typeof y !== "number") return;
+    const tokenId = typeof msg.tokenId === "string" ? msg.tokenId : "";
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    if (!tokenId || Number.isNaN(x) || Number.isNaN(y)) return;
 
     if (att.role !== "mj" && tokenId !== att.charId) return;
 
@@ -647,10 +716,12 @@ export class GameTableDO extends DurableObject<Env> {
 
   private async handleMarkerSet(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
     if (att.role !== "mj") return;
-    const x = msg.x as number;
-    const y = msg.y as number;
-    const text = ((msg.text as string) || "repère").trim() || "repère";
-    if (typeof x !== "number" || typeof y !== "number") return;
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    const text = (
+      ((typeof msg.text === "string" ? msg.text : "") || "repère").trim() || "repère"
+    ).slice(0, 200);
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
 
     const state = await this.getState();
     const id = (msg.id as string) || crypto.randomUUID();
@@ -662,10 +733,10 @@ export class GameTableDO extends DurableObject<Env> {
 
   private async handleMarkerMove(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
     if (att.role !== "mj") return;
-    const id = msg.id as string;
-    const x = msg.x as number;
-    const y = msg.y as number;
-    if (!id || typeof x !== "number" || typeof y !== "number") return;
+    const id = typeof msg.id === "string" ? msg.id : "";
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    if (!id || Number.isNaN(x) || Number.isNaN(y)) return;
 
     const state = await this.getState();
     const markers = state.markers.map((m) =>
@@ -774,9 +845,9 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   private handlePing(att: WsAttachment, msg: Record<string, unknown>) {
-    const x = msg.x as number;
-    const y = msg.y as number;
-    if (typeof x !== "number" || typeof y !== "number") return;
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    if (Number.isNaN(x) || Number.isNaN(y)) return;
     this.broadcastAll({ type: "ping", x: this.clamp(x), y: this.clamp(y) });
   }
 
@@ -832,7 +903,7 @@ export class GameTableDO extends DurableObject<Env> {
         "system",
         att.name ?? null,
         att.color,
-        "⚔ Combat commencé ! Chaque héros lance sa propre initiative.",
+        "✦ Combat lancé. Chaque héros lance sa propre initiative.",
       );
       await this.appendJournal(entry);
       this.broadcastAll({ type: "journal", entry });
@@ -850,7 +921,7 @@ export class GameTableDO extends DurableObject<Env> {
         "system",
         att.name ?? null,
         att.color,
-        "🥾 Fin du combat.",
+        "✦ Fin du combat.",
       );
       await this.appendJournal(entry);
       this.broadcastAll({ type: "journal", entry });
@@ -878,7 +949,9 @@ export class GameTableDO extends DurableObject<Env> {
     const [char] = await db
       .select()
       .from(schema.characters)
-      .where(eq(schema.characters.id, charId))
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
       .limit(1);
     if (!char) return;
 
@@ -958,7 +1031,12 @@ export class GameTableDO extends DurableObject<Env> {
     const rows = await db
       .select()
       .from(schema.characters)
-      .where(inArray(schema.characters.id, participantIds));
+      .where(
+        and(
+          inArray(schema.characters.id, participantIds),
+          eq(schema.characters.campaignId, this.campaignId),
+        ),
+      );
     return rows.map((c) => ({
       id: c.id,
       name: c.name,
@@ -990,7 +1068,9 @@ export class GameTableDO extends DurableObject<Env> {
     const [activeChar] = await db
       .select({ name: schema.characters.name })
       .from(schema.characters)
-      .where(eq(schema.characters.id, activeId))
+      .where(
+        and(eq(schema.characters.id, activeId), eq(schema.characters.campaignId, this.campaignId)),
+      )
       .limit(1);
     const entry = this.makeJournalEntry(
       "system",
@@ -1032,13 +1112,14 @@ export class GameTableDO extends DurableObject<Env> {
     });
   }
 
-  /** Removes PNJ tokens hidden under un-revealed fog from the tokens patch, for players. */
-  private async filterTokensForPlayers(
+  /** Removes PNJ tokens hidden under un-revealed fog from the tokens patch, for players.
+   *  Synchrone (npcIds + liveState préchargés en entrée de message) — les deltas
+   *  partent donc dans l'ordre, sans floating promise (audit A2). */
+  private filterTokensForPlayers(
     tokens: Record<string, { charId: string; x: number; y: number } | null>,
-  ): Promise<Record<string, { charId: string; x: number; y: number } | null>> {
-    await this.ensureNpcIds();
-    const state = await this.getState();
-    const fog = state.mapId ? state.fog[state.mapId] : undefined;
+  ): Record<string, { charId: string; x: number; y: number } | null> {
+    const state = this.liveState;
+    const fog = state?.mapId ? state.fog[state.mapId] : undefined;
     if (!fog || !fog.on) return tokens;
 
     const filtered: Record<string, { charId: string; x: number; y: number } | null> = {};
@@ -1057,23 +1138,16 @@ export class GameTableDO extends DurableObject<Env> {
   /** Broadcasts a delta patch, filtering hidden PNJ tokens per-recipient role. */
   private broadcastRoleAware(patch: Record<string, unknown>): void {
     const sockets = this.ctx.getWebSockets();
+    const playerTokens =
+      patch.tokens !== undefined
+        ? this.filterTokensForPlayers(
+            patch.tokens as Record<string, { charId: string; x: number; y: number } | null>,
+          )
+        : undefined;
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
       const isMj = att?.role === "mj";
-      let outPatch = patch;
-      if (!isMj && patch.tokens) {
-        outPatch = { ...patch };
-        void this.filterTokensForPlayers(
-          patch.tokens as Record<string, { charId: string; x: number; y: number } | null>,
-        ).then((filtered) => {
-          try {
-            ws.send(JSON.stringify({ type: "delta", patch: { ...patch, tokens: filtered } }));
-          } catch {
-            /* socket might be closed */
-          }
-        });
-        continue;
-      }
+      const outPatch = !isMj && playerTokens ? { ...patch, tokens: playerTokens } : patch;
       try {
         ws.send(JSON.stringify({ type: "delta", patch: outPatch }));
       } catch {
@@ -1147,7 +1221,7 @@ export class GameTableDO extends DurableObject<Env> {
     const tokens =
       role === "mj"
         ? state.tokens
-        : ((await this.filterTokensForPlayers(state.tokens)) as LiveState["tokens"]);
+        : (this.filterTokensForPlayers(state.tokens) as LiveState["tokens"]);
 
     const journalTail = await this.getJournalTail();
     const presence = this.getPresence();
@@ -1172,10 +1246,11 @@ export class GameTableDO extends DurableObject<Env> {
       .select()
       .from(schema.journal)
       .where(eq(schema.journal.campaignId, this.campaignId))
-      .orderBy(schema.journal.id)
+      .orderBy(desc(schema.journal.id))
       .limit(limit);
 
-    return rows.map((r) => ({
+    // Les 50 DERNIÈRES entrées, rendues en ordre chronologique.
+    return rows.reverse().map((r) => ({
       id: r.id,
       ts: r.ts,
       kind: r.kind as JournalEntry["kind"],
@@ -1189,16 +1264,23 @@ export class GameTableDO extends DurableObject<Env> {
 
   private async appendJournal(entry: JournalEntry): Promise<void> {
     const db = this.getDb();
-    await db.insert(schema.journal).values({
-      campaignId: this.campaignId,
-      ts: entry.ts,
-      kind: entry.kind,
-      who: entry.who,
-      whoColor: entry.whoColor,
-      text: entry.text,
-      roll: entry.roll as never,
-      ref: entry.ref as never,
-    });
+    const inserted = await db
+      .insert(schema.journal)
+      .values({
+        campaignId: this.campaignId,
+        ts: entry.ts,
+        kind: entry.kind,
+        who: entry.who,
+        whoColor: entry.whoColor,
+        text: entry.text,
+        roll: entry.roll as never,
+        ref: entry.ref as never,
+      })
+      .returning({ id: schema.journal.id });
+    // L'id diffusé doit être l'id réel (autoincrement D1) : sinon les clés
+    // live et reload divergent (audit A4).
+    const realId = inserted[0]?.id;
+    if (typeof realId === "number") entry.id = realId;
   }
 
   private getPresence(): {

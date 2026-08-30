@@ -709,7 +709,7 @@
       {#if activeTab === 'journal'}
         <div class="journal-tab">
           <div class="journal-list">
-            {#each store.journal as entry, i (entry.id + ':' + i)}
+            {#each store.journal as entry (entry.id)}
               <div class="journal-entry entry-{entry.kind}">
                 <span class="journal-time">{formatTime(entry.ts)}</span>
                 {#if entry.kind === 'say'}

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createAuth } from "./auth";
 import { createDb, schema } from "./db";
-import { eq, and } from "drizzle-orm";
+import { asc, eq, and } from "drizzle-orm";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";
@@ -53,6 +53,7 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
         eq(schema.characters.active, true),
       ),
     )
+    .orderBy(asc(schema.characters.createdAt))
     .limit(1);
 
   const upgrade = c.req.raw.headers.get("Upgrade");
