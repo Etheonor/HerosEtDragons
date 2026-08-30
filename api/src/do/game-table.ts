@@ -1391,18 +1391,25 @@ export class GameTableDO extends DurableObject<Env> {
     color: string;
   }[] {
     const sockets = this.ctx.getWebSockets();
-    return sockets.map((ws) => {
+    // Un par utilisateur : après un rechargement, l'ancienne socket peut encore
+    // hiberner (userId en double) ou coexister avec un second onglet. Les clés
+    // de présence doivent être uniques, sinon le client plante (each_key_duplicate).
+    const byUser = new Map<
+      string,
+      { userId: string; name: string; role: string; charId: string | null; color: string }
+    >();
+    for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
-      return att
-        ? {
-            userId: att.userId,
-            name: att.name,
-            role: att.role,
-            charId: att.charId,
-            color: att.color,
-          }
-        : { userId: "", name: "", role: "player", charId: null, color: "" };
-    });
+      if (!att?.userId) continue;
+      byUser.set(att.userId, {
+        userId: att.userId,
+        name: att.name,
+        role: att.role,
+        charId: att.charId,
+        color: att.color,
+      });
+    }
+    return Array.from(byUser.values());
   }
 
   private broadcastPresence(): void {

@@ -212,10 +212,16 @@ class WsClient {
         break;
       }
 
-      case "presence":
-        this.store.presence = (msg.users as PresenceUser[]) ?? [];
+      case "presence": {
+        const seen = new Set<string>();
+        this.store.presence = ((msg.users as PresenceUser[]) ?? []).filter((u) => {
+          if (!u.userId || seen.has(u.userId)) return false;
+          seen.add(u.userId);
+          return true;
+        });
         this.notify();
         break;
+      }
 
       case "ping": {
         const id = ++pingSeq;

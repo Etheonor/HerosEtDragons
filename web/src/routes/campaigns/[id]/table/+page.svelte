@@ -485,7 +485,7 @@
     </div>
     <div class="v-sep"></div>
     <div class="presence">
-      {#each store.presence as p (p.userId)}
+      {#each store.presence as p, i (p.userId + ':' + i)}
         <span class="presence-chip" style="border-color: {p.color};">{p.name}</span>
       {/each}
     </div>
@@ -732,7 +732,7 @@
                 {loadingOlder ? '…' : 'Entrées antérieures'}
               </button>
             {/if}
-            {#each [...olderEntries, ...store.journal] as entry (entry.id)}
+            {#each [...olderEntries, ...store.journal] as entry, j (entry.id + ':' + j)}
               <div class="journal-entry entry-{entry.kind}">
                 <span class="journal-time">{formatTime(entry.ts)}</span>
                 {#if entry.kind === 'say'}
