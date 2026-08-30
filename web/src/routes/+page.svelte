@@ -61,6 +61,37 @@
   function initials(name: string): string {
     return name.trim().charAt(0).toUpperCase() || '?';
   }
+
+  let inviteCampaignId = $state<string | null>(null);
+  let inviteLink = $state('');
+  let inviteError = $state('');
+  let inviteCopied = $state(false);
+
+  async function openInvite(id: string) {
+    if (inviteCampaignId === id) {
+      inviteCampaignId = null;
+      return;
+    }
+    inviteCampaignId = id;
+    inviteLink = '';
+    inviteError = '';
+    inviteCopied = false;
+    try {
+      const res = await api.campaigns.createInvitation(id, 3);
+      inviteLink = `${location.origin}/join/${res.token}`;
+    } catch (e) {
+      inviteError = e instanceof Error ? e.message : 'Invitation impossible';
+    }
+  }
+
+  async function copyInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      inviteCopied = true;
+    } catch {
+      /* clipboard indisponible : le lien reste sélectionnable */
+    }
+  }
 </script>
 
 {#if loading}
@@ -112,7 +143,25 @@
               </div>
               <div class="campaign-actions">
                 <a href="/campaigns/{c.id}/table" class="cta open-table">Ouvrir la table</a>
+                {#if c.role === 'mj'}
+                  <button class="invite-link" onclick={() => openInvite(c.id)}>
+                    {inviteCampaignId === c.id ? 'Fermer' : "Inviter un joueur"}
+                  </button>
+                {/if}
               </div>
+              {#if inviteCampaignId === c.id}
+                <div class="invite-box">
+                  {#if inviteError}
+                    <span class="error">{inviteError}</span>
+                  {:else if inviteLink}
+                    <input class="invite-input" readonly value={inviteLink} onclick={(e) => (e.currentTarget as HTMLInputElement).select()} />
+                    <button class="copy-btn" onclick={copyInvite}>{inviteCopied ? 'Copié' : "Copier"}</button>
+                    <span class="invite-hint">Lien valable 7 jours, 3 utilisations.</span>
+                  {:else}
+                    <span class="invite-hint">Création du lien…</span>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/each}
 
@@ -398,6 +447,59 @@
   .error {
     font-size: 14px;
     color: var(--accent-text);
+  }
+
+  .invite-link {
+    font-family: var(--font-body);
+    font-size: 14px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--accent-text);
+    text-decoration: none;
+  }
+  .invite-link:hover {
+    color: var(--accent-link-hover);
+  }
+  .invite-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    border-top: 1px dashed var(--border-soft);
+    padding-top: 10px;
+  }
+  .invite-input {
+    flex: 1;
+    min-width: 200px;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    padding: 6px 9px;
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .copy-btn {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 5px 12px;
+    background: var(--selected);
+    border: 2px solid var(--border);
+    border-radius: 10px 3px 12px 3px;
+    color: var(--heading);
+    cursor: pointer;
+  }
+  .copy-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent-border);
+  }
+  .invite-hint {
+    font-size: 11.5px;
+    color: var(--text-3);
+    flex-basis: 100%;
   }
 
   .join-row {
