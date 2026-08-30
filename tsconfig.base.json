@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicolo-ribaudo/tc39-proposal-structs-json-schema/main/tsconfig.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true
+  },
+  "exclude": ["node_modules", "dist", "build", ".svelte-kit", ".wrangler"]
+}

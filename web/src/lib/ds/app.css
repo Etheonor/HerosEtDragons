@@ -1,0 +1,45 @@
+/* Reset & base — Carnet de nuit */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--accent-text);
+}
+a:hover {
+  color: var(--accent-link-hover);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+}
+
+::placeholder {
+  color: var(--text-3);
+}
+
+#svelte {
+  min-height: 100vh;
+  display: contents;
+}

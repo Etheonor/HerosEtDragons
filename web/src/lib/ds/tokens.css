@@ -1,0 +1,97 @@
+/* ═══════════════════════════════════════════════════════════
+   RollWith H&D — Design System « Carnet de nuit » — Tokens
+   Référence : design V2/THEME-CARNET-DE-NUIT.md
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Fonds & surfaces ─────────────────────────────────────── */
+  --bg: #26221d; /* fond de page */
+  --panel: #2e2a24; /* panneaux, cartes, modales */
+  --border: #575043; /* bordures 2px solid, dashed, éléments inactifs */
+  --border-soft: #3a352d; /* séparateurs discrets */
+  --selected: #575043; /* fond d'élément sélectionné */
+
+  /* ── Textes ───────────────────────────────────────────────── */
+  --text: #e8e2d4;
+  --heading: #f2ede0;
+  --text-2: #9c947f;
+  --text-3: #6e6759;
+
+  /* ── Overlay & ombres ─────────────────────────────────────── */
+  --overlay: rgba(15, 13, 10, 0.6);
+  --shadow-1: rgba(0, 0, 0, 0.3);
+  --shadow-2: rgba(0, 0, 0, 0.45);
+
+  /* ── Carte de jeu : « parchemin » clair posé sur l'UI sombre ─ */
+  --map-bg: #f4f0e3;
+  --map-bg-alt: #ece7db;
+  --map-line: #e4dec9;
+  --map-grid-size: 32px;
+  --map-token-bg: #fffdf5;
+  --map-token-fg: #3a362e;
+  --map-label-bg: rgba(255, 253, 245, 0.9);
+  --fog-color: #3b372e;
+
+  /* ── Texte sur accent ─────────────────────────────────────── */
+  --accent-fg: #fff3ec;
+
+  /* ── Monnaies ─────────────────────────────────────────────── */
+  --coin-po: #d4a73c;
+  --coin-pa: #9c947f;
+  --coin-pc: #b07d54;
+
+  /* ── Typographie (2 familles seulement) ───────────────────── */
+  --font-title: "Vidaloka", Georgia, serif;
+  --font-body: "Alegreya Sans", sans-serif;
+
+  /* ── Layout (écran de jeu) ────────────────────────────────── */
+  --w-compagnie: 262px;
+  --w-panel: 324px;
+
+  /* ── Rayons irréguliers (dose minimale « main levée ») ────── */
+  --sketchy-1: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --sketchy-2: 15px 225px 15px 255px / 225px 15px 255px 15px;
+  --sketchy-3: 225px 12px 220px 12px / 12px 200px 12px 255px;
+  --sketchy-4: 12px 235px 14px 245px / 235px 12px 255px 14px;
+  --sketchy-5: 240px 13px 215px 14px / 13px 240px 14px 230px;
+  --sketchy-6: 225px 12px 240px 14px / 12px 235px 13px 225px;
+  --sketchy-7: 14px 240px 12px 220px / 230px 14px 210px 12px;
+  --sketchy-8: 230px 14px 210px 12px / 14px 240px 12px 220px;
+  --sketchy-badge: 10px 3px 12px 3px;
+}
+
+/* ── Encre : accent choisi par l'utilisateur (localStorage 'hd-encre') ── */
+:root,
+:root[data-encre="carmin"] {
+  --accent: #c0392b;
+  --accent-hover: #d0473a;
+  --accent-border: #8f281d;
+  --accent-text: #e0705f;
+  --accent-link-hover: #eb8a7a;
+}
+
+:root[data-encre="brique"] {
+  --accent: #d0473a;
+  --accent-hover: #dc5c50;
+  --accent-border: #a22f23;
+  --accent-text: #e8877a;
+  --accent-link-hover: #f0a493;
+}
+
+:root[data-encre="ocre"] {
+  --accent: #b8860b;
+  --accent-hover: #cc9a1f;
+  --accent-border: #8a6508;
+  --accent-text: #d4a73c;
+  --accent-link-hover: #e0b84e;
+}
+
+:root[data-encre="foret"] {
+  --accent: #5e8c61;
+  --accent-hover: #6fa073;
+  --accent-border: #46694a;
+  --accent-text: #8ab58d;
+  --accent-link-hover: #a3cba6;
+}
+
+/* EOF tokens.css */

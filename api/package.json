@@ -1,0 +1,27 @@
+{
+  "name": "@rollwith/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply rollwith-hd --local",
+    "db:migrate:remote": "wrangler d1 migrations apply rollwith-hd --remote"
+  },
+  "dependencies": {
+    "@rollwith/shared": "workspace:*",
+    "better-auth": "^1.6.23",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.9.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250708.0",
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.110.0"
+  }
+}

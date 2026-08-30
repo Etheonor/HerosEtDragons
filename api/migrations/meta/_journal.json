@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1783698751603,
+      "tag": "0000_mysterious_shriek",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1783715610038,
+      "tag": "0001_hesitant_psynapse",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1783716326721,
+      "tag": "0002_familiar_marten_broadcloak",
+      "breakpoints": true
+    }
+  ]
+}
