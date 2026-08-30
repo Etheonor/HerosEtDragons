@@ -3,3 +3,8 @@ packages:
   - "web"
   - "shared"
   - "tools/ingest"
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp
