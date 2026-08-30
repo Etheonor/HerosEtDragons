@@ -8,6 +8,7 @@
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import MapManager from '$lib/components/MapManager.svelte';
+  import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
   let campaignId = params.id;
@@ -254,6 +255,7 @@
   }
 
   function toolSelect(t: 'move' | 'pnj' | 'marker' | 'fog') {
+    pendingPlace = null;
     tool = tool === t ? 'move' : t;
   }
 
@@ -322,8 +324,20 @@
       skipNextClick = false;
       return;
     }
-    if (!isMj || tool === 'move' || tool === 'fog') return;
+    if (!isMj) return;
     const { x, y } = mapXY(e);
+    if (pendingPlace) {
+      wsClient.send({
+        type: 'npc.addFromTemplate',
+        templateId: pendingPlace.templateId,
+        x,
+        y,
+        count: pendingPlace.count,
+      });
+      pendingPlace = null;
+      return;
+    }
+    if (tool === 'move' || tool === 'fog') return;
     if (tool === 'pnj') {
       wsClient.send({
         type: 'npc.add',
@@ -468,6 +482,9 @@
 
   const diceTypes = [4, 6, 8, 10, 12, 20];
 
+  // ── Pose depuis la bibliothèque de PNJ ───────────────────────
+  let pendingPlace = $state<{ templateId: string; name: string; count: number } | null>(null);
+
   // ── Menu contextuel sur les pions (MJ) ───────────────────────
   let ctxMenu = $state<{ x: number; y: number; charId: string; kind: 'pj' | 'pnj' } | null>(null);
   let ctxEl: HTMLDivElement | null = null;
@@ -527,6 +544,7 @@
     const k = e.key.toLowerCase();
     if (k === 'escape') {
       ctxMenu = null;
+      pendingPlace = null;
       if (isMj) tool = 'move';
       return;
     }
@@ -759,6 +777,10 @@
         <div class="mj-toolbar">
           <span class="mj-label">Outils du MJ</span>
           <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
+          <NpcLibrary {campaignId} onPlace={(tpl, count) => {
+            tool = 'move';
+            pendingPlace = { templateId: tpl.id, name: tpl.name, count };
+          }} />
           <div class="tsep"></div>
           <button class="tool-btn {tool === 'move' ? 'active' : ''}" title="Raccourci : V" onclick={() => toolSelect('move')}>Déplacer</button>
           <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" title="Raccourci : P" onclick={() => toolSelect('pnj')}>+ PNJ</button>
@@ -779,7 +801,9 @@
             <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
             <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
           {/if}
-          {#if tool === 'pnj' || tool === 'marker'}
+          {#if pendingPlace}
+            <span class="tool-hint">Cliquez sur la carte pour poser {pendingPlace.count > 1 ? `${pendingPlace.count} × ` : ''}{pendingPlace.name} — Échap pour annuler</span>
+          {:else if tool === 'pnj' || tool === 'marker'}
             <span class="tool-hint">Cliquez sur la carte pour placer</span>
           {/if}
           {#if tool === 'fog' && fogOn}
@@ -798,7 +822,7 @@
             bind:this={mapContainer}
             class="map-surface"
             class:cursor-fog={isMj && tool === 'fog'}
-            class:cursor-place={isMj && (tool === 'pnj' || tool === 'marker')}
+            class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
             onpointerdown={onMapPointerDown}
             onpointermove={onMapPointerMove}
             onpointerup={onMapPointerUp}

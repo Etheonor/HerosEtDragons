@@ -213,6 +213,22 @@ export const api = {
     remove: (mapId: string) => fetchJson<{ ok: true }>(`/api/maps/${mapId}`, { method: "DELETE" }),
     imageUrl: (mapId: string) => `/api/maps/${mapId}/image`,
   },
+  npcTemplates: {
+    list: (campaignId: string) =>
+      fetchJson<{ templates: NpcTemplate[] }>(`/api/npc-templates/campaigns/${campaignId}`),
+    create: (campaignId: string, tpl: NpcTemplateInput) =>
+      fetchJson<NpcTemplate>(`/api/npc-templates/campaigns/${campaignId}`, {
+        method: "POST",
+        body: JSON.stringify(tpl),
+      }),
+    update: (templateId: string, tpl: NpcTemplateInput) =>
+      fetchJson<NpcTemplate>(`/api/npc-templates/${templateId}`, {
+        method: "PUT",
+        body: JSON.stringify(tpl),
+      }),
+    remove: (templateId: string) =>
+      fetchJson<{ ok: true }>(`/api/npc-templates/${templateId}`, { method: "DELETE" }),
+  },
   notes: {
     list: (campaignId: string) =>
       fetchJson<{
@@ -230,3 +246,19 @@ export const api = {
       ),
   },
 };
+
+export interface NpcTemplateInput {
+  name: string;
+  ca: number;
+  pvMax: number;
+  initBonus: number;
+  color: string;
+  conditions: string[];
+  notes: string;
+}
+
+export interface NpcTemplate extends NpcTemplateInput {
+  id: string;
+  source: { category: string; slug: string } | null;
+  updatedAt: number;
+}
