@@ -127,6 +127,14 @@ export interface TokenMoveMsg {
   y: number;
 }
 
+/** Le MJ pose un personnage (PJ ou PNJ) sur la carte active s'il n'y est pas. */
+export interface TokenPutMsg {
+  type: "token.put";
+  charId: string;
+  x: number;
+  y: number;
+}
+
 export interface CharHpMsg {
   type: "char.hp";
   charId: string;
@@ -269,6 +277,7 @@ export interface InvDropMsg {
 
 export type ClientMessage =
   | TokenMoveMsg
+  | TokenPutMsg
   | CharHpMsg
   | CharConditionMsg
   | NpcAddMsg
@@ -394,6 +403,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
   const type = (msg as { type: string }).type;
   const validTypes: ClientMessage["type"][] = [
     "token.move",
+    "token.put",
     "char.hp",
     "char.condition",
     "npc.add",

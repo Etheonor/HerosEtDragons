@@ -155,7 +155,10 @@ class WsClient {
         if (patch.combat !== undefined)
           this.store.state.combat = patch.combat as TableStore["state"]["combat"];
         if (patch.tokens) {
-          const tokens = { ...this.store.state.tokens };
+          // Un patch contenant mapId est un CHANGEMENT DE CARTE : on remplace la
+          // vue par celle de la nouvelle carte (le serveur envoie le dict complet).
+          const switched = patch.mapId !== undefined;
+          const tokens = switched ? {} : { ...this.store.state.tokens };
           for (const [id, val] of Object.entries(
             patch.tokens as Record<string, { charId: string; x: number; y: number } | null>,
           )) {

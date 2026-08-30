@@ -7,6 +7,7 @@ import type {
   CombatState,
   CharacterCard,
   TableSettings,
+  TableLiveState,
 } from "@rollwith/shared/protocol";
 import {
   parseDiceCommand,
@@ -27,11 +28,19 @@ interface WsAttachment {
   color: string;
 }
 
+interface TokenState {
+  charId: string;
+  x: number;
+  y: number;
+}
+
 interface LiveState {
   mode: "exploration" | "combat";
   mapId: string | null;
-  tokens: Record<string, { charId: string; x: number; y: number }>;
-  markers: Marker[];
+  /** Pions et repères sont stockés PAR carte ("" = aucune carte sélectionnée) :
+   *  changer de carte ne doit pas emporter le placement d'une autre. */
+  tokensByMap: Record<string, Record<string, TokenState>>;
+  markersByMap: Record<string, Marker[]>;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -45,8 +54,8 @@ function defaultLiveState(): LiveState {
   return {
     mode: "exploration",
     mapId: null,
-    tokens: {},
-    markers: [],
+    tokensByMap: {},
+    markersByMap: {},
     fog: {},
     combat: null,
   };
@@ -101,9 +110,52 @@ export class GameTableDO extends DurableObject<Env> {
   private async getState(): Promise<LiveState> {
     if (!this.liveState) {
       const stored = await this.ctx.storage.get<LiveState>("liveState");
-      this.liveState = stored ?? defaultLiveState();
+      this.liveState = this.migrateLiveState(stored);
+      if (stored !== this.liveState) {
+        await this.ctx.storage.put("liveState", this.liveState);
+      }
     }
     return this.liveState;
+  }
+
+  /** v1 (pions/repères globaux) → v2 (par carte) : l'ancien placement est
+   *  rattaché à la carte alors active (ou « aucune carte »). */
+  private migrateLiveState(stored: LiveState | undefined): LiveState {
+    if (!stored) return defaultLiveState();
+    const legacy = stored as unknown as Record<string, unknown>;
+    if (legacy.tokensByMap && legacy.markersByMap) return stored;
+    const key = ((legacy.mapId as string | null) ?? "") as string;
+    return {
+      mode: (legacy.mode as "exploration" | "combat") ?? "exploration",
+      mapId: (legacy.mapId as string | null) ?? null,
+      tokensByMap: { [key]: (legacy.tokens as Record<string, TokenState>) ?? {} },
+      markersByMap: { [key]: (legacy.markers as Marker[]) ?? [] },
+      fog: (legacy.fog as Record<string, FogState>) ?? {},
+      combat: (legacy.combat as CombatState | null) ?? null,
+    };
+  }
+
+  private mapKey(mapId: string | null | undefined): string {
+    return mapId ?? "";
+  }
+
+  private tokensOf(
+    state: LiveState,
+    mapId: string | null = state.mapId,
+  ): Record<string, TokenState> {
+    return state.tokensByMap[this.mapKey(mapId)] ?? {};
+  }
+
+  private markersOf(state: LiveState, mapId: string | null = state.mapId): Marker[] {
+    return state.markersByMap[this.mapKey(mapId)] ?? [];
+  }
+
+  private patchTokens(state: LiveState, tokens: Record<string, TokenState>): Partial<LiveState> {
+    return { tokensByMap: { ...state.tokensByMap, [this.mapKey(state.mapId)]: tokens } };
+  }
+
+  private patchMarkers(state: LiveState, markers: Marker[]): Partial<LiveState> {
+    return { markersByMap: { ...state.markersByMap, [this.mapKey(state.mapId)]: markers } };
   }
 
   private async ensureCampaignId(): Promise<void> {
@@ -258,6 +310,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "token.move":
           await this.handleTokenMove(ws, attachment, msg);
+          break;
+        case "token.put":
+          await this.handleTokenPut(ws, attachment, msg);
           break;
         case "npc.add":
           await this.handleNpcAdd(ws, attachment, msg);
@@ -624,16 +679,16 @@ export class GameTableDO extends DurableObject<Env> {
 
     const patch: Record<string, unknown> = { characters: { [id]: card } };
     if (x !== null && y !== null) {
-      const state = await this.patchState({
-        tokens: {
-          ...(await this.getState()).tokens,
-          [id]: { charId: id, x: this.clamp(x), y: this.clamp(y) },
-        },
-      });
-      patch.tokens = { [id]: state.tokens[id] };
+      const state = await this.getState();
+      const tokens = {
+        ...this.tokensOf(state),
+        [id]: { charId: id, x: this.clamp(x), y: this.clamp(y) },
+      };
+      const next = await this.patchState(this.patchTokens(state, tokens));
+      patch.tokens = { [id]: tokens[id] };
 
       // Cas limite R8/6.4 : PNJ ajouté en cours de combat → rejoint l'initiative.
-      if (state.mode === "combat" && state.combat && pv > 0) {
+      if (next.mode === "combat" && next.combat && pv > 0) {
         await this.addLateParticipant(id, init);
       }
     }
@@ -722,11 +777,18 @@ export class GameTableDO extends DurableObject<Env> {
     this.npcIds.delete(charId);
 
     const state = await this.getState();
-    if (state.tokens[charId]) {
-      const tokens = { ...state.tokens };
-      delete tokens[charId];
-      await this.patchState({ tokens });
+    let touched = false;
+    const tokensByMap: LiveState["tokensByMap"] = {};
+    for (const [key, toks] of Object.entries(state.tokensByMap)) {
+      if (toks[charId]) {
+        touched = true;
+        const { [charId]: _drop, ...rest } = toks;
+        tokensByMap[key] = rest;
+      } else {
+        tokensByMap[key] = toks;
+      }
     }
+    if (touched) await this.patchState({ tokensByMap });
 
     let combatPatch: CombatState | null | undefined;
     if (state.combat?.participants.includes(charId)) {
@@ -771,11 +833,41 @@ export class GameTableDO extends DurableObject<Env> {
     const cy = this.clamp(y);
 
     const state = await this.getState();
-    await this.patchState({
-      tokens: { ...state.tokens, [tokenId]: { charId: tokenId, x: cx, y: cy } },
-    });
+    const current = this.tokensOf(state);
+    if (!current[tokenId]) return;
+    const tokens = { ...current, [tokenId]: { charId: tokenId, x: cx, y: cy } };
+    await this.patchState(this.patchTokens(state, tokens));
+    this.broadcastRoleAware({ tokens: { [tokenId]: tokens[tokenId]! } });
+  }
 
-    this.broadcastRoleAware({ tokens: { [tokenId]: { charId: tokenId, x: cx, y: cy } } });
+  /** Le MJ place un personnage (PJ ou PNJ) sur la carte active. */
+  private async handleTokenPut(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+    if (att.role !== "mj") return;
+    const charId = typeof msg.charId === "string" ? msg.charId : "";
+    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
+    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
+    if (!charId || Number.isNaN(x) || Number.isNaN(y)) return;
+
+    const state = await this.getState();
+    if (!state.mapId) return;
+    if (this.tokensOf(state)[charId]) return;
+
+    const db = this.getDb();
+    const [char] = await db
+      .select({ id: schema.characters.id })
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
+      .limit(1);
+    if (!char) return;
+
+    const tokens = {
+      ...this.tokensOf(state),
+      [charId]: { charId, x: this.clamp(x), y: this.clamp(y) },
+    };
+    await this.patchState(this.patchTokens(state, tokens));
+    this.broadcastRoleAware({ tokens: { [charId]: tokens[charId]! } });
   }
 
   private async handleMapSelect(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
@@ -794,8 +886,16 @@ export class GameTableDO extends DurableObject<Env> {
       return;
     }
 
+    const state = await this.getState();
     await this.patchState({ mapId });
-    this.broadcastAll({ type: "delta", patch: { mapId } });
+    const view = { ...state, mapId };
+    // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers (vue de
+    // la nouvelle carte) au lieu de fusionner (voir ws.ts).
+    this.broadcastRoleAware({
+      mapId,
+      tokens: this.tokensOf(view),
+      markers: this.markersOf(view),
+    });
   }
 
   private async handleMarkerSet(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
@@ -810,8 +910,8 @@ export class GameTableDO extends DurableObject<Env> {
     const state = await this.getState();
     const id = (msg.id as string) || crypto.randomUUID();
     const marker: Marker = { id, x: this.clamp(x), y: this.clamp(y), text };
-    const markers = [...state.markers, marker];
-    await this.patchState({ markers });
+    const markers = [...this.markersOf(state), marker];
+    await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 
@@ -823,10 +923,10 @@ export class GameTableDO extends DurableObject<Env> {
     if (!id || Number.isNaN(x) || Number.isNaN(y)) return;
 
     const state = await this.getState();
-    const markers = state.markers.map((m) =>
+    const markers = this.markersOf(state).map((m) =>
       m.id === id ? { ...m, x: this.clamp(x), y: this.clamp(y) } : m,
     );
-    await this.patchState({ markers });
+    await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 
@@ -836,14 +936,15 @@ export class GameTableDO extends DurableObject<Env> {
     if (!id) return;
 
     const state = await this.getState();
-    const markers = state.markers.filter((m) => m.id !== id);
-    await this.patchState({ markers });
+    const markers = this.markersOf(state).filter((m) => m.id !== id);
+    await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 
   private async handleMarkerClear(ws: WebSocket, att: WsAttachment) {
     if (att.role !== "mj") return;
-    await this.patchState({ markers: [] });
+    const state = await this.getState();
+    await this.patchState(this.patchMarkers(state, []));
     const entry = this.makeJournalEntry(
       "system",
       att.name ?? null,
@@ -948,7 +1049,7 @@ export class GameTableDO extends DurableObject<Env> {
 
       // R8.1 : participants = pion sur la carte active ET pv > 0.
       const participants = charRows
-        .filter((c) => c.pv > 0 && !!state.tokens[c.id])
+        .filter((c) => c.pv > 0 && !!this.tokensOf(state)[c.id])
         .map((c) => c.id);
 
       if (participants.length === 0) {
@@ -1254,7 +1355,7 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   private async buildSnapshot(role: "mj" | "player"): Promise<{
-    state: LiveState;
+    state: TableLiveState;
     characters: CharacterCard[];
     settings: TableSettings;
     journalTail: JournalEntry[];
@@ -1283,19 +1384,6 @@ export class GameTableDO extends DurableObject<Env> {
     this.npcIds = new Set(charRows.filter((r) => r.kind === "pnj").map((r) => r.id));
     this.npcIdsLoaded = true;
 
-    if (state.mapId) {
-      const activePjs = charRows.filter((r) => r.kind === "pj" && r.active);
-      const missing = activePjs.filter((r) => !state.tokens[r.id]);
-      if (missing.length > 0) {
-        const tokens = { ...state.tokens };
-        missing.forEach((r, i) => {
-          tokens[r.id] = { charId: r.id, x: 20 + (i % 5) * 15, y: 50 };
-        });
-        await this.patchState({ tokens });
-        state.tokens = tokens;
-      }
-    }
-
     this.cachedSettings = campaign?.settings ?? null;
 
     const hidePv = this.hidePnjPvFor(role);
@@ -1318,16 +1406,22 @@ export class GameTableDO extends DurableObject<Env> {
       conditions: ch.conditions,
     }));
 
+    const rawTokens = this.tokensOf(state);
     const tokens =
-      role === "mj"
-        ? state.tokens
-        : (this.filterTokensForPlayers(state.tokens) as LiveState["tokens"]);
+      role === "mj" ? rawTokens : (this.filterTokensForPlayers(rawTokens) as typeof rawTokens);
 
     const journalTail = await this.getJournalTail();
     const presence = this.getPresence();
 
     return {
-      state: { ...state, tokens },
+      state: {
+        mode: state.mode,
+        mapId: state.mapId,
+        tokens,
+        markers: this.markersOf(state),
+        fog: state.fog,
+        combat: state.combat,
+      },
       characters,
       settings: campaign?.settings ?? {
         pnjPvVisible: false,

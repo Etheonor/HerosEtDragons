@@ -90,6 +90,7 @@ describe("isSnapshot", () => {
 describe("isClientMessageValid", () => {
   it("validates a known client message type", () => {
     expect(isClientMessageValid({ type: "token.move", tokenId: "a", x: 1, y: 2 })).toBe(true);
+    expect(isClientMessageValid({ type: "token.put", charId: "a", x: 1, y: 2 })).toBe(true);
     expect(isClientMessageValid({ type: "chat.say", text: "hi" })).toBe(true);
     expect(isClientMessageValid({ type: "combat.next" })).toBe(true);
   });

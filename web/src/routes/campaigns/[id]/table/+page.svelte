@@ -226,6 +226,15 @@
     wsClient.send({ type: 'npc.remove', charId });
   }
 
+  function hasToken(charId: string): boolean {
+    return !!store.state.tokens[charId];
+  }
+
+  function placeOnMap(charId: string) {
+    const n = Object.keys(store.state.tokens).length;
+    wsClient.send({ type: 'token.put', charId, x: 46 + ((n % 5) - 2) * 4, y: 50 });
+  }
+
   // ── Carte : sélection / import ──────────────────────────────
 
   function selectMap(mapId: string) {
@@ -522,6 +531,9 @@
           <div class="card-row stats">
             <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
           </div>
+          {#if isMj && activeMap && !hasToken(c.id)}
+            <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
+          {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
               <span
@@ -571,6 +583,22 @@
               <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
             </div>
           {/if}
+          {#if isMj && activeMap && !hasToken(c.id)}
+            <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
+          {/if}
+          <div class="cond-row">
+            {#each c.conditions as cond (cond)}
+              <span class="cond-chip" title={cond}>{cond}</span>
+            {/each}
+            {#if isMj}
+              <select class="cond-select" value="" onchange={(e) => addCondition(c.id, e)}>
+                <option value="">+ état</option>
+                {#each CONDITIONS as cond (cond)}
+                  <option>{cond}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
         </div>
       {/each}
     </aside>
@@ -964,6 +992,12 @@
     cursor: pointer; line-height: 1;
   }
   .del-btn:hover { border-color: var(--accent-border); color: var(--accent-text); }
+  .place-btn {
+    font-family: var(--font-body); font-size: 12px; font-weight: 500; padding: 3px 8px;
+    background: transparent; border: 2px dashed var(--border); border-radius: 10px;
+    color: var(--text-2); cursor: pointer; align-self: flex-start;
+  }
+  .place-btn:hover { border-color: var(--accent); color: var(--accent-text); }
 
   /* ── Carte ── */
   .map-area {
