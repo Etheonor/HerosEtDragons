@@ -244,6 +244,11 @@ class WsClient {
     }
   }
 
+  clearError() {
+    this.store.error = null;
+    this.notify();
+  }
+
   send(msg: Record<string, unknown>) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));

@@ -31,6 +31,7 @@
   });
 
   let chatText = $state('');
+  let toast = $state('');
   let olderEntries = $state<JournalEntry[]>([]);
   let hasMoreOlder = $state(true);
   let loadingOlder = $state(false);
@@ -67,6 +68,7 @@
   let npcPv = $state(7);
   let npcCa = $state(13);
   let npcInit = $state(0);
+  let npcSaveAsTemplate = $state(false);
   let dragOverride = $state<Record<string, { x: number; y: number }>>({});
   let markerDragOverride = $state<Record<string, { x: number; y: number }>>({});
 
@@ -347,6 +349,7 @@
         init: npcInit,
         x,
         y,
+        saveAsTemplate: npcSaveAsTemplate,
       });
     } else if (tool === 'marker') {
       wsClient.send({ type: 'marker.set', x, y, text: markerText.trim() || 'repère' });
@@ -478,6 +481,17 @@
     const ro = new ResizeObserver(() => drawFog());
     if (mapContainer) ro.observe(mapContainer);
     return () => ro.disconnect();
+  });
+
+  $effect(() => {
+    const err = store.error;
+    if (!err) return;
+    toast = err;
+    const t = setTimeout(() => {
+      toast = '';
+      wsClient.clearError();
+    }, 4000);
+    return () => clearTimeout(t);
   });
 
   const diceTypes = [4, 6, 8, 10, 12, 20];
@@ -696,6 +710,7 @@
             <span class="card-row-right">
               <span class="card-ca">CA {c.ca}</span>
               {#if isMj}
+                <button class="model-btn" title="Enregistrer comme modèle réutilisable" onclick={() => wsClient.send({ type: 'npc.saveAsTemplate', charId: c.id })}>modèle</button>
                 <button class="del-btn" title="Retirer ce PNJ" onclick={() => removeNpc(c.id)}>✕</button>
               {/if}
             </span>
@@ -789,6 +804,12 @@
             <input class="npc-input narrow" type="number" bind:value={npcPv} title="PV" />
             <input class="npc-input narrow" type="number" bind:value={npcCa} title="CA" />
             <input class="npc-input narrow" type="number" bind:value={npcInit} title="Init" />
+            <button
+              class="ghost-btn lib-toggle"
+              class:on={npcSaveAsTemplate}
+              title="Enregistrer aussi dans la bibliothèque de PNJ"
+              onclick={() => (npcSaveAsTemplate = !npcSaveAsTemplate)}
+            >→ bibliothèque</button>
           {/if}
           <button class="tool-btn {tool === 'marker' ? 'active' : ''}" title="Raccourci : R" onclick={() => toolSelect('marker')}>Repère</button>
           {#if tool === 'marker'}
@@ -978,6 +999,10 @@
     </aside>
   </div>
 
+  {#if toast}
+    <div class="toast" role="status">{toast}</div>
+  {/if}
+
   <!-- Dé animé overlay -->
   <DiceOverlay anim={store.diceAnim} />
 
@@ -1153,6 +1178,23 @@
     color: var(--text-2); cursor: pointer; align-self: flex-start;
   }
   .place-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+
+  .model-btn {
+    font-family: var(--font-body); font-size: 10px; font-weight: 700; letter-spacing: 0.4px;
+    padding: 1px 7px; background: transparent; border: 1.5px dashed var(--border);
+    border-radius: 10px 3px 12px 3px; color: var(--text-2); cursor: pointer; line-height: 1.5;
+  }
+  .model-btn:hover { border-color: var(--accent); border-style: solid; color: var(--accent-text); }
+  .lib-toggle { border-radius: 10px 3px 12px 3px; }
+  .lib-toggle.on { border-color: var(--accent-border); border-style: solid; color: var(--accent-text); background: var(--panel); }
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: var(--panel); border: 2px solid var(--accent-border);
+    border-radius: 225px 12px 240px 14px/12px 235px 13px 225px;
+    padding: 8px 22px; z-index: 90; text-align: center;
+    font-size: 13.5px; font-weight: 500; color: var(--text);
+    box-shadow: 3px 4px 0 var(--shadow-1);
+  }
 
   .ctx-menu {
     position: fixed;
