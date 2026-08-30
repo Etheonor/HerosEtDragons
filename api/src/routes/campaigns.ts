@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
 import { eq, and, gt } from "drizzle-orm";
 import { requireAuth, type AuthVariables } from "../middleware";
+import { consumeInvitation } from "../invitations";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -230,58 +231,17 @@ app.post("/join/:token", requireAuth, async (c) => {
   if (!token) return c.json({ error: "Token manquant" }, 400);
 
   const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
-  const discordId = c.get("discordId");
-
-  const [inv] = await db
-    .select()
-    .from(schema.invitations)
-    .where(and(eq(schema.invitations.token, token), gt(schema.invitations.usesLeft, 0)))
-    .limit(1);
-
-  if (!inv || inv.expiresAt.getTime() < Date.now()) {
-    return c.json({ error: "Invitation invalide ou expirée" }, 404);
+  const res = await consumeInvitation(db, token, c.get("user").id, c.get("discordId"));
+  if (!res.ok) {
+    return c.json(
+      {
+        error: res.reason === "exhausted" ? "Invitation épuisée" : "Invitation invalide ou expirée",
+      },
+      res.reason === "exhausted" ? 409 : 404,
+    );
   }
 
-  const [existing] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, inv.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (existing) {
-    return c.json({
-      campaignId: inv.campaignId,
-      role: existing.role,
-      alreadyMember: true,
-    });
-  }
-
-  await db.insert(schema.members).values({
-    campaignId: inv.campaignId,
-    userId,
-    role: "player",
-  });
-
-  await db
-    .update(schema.invitations)
-    .set({ usesLeft: inv.usesLeft - 1 })
-    .where(eq(schema.invitations.token, token));
-
-  const [allowed] = await db
-    .select()
-    .from(schema.allowedUsers)
-    .where(eq(schema.allowedUsers.discordId, discordId))
-    .limit(1);
-
-  if (!allowed) {
-    await db.insert(schema.allowedUsers).values({
-      discordId,
-      note: "Invitation",
-    });
-  }
-
-  return c.json({ campaignId: inv.campaignId, role: "player" }, 201);
+  return c.json({ campaignId: res.campaignId, role: "player" }, 201);
 });
 
 export default app;

@@ -1,7 +1,8 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createDb, schema } from "./db";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
+import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
 
 export function createAuth(env: Env, request: Request) {
   const db = createDb(env.DB);
@@ -52,6 +53,25 @@ export function createAuth(env: Env, request: Request) {
               .where(eq(schema.allowedUsers.discordId, discordId))
               .limit(1);
 
+            // Invitations fraîches dans le cookie hd-invite (posé par
+            // GET /api/invitations/:token avant le redirect OAuth) : on les
+            // consomme ici — un utilisateur déjà autorisé qui clique un nouveau
+            // lien rejoint la campagne, un nouvel utilisateur devient autorisé.
+            const token = inviteTokenFromCookie(request);
+            if (token) {
+              try {
+                await consumeInvitation(db, token, userId, discordId);
+              } catch {
+                /* best effort : le login reste soumis à la whitelist */
+              }
+              const after = await db
+                .select()
+                .from(schema.allowedUsers)
+                .where(eq(schema.allowedUsers.discordId, discordId))
+                .limit(1);
+              if (after.length > 0) return;
+            }
+
             if (allowed.length === 0) {
               throw new Error(
                 "Votre compte Discord n'est pas autorisé. Demandez une invitation à votre MJ.",
@@ -73,43 +93,19 @@ export function createAuth(env: Env, request: Request) {
               )
               .limit(1);
 
-            if (acct.length > 0) {
-              const discordId = acct[0]!.accountId;
-              const existing = await db
-                .select()
-                .from(schema.allowedUsers)
-                .where(eq(schema.allowedUsers.discordId, discordId))
-                .limit(1);
+            if (acct.length === 0) return;
+            const discordId = acct[0]!.accountId;
 
-              if (existing.length === 0) {
-                const pendingToken = request.headers.get("X-Invitation-Token");
+            // Nouvelle venue via un lien d'invitation : le cookie hd-invite
+            // porte le token jusqu'ici (le header X-Invitation-Token ne
+            // survit jamais au redirect OAuth — audit §3.2).
+            const token = inviteTokenFromCookie(request);
+            if (!token) return;
 
-                if (pendingToken) {
-                  const inv = await db
-                    .select()
-                    .from(schema.invitations)
-                    .where(
-                      and(
-                        eq(schema.invitations.token, pendingToken),
-                        gt(schema.invitations.usesLeft, 0),
-                        gt(schema.invitations.expiresAt, new Date()),
-                      ),
-                    )
-                    .limit(1);
-
-                  if (inv.length > 0) {
-                    await db.insert(schema.allowedUsers).values({
-                      discordId,
-                      note: "Invitation",
-                    });
-
-                    await db
-                      .update(schema.invitations)
-                      .set({ usesLeft: inv[0]!.usesLeft - 1 })
-                      .where(eq(schema.invitations.token, pendingToken));
-                  }
-                }
-              }
+            try {
+              await consumeInvitation(db, token, userId, discordId);
+            } catch {
+              /* best effort */
             }
           },
         },

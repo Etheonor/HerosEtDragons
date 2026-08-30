@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { createDb, schema, type CharacterSheet } from "../db";
 import { eq, and } from "drizzle-orm";
-import { requireAuth, type AuthVariables } from "../middleware";
+import { requireAuth, requireMember, requireMj, type AuthVariables } from "../middleware";
+import { validateCharacterSheet } from "@rollwith/shared/validation";
 import { kaelithSheet } from "../db/seed";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -323,7 +324,17 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
 
-  const body = await c.req.json<CharacterSheet>();
+  // Garde-fous taille + parsing (audit §5.2) : pas de JSON arbitraire.
+  const raw = await c.req.text();
+  if (raw.length > 200_000) {
+    return c.json({ error: "Feuille trop volumineuse (max 200 ko)" }, 413);
+  }
+  let body: CharacterSheet;
+  try {
+    body = JSON.parse(raw) as CharacterSheet;
+  } catch {
+    return c.json({ error: "JSON invalide" }, 400);
+  }
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
 
@@ -347,6 +358,23 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
   const isMj = membership.role === "mj";
   if (!isOwner && !isMj) return c.json({ error: "Accès refusé" }, 403);
 
+  // Verrou MJ (R10.10) : quand sheetsLocked est actif, seuls les MJ éditent.
+  if (!isMj) {
+    const [campaign] = await db
+      .select({ settings: schema.campaigns.settings })
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, char.campaignId))
+      .limit(1);
+    if (campaign?.settings?.sheetsLocked) {
+      return c.json({ error: "Édition verrouillée par le MJ" }, 403);
+    }
+  }
+
+  const sheetError = validateCharacterSheet(body);
+  if (sheetError) {
+    return c.json({ error: `Feuille invalide : ${sheetError}` }, 400);
+  }
+
   await db
     .update(schema.characters)
     .set({ sheet: body, pvMax: body.pvMax, updatedAt: new Date() })
@@ -357,7 +385,7 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
 
 // ── Seed Kaelith dans une campagne (dev) ──────────────────────
 
-app.post("/seed/:campaignId", requireAuth, async (c) => {
+app.post("/seed/:campaignId", requireAuth, requireMember, requireMj, async (c) => {
   const campaignId = c.req.param("campaignId");
   if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
 

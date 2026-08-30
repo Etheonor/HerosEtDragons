@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { createAuth } from "./auth";
 import { createDb, schema } from "./db";
-import { asc, eq, and } from "drizzle-orm";
+import { asc, eq, and, gt } from "drizzle-orm";
+import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";
@@ -15,6 +16,69 @@ app.get("/api/health", (c) => c.json({ ok: true, name: "rollwith-hd", time: Date
 app.on(["GET", "POST"], "/api/auth/*", (c) => {
   const auth = createAuth(c.env, c.req.raw);
   return auth.handler(c.req.raw);
+});
+
+// ── Acceptation d'invitation (publique — audit §3.2) ──────────
+// Le lien /join/:token ouvre cette route AVANT login : elle valide le token,
+// pose un cookie hd-invite (Lax, 15 min) que le flux OAuth consommera au
+// callback ; si l'utilisateur a déjà une session, rejoint directement.
+app.get("/api/invitations/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!token) return c.json({ ok: false, error: "Token manquant" }, 400);
+
+  const db = createDb(c.env.DB);
+  const [inv] = await db
+    .select()
+    .from(schema.invitations)
+    .where(
+      and(
+        eq(schema.invitations.token, token),
+        gt(schema.invitations.usesLeft, 0),
+        gt(schema.invitations.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+  if (!inv) return c.json({ ok: false, error: "Invitation invalide ou expirée" }, 404);
+
+  const [campaign] = await db
+    .select({ name: schema.campaigns.name })
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, inv.campaignId))
+    .limit(1);
+
+  const auth = createAuth(c.env, c.req.raw);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+  if (session) {
+    const [acct] = await db
+      .select({ accountId: schema.account.accountId })
+      .from(schema.account)
+      .where(
+        and(eq(schema.account.userId, session.user.id), eq(schema.account.providerId, "discord")),
+      )
+      .limit(1);
+    const res = await consumeInvitation(db, token, session.user.id, acct?.accountId ?? null);
+    if (!res.ok) {
+      return c.json(
+        {
+          ok: false,
+          error: res.reason === "exhausted" ? "Invitation épuisée" : "Invitation invalide",
+        },
+        409,
+      );
+    }
+    return c.json({ ok: true, joined: true, campaignName: campaign?.name ?? "" });
+  }
+
+  // Anonyme : on mémorise l'invitation pour la consommer au retour OAuth.
+  return c.json(
+    { ok: true, joined: false, campaignName: campaign?.name ?? "" },
+    {
+      headers: {
+        "Set-Cookie": `hd-invite=${token}; Path=/; Max-Age=900; HttpOnly; SameSite=Lax`,
+      },
+    },
+  );
 });
 
 app.route("/api/campaigns", campaigns);

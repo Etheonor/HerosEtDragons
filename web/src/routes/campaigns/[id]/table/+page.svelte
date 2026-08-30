@@ -495,14 +495,14 @@
             <a href={`/characters/${c.id}`} class="sheet-link">Feuille</a>
           </div>
           <div class="hp-row">
-            <div class="hp-bar-bg"><div class="hp-bar-fill" style="width: {c.pvMax > 0 ? Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100)) : 0}%;"></div></div>
+            <div class="hp-bar-bg"><div class="hp-bar-fill" style="width: {c.pvMax && c.pvMax > 0 ? Math.max(0, Math.min(100, ((c.pv ?? 0) / c.pvMax) * 100)) : 0}%;"></div></div>
             {#if isMj || c.ownerId === session?.user.id}
               <button class="hp-btn minus" onclick={() => pvDelta(c.id, -1)}>−</button>
               <button class="hp-btn plus" onclick={() => pvDelta(c.id, 1)}>+</button>
             {/if}
           </div>
           <div class="card-row stats">
-            <span>PV {c.pv}/{c.pvMax}</span><span>Init +{c.initiativeBonus}</span>
+            <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
           </div>
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
@@ -543,14 +543,14 @@
           </div>
           {#if isMj || store.settings.pnjPvVisible}
             <div class="hp-row">
-              <div class="hp-bar-bg small"><div class="hp-bar-fill" style="width: {c.pvMax > 0 ? Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100)) : 0}%;"></div></div>
+              <div class="hp-bar-bg small"><div class="hp-bar-fill" style="width: {c.pvMax && c.pvMax > 0 ? Math.max(0, Math.min(100, ((c.pv ?? 0) / c.pvMax) * 100)) : 0}%;"></div></div>
               {#if isMj}
                 <button class="hp-btn minus" onclick={() => pvDelta(c.id, -1)}>−</button>
                 <button class="hp-btn plus" onclick={() => pvDelta(c.id, 1)}>+</button>
               {/if}
             </div>
             <div class="card-row stats">
-              <span>PV {c.pv}/{c.pvMax}</span><span>Init +{c.initiativeBonus}</span>
+              <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
             </div>
           {/if}
         </div>

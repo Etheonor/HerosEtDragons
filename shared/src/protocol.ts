@@ -95,8 +95,9 @@ export interface CharacterCard {
   ca: number;
   sub: string;
   initiativeBonus: number;
-  pv: number;
-  pvMax: number;
+  /** null = PV masqués par le serveur (PNJ quand pnjPvVisible=false, vue joueur). */
+  pv: number | null;
+  pvMax: number | null;
   pvTemp: number;
   conditions: string[];
 }

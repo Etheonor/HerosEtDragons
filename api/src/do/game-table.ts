@@ -89,6 +89,7 @@ export class GameTableDO extends DurableObject<Env> {
   private liveState: LiveState | null = null;
   private npcIds: Set<string> = new Set();
   private npcIdsLoaded = false;
+  private cachedSettings: TableSettings | null = null;
 
   private getDb(): ReturnType<typeof createDb> {
     if (!this.db) {
@@ -109,6 +110,39 @@ export class GameTableDO extends DurableObject<Env> {
     if (this.campaignId) return;
     const stored = await this.ctx.storage.get<string>("campaignId");
     if (stored) this.campaignId = stored;
+  }
+
+  private async ensureSettings(): Promise<TableSettings | null> {
+    if (this.cachedSettings) return this.cachedSettings;
+    const db = this.getDb();
+    const [campaign] = await db
+      .select({ settings: schema.campaigns.settings })
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, this.campaignId))
+      .limit(1);
+    this.cachedSettings = campaign?.settings ?? null;
+    return this.cachedSettings;
+  }
+
+  /** Les PV des PNJ ne quittent JAMAIS le serveur quand pnjPvVisible=false (§5.3). */
+  private hidePnjPvFor(role: "mj" | "player"): boolean {
+    return role === "player" && !(this.cachedSettings?.pnjPvVisible ?? false);
+  }
+
+  private filterCharactersForPlayers(
+    characters: Record<string, Partial<CharacterCard> | null>,
+  ): Record<string, Partial<CharacterCard> | null> {
+    if (!this.hidePnjPvFor("player")) return characters;
+    const out: Record<string, Partial<CharacterCard> | null> = {};
+    for (const [id, val] of Object.entries(characters)) {
+      if (!val) {
+        out[id] = null;
+        continue;
+      }
+      const isPnj = val.kind === "pnj" || (!val.kind && this.npcIds.has(id));
+      out[id] = isPnj ? { ...val, pv: null, pvMax: null } : val;
+    }
+    return out;
   }
 
   private async ensureNpcIds(): Promise<void> {
@@ -198,6 +232,7 @@ export class GameTableDO extends DurableObject<Env> {
     await this.ensureCampaignId();
     await this.getState();
     await this.ensureNpcIds();
+    await this.ensureSettings();
 
     const type = msg.type as string;
     try {
@@ -422,10 +457,7 @@ export class GameTableDO extends DurableObject<Env> {
       this.broadcastAll({ type: "journal", entry });
     }
 
-    this.broadcastAll({
-      type: "delta",
-      patch: { characters: { [charId]: { pv: newPv, pvMax: char.pvMax } } },
-    });
+    this.broadcastRoleAware({ characters: { [charId]: { pv: newPv, pvMax: char.pvMax } } });
   }
 
   private async handleCharCondition(
@@ -1135,7 +1167,7 @@ export class GameTableDO extends DurableObject<Env> {
     return filtered;
   }
 
-  /** Broadcasts a delta patch, filtering hidden PNJ tokens per-recipient role. */
+  /** Broadcasts a delta patch, filtering hidden PNJ tokens AND PNJ pv per-recipient role. */
   private broadcastRoleAware(patch: Record<string, unknown>): void {
     const sockets = this.ctx.getWebSockets();
     const playerTokens =
@@ -1144,10 +1176,23 @@ export class GameTableDO extends DurableObject<Env> {
             patch.tokens as Record<string, { charId: string; x: number; y: number } | null>,
           )
         : undefined;
+    const playerCharacters =
+      patch.characters !== undefined
+        ? this.filterCharactersForPlayers(
+            patch.characters as Record<string, Partial<CharacterCard> | null>,
+          )
+        : undefined;
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
       const isMj = att?.role === "mj";
-      const outPatch = !isMj && playerTokens ? { ...patch, tokens: playerTokens } : patch;
+      let outPatch = patch;
+      if (!isMj) {
+        outPatch = {
+          ...patch,
+          ...(playerTokens ? { tokens: playerTokens } : {}),
+          ...(playerCharacters ? { characters: playerCharacters } : {}),
+        };
+      }
       try {
         ws.send(JSON.stringify({ type: "delta", patch: outPatch }));
       } catch {
@@ -1199,6 +1244,9 @@ export class GameTableDO extends DurableObject<Env> {
       }
     }
 
+    this.cachedSettings = campaign?.settings ?? null;
+
+    const hidePv = this.hidePnjPvFor(role);
     const characters: CharacterCard[] = charRows.map((ch) => ({
       id: ch.id,
       kind: ch.kind,
@@ -1212,8 +1260,8 @@ export class GameTableDO extends DurableObject<Env> {
           ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
           : "",
       initiativeBonus: ch.sheet.initiativeBonus,
-      pv: ch.pv,
-      pvMax: ch.pvMax,
+      pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
+      pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
       pvTemp: ch.pvTemp,
       conditions: ch.conditions,
     }));
