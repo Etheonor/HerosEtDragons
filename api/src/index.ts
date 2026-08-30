@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createAuth } from "./auth";
 import { createDb, schema } from "./db";
-import { asc, eq, and, gt } from "drizzle-orm";
+import { asc, eq, and, or, gt } from "drizzle-orm";
 import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
@@ -40,7 +40,7 @@ app.get("/api/invitations/:token", async (c) => {
     .where(
       and(
         eq(schema.invitations.token, token),
-        gt(schema.invitations.usesLeft, 0),
+        or(eq(schema.invitations.usesLeft, -1), gt(schema.invitations.usesLeft, 0)),
         gt(schema.invitations.expiresAt, new Date()),
       ),
     )

@@ -1,5 +1,5 @@
 import { createDb, schema } from "./db";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, or, sql } from "drizzle-orm";
 
 type DB = ReturnType<typeof createDb>;
 
@@ -46,7 +46,7 @@ export async function consumeInvitation(
     .where(
       and(
         eq(schema.invitations.token, token),
-        gt(schema.invitations.usesLeft, 0),
+        or(eq(schema.invitations.usesLeft, -1), gt(schema.invitations.usesLeft, 0)),
         gt(schema.invitations.expiresAt, new Date()),
       ),
     )
@@ -65,12 +65,14 @@ export async function consumeInvitation(
     return { ok: true, campaignId: inv.campaignId };
   }
 
-  const [decremented] = await db
-    .update(schema.invitations)
-    .set({ usesLeft: sql`${schema.invitations.usesLeft} - 1` })
-    .where(and(eq(schema.invitations.token, token), gt(schema.invitations.usesLeft, 0)))
-    .returning({ usesLeft: schema.invitations.usesLeft });
-  if (!decremented) return { ok: false, reason: "exhausted" };
+  if (inv.usesLeft !== -1) {
+    const [decremented] = await db
+      .update(schema.invitations)
+      .set({ usesLeft: sql`${schema.invitations.usesLeft} - 1` })
+      .where(and(eq(schema.invitations.token, token), gt(schema.invitations.usesLeft, 0)))
+      .returning({ usesLeft: schema.invitations.usesLeft });
+    if (!decremented) return { ok: false, reason: "exhausted" };
+  }
 
   try {
     await db.insert(schema.members).values({ campaignId: inv.campaignId, userId, role: "player" });
@@ -79,10 +81,12 @@ export async function consumeInvitation(
     // rendre la consommation nulle part.
     const message = err instanceof Error ? err.message : "";
     if (!/UNIQUE|PRIMARY/i.test(message)) throw err;
-    await db
-      .update(schema.invitations)
-      .set({ usesLeft: sql`${schema.invitations.usesLeft} + 1` })
-      .where(eq(schema.invitations.token, token));
+    if (inv.usesLeft !== -1) {
+      await db
+        .update(schema.invitations)
+        .set({ usesLeft: sql`${schema.invitations.usesLeft} + 1` })
+        .where(eq(schema.invitations.token, token));
+    }
   }
 
   if (discordId) await ensureAllowed(db, discordId);

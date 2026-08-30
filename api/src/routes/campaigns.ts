@@ -203,13 +203,22 @@ app.post("/:campaignId/invitations", requireAuth, async (c) => {
 
   const body = await c.req.json<{ usesLeft?: number; expiresInSeconds?: number }>().catch(
     () =>
-      ({ usesLeft: 1, expiresInSeconds: 7 * 24 * 60 * 60 }) as {
+      ({ usesLeft: -1, expiresInSeconds: 30 * 24 * 60 * 60 }) as {
         usesLeft: number;
         expiresInSeconds: number;
       },
   );
-  const usesLeft = body.usesLeft ?? 1;
-  const expiresInSeconds = body.expiresInSeconds ?? 7 * 24 * 60 * 60;
+  // -1 = illimité. Une table privée a besoin d'un lien qui couvre tous les
+  // joueurs ; la sécurité vient du secret du token, pas d'un quota.
+  const usesRaw = body.usesLeft ?? -1;
+  if (usesRaw !== -1 && (!Number.isInteger(usesRaw) || usesRaw < 1 || usesRaw > 100)) {
+    return c.json({ error: "usesLeft : -1 (illimité) ou entier entre 1 et 100" }, 400);
+  }
+  const usesLeft = usesRaw;
+  const expiresRaw = body.expiresInSeconds ?? 30 * 24 * 60 * 60;
+  const expiresInSeconds = Number.isFinite(expiresRaw)
+    ? Math.min(366 * 24 * 60 * 60, Math.max(60, Math.trunc(expiresRaw)))
+    : 30 * 24 * 60 * 60;
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);

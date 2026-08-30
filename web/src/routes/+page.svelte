@@ -66,6 +66,8 @@
   let inviteLink = $state('');
   let inviteError = $state('');
   let inviteCopied = $state(false);
+  let inviteUses = $state(-1);
+  let inviteExpires = $state('');
 
   async function openInvite(id: string) {
     if (inviteCampaignId === id) {
@@ -77,11 +79,21 @@
     inviteError = '';
     inviteCopied = false;
     try {
-      const res = await api.campaigns.createInvitation(id, 3);
+      const res = await api.campaigns.createInvitation(id);
       inviteLink = `${location.origin}/join/${res.token}`;
+      inviteUses = res.usesLeft;
+      inviteExpires = res.expiresAt;
     } catch (e) {
       inviteError = e instanceof Error ? e.message : 'Invitation impossible';
     }
+  }
+
+  function inviteHint(): string {
+    const uses = inviteUses === -1 ? 'Utilisations illimitées' : `${inviteUses} utilisation${inviteUses > 1 ? 's' : ''}`;
+    const exp = inviteExpires
+      ? new Date(inviteExpires).toLocaleDateString('fr', { day: 'numeric', month: 'long' })
+      : '';
+    return `${uses}${exp ? ` · expire le ${exp}` : ''}.`;
   }
 
   async function copyInvite() {
@@ -156,7 +168,7 @@
                   {:else if inviteLink}
                     <input class="invite-input" readonly value={inviteLink} onclick={(e) => (e.currentTarget as HTMLInputElement).select()} />
                     <button class="copy-btn" onclick={copyInvite}>{inviteCopied ? 'Copié' : "Copier"}</button>
-                    <span class="invite-hint">Lien valable 7 jours, 3 utilisations.</span>
+                    <span class="invite-hint">{inviteHint()}</span>
                   {:else}
                     <span class="invite-hint">Création du lien…</span>
                   {/if}
