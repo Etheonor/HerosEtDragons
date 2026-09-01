@@ -88,7 +88,8 @@ export function validateCharacterSheet(raw: unknown): string | null {
     str(s.vitesse, 40, "vitesse"),
     int(s.initiativeBonus, -5, 20, "bonus d'initiative"),
     int(s.pvMax, 0, 1000, "pvMax"),
-    int(s.pvTemp, 0, 1000, "pvTemp"),
+    // NB : les PV temporaires ne sont PAS dans la feuille (colonne du
+    // personnage, route REST dédiée) — ne pas les revalider ici.
     bool(s.inspiration, "inspiration"),
   ]);
   if (coreErr) return coreErr;

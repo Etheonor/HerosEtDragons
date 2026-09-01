@@ -19,7 +19,6 @@ function baseSheet(): Record<string, unknown> {
     vitesse: "10,5 m",
     initiativeBonus: 3,
     pvMax: 45,
-    pvTemp: 0,
     desDeVie: { faces: 10, total: 5, restants: 4 },
     deathSaves: { successes: 0, failures: 0 },
     inspiration: false,
