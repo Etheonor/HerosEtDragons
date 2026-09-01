@@ -962,7 +962,7 @@
           <div class="chat-input-row">
             <SketchyInput
               bind:value={chatText}
-              placeholder="Parler, ou /1d20+5…"
+              placeholder="Parler, ou /1d20+5, /caracs…"
               onkeydown={(e) => e.key === 'Enter' && sendChat()}
               class="chat-input"
             />
@@ -987,7 +987,10 @@
               {/if}
             {/each}
           </div>
-          <div class="dice-tip">Astuce : tapez /2d6+3 dans le journal pour un jet composé</div>
+          <div class="dice-tip">
+            Astuce : /2d6+3 pour un jet composé, /4d6b pour biffer le dé le plus bas, /caracs pour
+            les six jets de création
+          </div>
           <div class="dice-history">
             <div class="history-title">Derniers jets</div>
             {#if diceHistory.length === 0}

@@ -11,6 +11,8 @@ import type {
 } from "@rollwith/shared/protocol";
 import {
   parseDiceCommand,
+  isScoresCommand,
+  formatScoresSummary,
   rollDice,
   isCritical,
   isFumble,
@@ -460,9 +462,22 @@ export class GameTableDO extends DurableObject<Env> {
     if (!text?.trim()) return;
     const trimmed = text.trim().slice(0, MAX_CHAT_LENGTH);
 
+    if (isScoresCommand(trimmed)) {
+      await this.handleScoresRoll(att);
+      return;
+    }
+
     const diceParsed = parseDiceCommand(trimmed);
     if (diceParsed) {
-      await this.executeDiceRoll(ws, att, diceParsed.n, diceParsed.sides, diceParsed.mod, trimmed);
+      await this.executeDiceRoll(
+        ws,
+        att,
+        diceParsed.n,
+        diceParsed.sides,
+        diceParsed.mod,
+        trimmed,
+        diceParsed.drop,
+      );
       return;
     }
 
@@ -482,10 +497,13 @@ export class GameTableDO extends DurableObject<Env> {
       );
       return;
     }
+    const drop = Number.isFinite(msg.drop)
+      ? Math.max(0, Math.min(n - 1, Math.trunc(msg.drop as number)))
+      : 0;
     const modC = Math.max(-100, Math.min(100, mod));
     const label = (typeof msg.label === "string" ? msg.label.slice(0, 120) : "") || undefined;
-    const expr = label ?? formatExpression({ n, sides, mod: modC });
-    await this.executeDiceRoll(ws, att, n, sides, modC, expr);
+    const expr = label ?? formatExpression({ n, sides, mod: modC, drop });
+    await this.executeDiceRoll(ws, att, n, sides, modC, expr, drop);
   }
 
   private makeRng() {
@@ -503,6 +521,23 @@ export class GameTableDO extends DurableObject<Env> {
     };
   }
 
+  /** 6 × (4d6 biffer le plus bas), en une seule ligne de journal — jets de création. */
+  private async handleScoresRoll(att: WsAttachment) {
+    const rng = this.makeRng();
+    const scores: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      scores.push(rollDice(4, 6, 0, rng, 1).total);
+    }
+    const entry = this.makeJournalEntry(
+      "system",
+      att.name ?? null,
+      att.color,
+      `✦ ${att.name} lance ses caracs (4d6, dé le plus bas retiré) : ${formatScoresSummary(scores)}.`,
+    );
+    await this.appendJournal(entry);
+    this.broadcastAll({ type: "journal", entry });
+  }
+
   private async executeDiceRoll(
     ws: WebSocket,
     att: WsAttachment,
@@ -510,8 +545,9 @@ export class GameTableDO extends DurableObject<Env> {
     sides: number,
     mod: number,
     expr: string,
+    drop = 0,
   ) {
-    const roll = rollDice(n, sides, mod, this.makeRng());
+    const roll = rollDice(n, sides, mod, this.makeRng(), drop);
     const crit = isCritical(roll);
     const fumble = isFumble(roll);
     const detail = formatRollDetail(roll);

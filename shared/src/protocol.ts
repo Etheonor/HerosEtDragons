@@ -275,6 +275,8 @@ export interface DiceRollMsg {
   sides: number;
   n: number;
   mod: number;
+  /** dés à retirer, les plus bas d'abord (0 = aucun) */
+  drop?: number;
   label?: string;
 }
 
