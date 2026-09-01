@@ -483,15 +483,19 @@
     return () => ro.disconnect();
   });
 
+  let lastShownError: string | null = null;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const err = store.error;
+    if (err === lastShownError) return;
+    lastShownError = err;
     if (!err) return;
     toast = err;
-    const t = setTimeout(() => {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
       toast = '';
       wsClient.clearError();
     }, 4000);
-    return () => clearTimeout(t);
   });
 
   const diceTypes = [4, 6, 8, 10, 12, 20];

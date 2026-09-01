@@ -45,13 +45,19 @@
   });
 
   // Sync temps réel du PV / des états (deltas WS de la table).
+  // Ne recréer `char` qu'en cas de VRAI changement de valeur : réassigner un
+  // nouvel objet à chaque notification du store re-déclenche cet effet
+  // (effect_update_depth_exceeded).
   $effect(() => {
-    if (!store || !char) return;
-    const card = store.characters.find((c) => c.id === char?.id);
-    if (card) {
-      if (typeof card.pv === 'number') char = { ...char, pv: card.pv };
-      if (typeof card.pvMax === 'number') char = { ...char, pvMax: card.pvMax };
-      char = { ...char, conditions: card.conditions };
+    const c0 = char;
+    if (!store || !c0) return;
+    const card = store.characters.find((c) => c.id === c0.id);
+    if (!card) return;
+    const pv = typeof card.pv === 'number' ? card.pv : c0.pv;
+    const pvMax = typeof card.pvMax === 'number' ? card.pvMax : c0.pvMax;
+    const condChanged = card.conditions !== c0.conditions;
+    if (pv !== c0.pv || pvMax !== c0.pvMax || condChanged) {
+      char = { ...c0, pv, pvMax, conditions: card.conditions };
     }
   });
 
