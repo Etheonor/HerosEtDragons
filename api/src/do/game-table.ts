@@ -391,13 +391,14 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   override async webSocketClose(
-    ws: WebSocket,
-    code: number,
-    reason: string,
-    wasClean: boolean,
+    _ws: WebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean,
   ): Promise<void> {
+    // Le socket est déjà fermé ici : rappeler close() avec un code réservé
+    // (1005/1006, fermetures navigateur) lève une InvalidAccessError.
     this.broadcastPresence();
-    ws.close(code, reason);
   }
 
   override async webSocketError(_ws: WebSocket): Promise<void> {

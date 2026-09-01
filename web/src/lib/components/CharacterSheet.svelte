@@ -369,7 +369,7 @@
 <div class="sheet">
   <!-- Barre haute -->
   <header class="sheet-header">
-    <a href="/" class="back-btn">← retour à la table</a>
+    <a href="/campaigns/{char.campaignId}/table" class="back-btn">← retour à la table</a>
     <div class="header-title">Feuille de personnage</div>
     <div class="header-hint">
       {#if readonly}
