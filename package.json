@@ -14,6 +14,7 @@
     "format:check": "oxfmt --check .",
     "typecheck": "pnpm --filter shared typecheck && pnpm --filter ingest typecheck && pnpm --filter web check && pnpm --filter api typecheck",
     "test": "vitest run",
+    "portraits": "node tools/portraits/build.mjs",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter api db:generate",
     "db:migrate": "pnpm --filter api db:migrate",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "oxfmt": "0.58.0",
     "oxlint": "^1.14.0",
+    "sharp": "^0.35.4",
     "vitest": "^3.2.4",
     "wrangler": "4.127.1"
   },

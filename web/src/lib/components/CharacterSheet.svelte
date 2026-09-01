@@ -21,6 +21,7 @@
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
+  import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
 
   let {
     char,
@@ -43,6 +44,25 @@
   };
 
   let sheet = $state<CharacterSheet>(char.sheet);
+
+  // ── Portraits ────────────────────────────────────────────────
+  let pickerOpen = $state(false);
+  let portraitList = $state<PortraitEntry[]>([]);
+  const portraitGroups = $derived(portraitsByRace(portraitList));
+
+  async function openPicker() {
+    if (readonly) return;
+    pickerOpen = !pickerOpen;
+    if (pickerOpen && portraitList.length === 0) {
+      portraitList = await loadPortraits();
+    }
+  }
+
+  function choosePortrait(key: string | null) {
+    sheet.portrait = key;
+    touch();
+    pickerOpen = false;
+  }
   let pv = $state(char.pv);
   let pvTemp = $state(char.pvTemp);
 
@@ -176,6 +196,7 @@
         defauts: s.personnalite.defauts ? txt(s.personnalite.defauts, 4000) : undefined,
       },
       languesEtMaitrises: txt(s.languesEtMaitrises, 4000),
+      portrait: s.portrait ?? null,
       equipement: {
         bourse: {
           po: num(s.equipement.bourse.po, 0, 1_000_000, 0),
@@ -393,6 +414,19 @@
   <!-- En-tête personnage -->
   <div class="char-header-wrap">
     <div class="char-header">
+      <button
+        class="portrait-frame"
+        class:empty={!sheet.portrait}
+        disabled={readonly}
+        title={readonly ? undefined : 'Choisir un portrait'}
+        onclick={openPicker}
+      >
+        {#if portraitUrl(sheet.portrait)}
+          <img src={portraitUrl(sheet.portrait)} alt="portrait" draggable="false" />
+        {:else}
+          <span class="portrait-initial">{(sheet.identite.nom || '?').slice(0, 1).toUpperCase()}</span>
+        {/if}
+      </button>
       <div class="char-name-col">
         <div class="char-name"><Editable {readonly} w={210} value={sheet.identite.nom} onchange={(v) => (sheet.identite.nom = String(v))} oncommit={touch} ontype={touch} /></div>
         <div class="char-citation">« <Editable {readonly} w={220} value={sheet.identite.citation ?? ''} onchange={(v) => (sheet.identite.citation = String(v))} placeholder="citation" oncommit={touch} ontype={touch} /> »</div>
@@ -730,9 +764,140 @@
       </div>
     </div>
   </div>
+
+  {#if pickerOpen}
+    <div class="overlay" role="presentation" onclick={() => (pickerOpen = false)}>
+      <div
+        class="picker"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choisir un portrait"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.key === 'Escape' && (pickerOpen = false)}
+      >
+        <div class="picker-head">
+          <div class="picker-title">Choisir un portrait</div>
+          <button class="picker-clear" onclick={() => choosePortrait(null)}>Aucun</button>
+        </div>
+        <div class="picker-body">
+          {#if portraitList.length === 0}
+            <p class="picker-empty">Portraits indisponibles.</p>
+          {:else}
+            {#each portraitGroups as g (g.race)}
+              <div class="picker-race">{g.race}</div>
+              <div class="picker-grid">
+                {#each g.items as it (it.key)}
+                  <button
+                    class="picker-cell"
+                    class:selected={sheet.portrait === it.key}
+                    title={it.key}
+                    onclick={() => choosePortrait(it.key)}
+                  >
+                    <img src={portraitUrl(it.key)} alt="" loading="lazy" draggable="false" />
+                  </button>
+                {/each}
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .picker {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+    width: min(620px, calc(100vw - 48px));
+    max-height: min(76vh, 720px);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 50px var(--shadow-2);
+  }
+  .picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px 12px;
+    flex: none;
+  }
+  .picker-title {
+    font-family: var(--font-title);
+    font-size: 22px;
+    color: var(--heading);
+  }
+  .picker-clear {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    background: transparent;
+    border: 2px dashed var(--border);
+    border-radius: 10px 3px 12px 3px;
+    color: var(--text-2);
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .picker-clear:hover {
+    border-color: var(--accent);
+    color: var(--accent-text);
+  }
+  .picker-body {
+    overflow-y: auto;
+    padding: 0 22px 20px;
+    min-height: 0;
+  }
+  .picker-empty {
+    color: var(--text-2);
+    font-style: italic;
+    font-size: 13px;
+  }
+  .picker-race {
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin: 12px 0 6px;
+  }
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+    gap: 8px;
+  }
+  .picker-cell {
+    padding: 0;
+    border: 2px solid var(--border);
+    border-radius: 48% 52% 50% 50% / 52% 48% 52% 48%;
+    background: var(--bg);
+    overflow: hidden;
+    aspect-ratio: 1;
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .picker-cell:hover {
+    border-color: var(--text-2);
+  }
+  .picker-cell.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-border);
+  }
+  .picker-cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
   .sheet {
     min-height: 100vh;
     background: var(--bg);
@@ -825,6 +990,41 @@
     font-size: 34px;
     line-height: 1.05;
     color: var(--heading);
+  }
+  .portrait-frame {
+    width: 96px;
+    height: 96px;
+    flex: none;
+    align-self: center;
+    padding: 0;
+    border: 2px solid var(--border);
+    border-radius: 48% 52% 50% 50% / 52% 48% 52% 48%;
+    background: var(--bg);
+    overflow: hidden;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.15s;
+  }
+  .portrait-frame:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .portrait-frame:disabled {
+    cursor: default;
+  }
+  .portrait-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .portrait-frame.empty {
+    border-style: dashed;
+  }
+  .portrait-initial {
+    font-family: var(--font-title);
+    font-size: 34px;
+    color: var(--text-3);
   }
   .char-citation {
     font-size: 14px;

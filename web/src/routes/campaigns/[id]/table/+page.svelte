@@ -8,6 +8,7 @@
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import MapManager from '$lib/components/MapManager.svelte';
+  import { portraitUrl } from '$lib/portraits';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -661,7 +662,12 @@
             <div class="turn-flag">à lui de jouer</div>
           {/if}
           <div class="card-row">
-            <span class="card-name">{c.name}</span>
+            <span class="card-id">
+              {#if portraitUrl(c.portrait)}
+                <img class="pj-portrait" src={portraitUrl(c.portrait)} alt="" draggable="false" />
+              {/if}
+              <span class="card-name">{c.name}</span>
+            </span>
             <span class="card-ca">CA {c.ca}</span>
           </div>
           <div class="card-row">
@@ -883,14 +889,15 @@
             {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
               {@const c = charById(t.charId)}
               {#if c}
+                {@const pUrl = portraitUrl(c.portrait)}
                 <div
-                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''}"
-                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize}px; height: {store.settings.tokenSize}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
+                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
+                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; height: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
                   oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
                 >
-                  {c.name.slice(0, 1).toUpperCase()}
+                  {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
                   <span class="token-label">{c.name}</span>
                 </div>
               {/if}
@@ -1132,7 +1139,15 @@
   }
   .card-row { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
   .card-row-right { display: flex; gap: 6px; align-items: baseline; }
-  .card-name { font-family: var(--font-title); font-size: 17px; line-height: 1.15; color: var(--heading); }
+  .card-id { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+  .pj-portrait {
+    width: 30px; height: 30px; flex: none;
+    border-radius: 48% 52% 50% 50%/52% 48% 52% 48%;
+    border: 2px solid var(--border);
+    object-fit: cover;
+    background: var(--bg);
+  }
+  .card-name { font-family: var(--font-title); font-size: 17px; line-height: 1.15; color: var(--heading); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pnj-name { font-size: 15.5px; }
   .card-ca { font-size: 12px; color: var(--text-2); }
   .card-sub { font-size: 11.5px; color: var(--text-2); font-style: italic; }
@@ -1351,6 +1366,15 @@
     display: flex; align-items: center; justify-content: center;
     font-family: var(--font-title); cursor: grab; user-select: none; z-index: 10;
     touch-action: none;
+  }
+  .token-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+    pointer-events: none;
   }
   .token-pj {
     background: var(--map-token-bg);

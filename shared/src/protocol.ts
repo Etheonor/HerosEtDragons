@@ -92,6 +92,8 @@ export interface CharacterCard {
   name: string;
   color: string;
   active: boolean;
+  /** clé "<Race>/<CODE>" d'un portrait (voir tools/portraits), null = pas de portrait. */
+  portrait: string | null;
   ca: number;
   sub: string;
   initiativeBonus: number;

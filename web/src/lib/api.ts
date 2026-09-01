@@ -117,6 +117,7 @@ export interface CharacterSheet {
   capacites: { id: string; name: string; description: string }[];
   personnalite: { traits?: string; ideaux?: string; liens?: string; defauts?: string };
   languesEtMaitrises: string;
+  portrait?: string | null;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];

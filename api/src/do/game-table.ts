@@ -87,6 +87,7 @@ function blankSheet(name: string): CharacterSheet {
     capacites: [],
     personnalite: {},
     languesEtMaitrises: "",
+    portrait: null,
     equipement: { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
     couleurPion: "#C0392B",
   };
@@ -438,6 +439,7 @@ export class GameTableDO extends DurableObject<Env> {
       name: ch.name,
       color: ch.color,
       active: ch.active,
+      portrait: ch.sheet.portrait ?? null,
       ca: ch.sheet.ca,
       sub:
         ch.kind === "pj"
@@ -689,6 +691,7 @@ export class GameTableDO extends DurableObject<Env> {
       name,
       color: "#C0392B",
       active: true,
+      portrait: null,
       ca,
       sub: "",
       initiativeBonus: init,
@@ -793,6 +796,7 @@ export class GameTableDO extends DurableObject<Env> {
         name,
         color: tpl.color,
         active: true,
+        portrait: null,
         ca: tpl.ca,
         sub: "",
         initiativeBonus: tpl.initBonus,
@@ -1137,6 +1141,7 @@ export class GameTableDO extends DurableObject<Env> {
       name: newName,
       color: src.color,
       active: true,
+      portrait: src.sheet.portrait ?? null,
       ca: src.sheet.ca,
       sub: "",
       initiativeBonus: src.sheet.initiativeBonus,
@@ -1695,6 +1700,7 @@ export class GameTableDO extends DurableObject<Env> {
       name: ch.name,
       color: ch.color,
       active: ch.active,
+      portrait: ch.sheet.portrait ?? null,
       ca: ch.sheet.ca,
       sub:
         ch.kind === "pj"
