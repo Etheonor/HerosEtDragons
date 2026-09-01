@@ -63,6 +63,7 @@ async function main() {
 
   const manifest = [];
   let converted = 0;
+  let foundSources = 0;
   let failed = 0;
   for (const race of races) {
     const files = (await fs.readdir(path.join(SRC, race)))
@@ -70,6 +71,7 @@ async function main() {
       .sort();
     const destDir = path.join(OUT, race);
     await ensureDir(destDir);
+    foundSources += files.length;
     for (const file of files) {
       const code = path.basename(file).replace(/\.[^.]+$/, "");
       const key = `${race}/${code}`;
@@ -93,6 +95,29 @@ async function main() {
       manifest.push({ key, race, code });
     }
   }
+  // Fusion : les webp déjà présents dans la sortie (sources locales retirées
+  // du dépôt) restent référencés au manifest — on n'ajoute que ce qui est
+  // manquant ; pour retirer un portrait, supprimer son .webp.
+  const seen = new Set(manifest.map((m) => m.key));
+  for (const race of await fs.readdir(OUT, { withFileTypes: true }).catch(() => [])) {
+    if (!race.isDirectory()) continue;
+    const webps = await fs.readdir(path.join(OUT, race.name)).catch(() => []);
+    for (const f of webps) {
+      if (!f.endsWith(".webp")) continue;
+      const code = f.replace(/\.webp$/, "");
+      const key = `${race.name}/${code}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        manifest.push({ key, race: race.name, code });
+      }
+    }
+  }
+  if (foundSources === 0) {
+    console.log(
+      "[portraits] aucune source dans portraits/ (dossier local hors dépôt) — manifest reconstruit depuis les webp existants.",
+    );
+  }
+  manifest.sort((a, b) => a.key.localeCompare(b.key, "fr"));
   await fs.writeFile(
     path.join(OUT, "manifest.json"),
     JSON.stringify({ count: manifest.length, portraits: manifest }, null, 1),
