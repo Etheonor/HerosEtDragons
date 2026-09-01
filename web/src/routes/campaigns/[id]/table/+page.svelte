@@ -32,6 +32,28 @@
   });
 
   let chatText = $state('');
+  let journalEl = $state<HTMLDivElement | null>(null);
+  let stickToBottom = true;
+  let lastJournalTab = 'journal';
+
+  function onJournalScroll(e: Event) {
+    const el = e.currentTarget as HTMLDivElement;
+    stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }
+
+  $effect(() => {
+    void store.journal.length;
+    const tabChanged = activeTab !== lastJournalTab;
+    lastJournalTab = activeTab;
+    if (activeTab !== 'journal' || !journalEl) return;
+    const el = journalEl;
+    if (tabChanged) stickToBottom = true;
+    if (stickToBottom) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+  });
   let toast = $state('');
   let olderEntries = $state<JournalEntry[]>([]);
   let hasMoreOlder = $state(true);
@@ -41,10 +63,16 @@
     if (loadingOlder) return;
     const before = olderEntries[0]?.id ?? store.journal[0]?.id;
     loadingOlder = true;
+    const prevHeight = journalEl?.scrollHeight ?? 0;
+    const prevTop = journalEl?.scrollTop ?? 0;
     try {
       const res = await api.campaigns.journalPage(campaignId, before);
       olderEntries = [...res.entries, ...olderEntries];
       hasMoreOlder = res.hasMore;
+      stickToBottom = false;
+      requestAnimationFrame(() => {
+        if (journalEl) journalEl.scrollTop = prevTop + (journalEl.scrollHeight - prevHeight);
+      });
     } catch {
       /* ignore */
     }
@@ -922,7 +950,7 @@
       <!-- Onglet Journal -->
       {#if activeTab === 'journal'}
         <div class="journal-tab">
-          <div class="journal-list">
+          <div class="journal-list" bind:this={journalEl} onscroll={onJournalScroll}>
             {#if hasMoreOlder}
               <button class="older-btn" disabled={loadingOlder} onclick={loadOlder}>
                 {loadingOlder ? '…' : 'Entrées antérieures'}
