@@ -36,9 +36,42 @@
   let stickToBottom = true;
   let lastJournalTab = 'journal';
 
+  let unseen = $state<number[]>([]);
+  const unseenCount = $derived(unseen.length);
+
   function onJournalScroll(e: Event) {
     const el = e.currentTarget as HTMLDivElement;
     stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    if (stickToBottom && unseen.length) unseen = [];
+  }
+
+  // Journal « non lu » façon Discord : quand on est remonté, compter les
+  // nouveaux messages et proposer d'y sauter.
+  let lastJournalLen = 0;
+  $effect(() => {
+    const len = store.journal.length;
+    if (len > lastJournalLen && !stickToBottom) {
+      const fresh = store.journal.slice(lastJournalLen).map((e) => e.id);
+      unseen = [...unseen, ...fresh];
+    }
+    if (len < lastJournalLen) unseen = [];
+    lastJournalLen = len;
+  });
+
+  function jumpToNew() {
+    const first = unseen[0];
+    unseen = [];
+    const target =
+      first !== undefined
+        ? journalEl?.querySelector<HTMLElement>(`[data-jid="${first}"]`)
+        : null;
+    if (target) {
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      // laisse le temps au smooth-scroll : stickToBottom se recalculera au scroll
+    } else if (journalEl) {
+      stickToBottom = true;
+      journalEl.scrollTo({ top: journalEl.scrollHeight, behavior: 'smooth' });
+    }
   }
 
   $effect(() => {
@@ -957,7 +990,7 @@
               </button>
             {/if}
             {#each [...olderEntries, ...store.journal] as entry, j (entry.id + ':' + j)}
-              <div class="journal-entry entry-{entry.kind}">
+              <div class="journal-entry entry-{entry.kind}" data-jid={entry.id}>
                 <span class="journal-time">{formatTime(entry.ts)}</span>
                 {#if entry.kind === 'say'}
                   <span class="journal-who" style="color: {entry.whoColor};">{entry.who}</span>
@@ -987,6 +1020,11 @@
               </div>
             {/each}
           </div>
+          {#if unseenCount > 0}
+            <button class="new-msg-pill" onclick={jumpToNew}>
+              ↓ {unseenCount} nouveau{unseenCount > 1 ? 'x' : ''} message{unseenCount > 1 ? 's' : ''}
+            </button>
+          {/if}
           <div class="chat-input-row">
             <SketchyInput
               bind:value={chatText}
@@ -1460,7 +1498,31 @@
   }
   .tab.active { background: var(--selected); color: var(--heading); }
 
-  .journal-tab { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }
+  .journal-tab {
+    position: relative;
+    display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;
+  }
+  .new-msg-pill {
+    position: absolute;
+    left: 50%;
+    bottom: 64px;
+    transform: translateX(-50%);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 6px 14px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: 2px solid var(--accent-border);
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px var(--shadow-2);
+    white-space: nowrap;
+  }
+  .new-msg-pill:hover {
+    background: var(--accent-hover);
+  }
   .journal-list {
     flex: 1; overflow-y: auto; padding: 12px 14px;
     display: flex; flex-direction: column; gap: 11px; font-size: 13px; line-height: 1.5; min-height: 0;
