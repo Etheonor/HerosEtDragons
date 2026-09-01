@@ -5,6 +5,7 @@
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import EncreSelector from '$lib/ds/EncreSelector.svelte';
+  import CharacterCreateModal from '$lib/components/CharacterCreateModal.svelte';
 
   let session = $state<Session | null>(null);
   let campaigns = $state<CampaignSummary[]>([]);
@@ -68,6 +69,8 @@
   let inviteCopied = $state(false);
   let inviteUses = $state(-1);
   let inviteExpires = $state('');
+
+  let createCharFor = $state<{ id: string; name: string } | null>(null);
 
   async function openInvite(id: string) {
     if (inviteCampaignId === id) {
@@ -155,6 +158,9 @@
               </div>
               <div class="campaign-actions">
                 <a href="/campaigns/{c.id}/table" class="cta open-table">Ouvrir la table</a>
+                <button class="invite-link" onclick={() => (createCharFor = { id: c.id, name: c.name })}>
+                  {c.role === 'mj' ? '+ PJ' : 'Créer mon personnage'}
+                </button>
                 {#if c.role === 'mj'}
                   <button class="invite-link" onclick={() => openInvite(c.id)}>
                     {inviteCampaignId === c.id ? 'Fermer' : "Inviter un joueur"}
@@ -201,6 +207,14 @@
       </div>
     </main>
   </div>
+
+  {#if createCharFor}
+    <CharacterCreateModal
+      campaignId={createCharFor.id}
+      campaignName={createCharFor.name}
+      onClose={() => (createCharFor = null)}
+    />
+  {/if}
 
   {#if createOpen}
     <div

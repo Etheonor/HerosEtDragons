@@ -176,6 +176,11 @@ export const api = {
     list: (campaignId: string) =>
       fetchJson<{ characters: CharacterSummary[] }>(`/api/characters/campaigns/${campaignId}`),
     detail: (id: string) => fetchJson<CharacterDetail>(`/api/characters/${id}`),
+    create: (input: { campaignId: string; name: string; sheet?: Partial<CharacterSheet> }) =>
+      fetchJson<{ id: string; name: string }>("/api/characters", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     seed: (campaignId: string) =>
       fetchJson<{ id: string; name: string; alreadyExists?: boolean }>(
         `/api/characters/seed/${campaignId}`,

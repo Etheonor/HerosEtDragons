@@ -143,6 +143,25 @@ app.post("/", requireAuth, async (c) => {
     return c.json({ error: "Accès refusé" }, 403);
   }
 
+  // Règle métier : un seul PJ par joueur dans une campagne (le MJ, lui,
+  // peut préparer plusieurs fiches).
+  if (membership.role !== "mj") {
+    const [existing] = await db
+      .select({ id: schema.characters.id })
+      .from(schema.characters)
+      .where(
+        and(
+          eq(schema.characters.campaignId, body.campaignId),
+          eq(schema.characters.ownerId, userId),
+          eq(schema.characters.kind, "pj"),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      return c.json({ error: "Vous avez déjà un personnage dans cette campagne." }, 409);
+    }
+  }
+
   const id = crypto.randomUUID();
   const sheet: CharacterSheet = {
     identite: {
@@ -177,6 +196,7 @@ app.post("/", requireAuth, async (c) => {
     capacites: body.sheet?.capacites ?? [],
     personnalite: body.sheet?.personnalite ?? {},
     languesEtMaitrises: body.sheet?.languesEtMaitrises ?? "",
+    portrait: null,
     equipement: body.sheet?.equipement ?? { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
     couleurPion: body.sheet?.couleurPion ?? "#C0392B",
   };
