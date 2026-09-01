@@ -278,7 +278,7 @@ export interface CharacterSheet {
   attaques: { id: string; name: string; bonus: number; damage: string }[];
   sorts: {
     caracIncantation: "for" | "dex" | "con" | "int" | "sag" | "cha" | null;
-    connus: { slug: string; level: number }[];
+    connus: { slug: string; level: number; name?: string }[];
     emplacements: { level: number; max: number; used: number }[];
   };
   capacites: { id: string; name: string; description: string }[];

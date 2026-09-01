@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import {
     CARAC_LABELS,
-    CARAC_NAMES,
     getMod,
     getProficiency,
     getSaveBonus,
@@ -12,7 +12,6 @@
     getSpellSaveDc,
     getSpellAttackBonus,
     formatMod,
-    getLevelFromXp,
     getNextXpThreshold,
     SKILLS,
     SKILL_CARAC,
@@ -20,6 +19,7 @@
   } from '$lib/char-utils';
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
+  import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
 
   let {
@@ -28,16 +28,9 @@
     onPvDelta,
   }: {
     char: CharacterDetail;
-    /** Présent quand la feuille est connectée à la table (WS) : les jets
-     *  passent par le serveur et alimentent le journal (R10.2). */
     onRoll?: (mod: number, label: string) => void;
     onPvDelta?: (delta: number) => void;
   } = $props();
-
-  let sheet = $state<CharacterSheet>(char.sheet);
-  let pv = $state(char.pv);
-  let pvTemp = $state(char.pvTemp);
-  let loading = $state(false);
 
   const caracs: CaracKey[] = ['for', 'dex', 'con', 'int', 'sag', 'cha'];
   const saveNames: Record<CaracKey, string> = {
@@ -49,53 +42,275 @@
     cha: 'Charisme',
   };
 
+  let sheet = $state<CharacterSheet>(char.sheet);
+  let pv = $state(char.pv);
+  let pvTemp = $state(char.pvTemp);
+
+  // Ne ré-ancrer la feuille locale que si le parent fournit un NOUVEL objet
+  // (sinon on écraserait les éditions en cours lors d'un update de PV).
+  let lastSheetRef: CharacterSheet | null = null;
   $effect(() => {
-    sheet = char.sheet;
+    if (char.sheet !== lastSheetRef) {
+      lastSheetRef = char.sheet;
+      sheet = char.sheet;
+    }
     pv = char.pv;
     pvTemp = char.pvTemp;
   });
 
-  let pvPct = $derived(Math.max(0, Math.min(100, (pv / char.pvMax) * 100)));
+  const readonly = $derived(!char.canEdit);
 
-  function adjustPv(delta: number) {
-    if (!char.canEdit) return;
-    if (onPvDelta) {
-      onPvDelta(delta);
-      return;
-    }
-    pvRest(delta);
+  // ── Autosave ─────────────────────────────────────────────────
+  let saveState = $state<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
+  let saveError = $state('');
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function touch() {
+    if (readonly) return;
+    saveState = 'dirty';
+    saveError = '';
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flush, 700);
   }
 
-  async function pvRest(delta: number) {
-    if (loading) return;
-    loading = true;
-    try {
-      const res = await api.characters.updatePv(char.id, delta);
-      pv = res.pv;
-    } catch {
-      /* ignore for now */
+  async function flush() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
-    loading = false;
+    if (readonly || saveState !== 'dirty') return;
+    saveState = 'saving';
+    try {
+      await api.characters.updateSheet(char.id, normalized());
+      saveState = 'saved';
+      setTimeout(() => {
+        if (saveState === 'saved') saveState = 'idle';
+      }, 1500);
+    } catch (e) {
+      saveState = 'error';
+      saveError = e instanceof Error ? e.message : 'Enregistrement impossible';
+    }
   }
 
+  onDestroy(() => {
+    if (saveState === 'dirty') void flush();
+  });
 
+  function num(v: unknown, min: number, max: number, fb: number): number {
+    const x = Math.round(Number(v));
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : fb;
+  }
+  function txt(v: unknown, max: number, fb = ''): string {
+    return v === undefined || v === null ? fb : String(v).slice(0, max);
+  }
 
-  async function toggleInspiration() {
-    if (loading || !char.canEdit) return;
-    loading = true;
-    try {
-      const res = await api.characters.toggleInspiration(char.id);
-      sheet = { ...sheet, inspiration: res.inspiration };
-    } catch {
-      /* ignore */
+  /** Coie normalisée (bornes, types) de la feuille pour l'envoi serveur. */
+  function normalized(): CharacterSheet {
+    const s = sheet;
+    return {
+      identite: {
+        nom: txt(s.identite.nom, 100) || 'Sans nom',
+        race: txt(s.identite.race, 100),
+        classe: txt(s.identite.classe, 100),
+        niveau: num(s.identite.niveau, 1, 20, 1),
+        historique: txt(s.identite.historique, 100),
+        alignement: txt(s.identite.alignement, 60),
+        xp: num(s.identite.xp, 0, 5_000_000, 0),
+        citation: s.identite.citation === undefined ? undefined : txt(s.identite.citation, 4000),
+      },
+      caracs: {
+        for: num(s.caracs.for, 1, 30, 10),
+        dex: num(s.caracs.dex, 1, 30, 10),
+        con: num(s.caracs.con, 1, 30, 10),
+        int: num(s.caracs.int, 1, 30, 10),
+        sag: num(s.caracs.sag, 1, 30, 10),
+        cha: num(s.caracs.cha, 1, 30, 10),
+      },
+      saveProficiencies: { ...s.saveProficiencies },
+      skillProficiencies: { ...s.skillProficiencies },
+      ca: num(s.ca, 0, 40, 10),
+      vitesse: txt(s.vitesse, 40),
+      initiativeBonus: num(s.initiativeBonus, -5, 20, 0),
+      pvMax: num(s.pvMax, 0, 1000, 0),
+      desDeVie: {
+        faces: num(s.desDeVie.faces, 4, 12, 8),
+        total: num(s.desDeVie.total, 0, 21, 1),
+        restants: num(s.desDeVie.restants, 0, 21, 1),
+      },
+      deathSaves: {
+        successes: num(s.deathSaves.successes, 0, 3, 0),
+        failures: num(s.deathSaves.failures, 0, 3, 0),
+      },
+      inspiration: !!s.inspiration,
+      attaques: s.attaques.slice(0, 30).map((a) => ({
+        id: a.id,
+        name: txt(a.name, 100) || 'Attaque',
+        bonus: num(a.bonus, -5, 30, 0),
+        damage: txt(a.damage, 40),
+      })),
+      sorts: {
+        caracIncantation: s.sorts.caracIncantation,
+        connus: s.sorts.connus.slice(0, 200).map((sp) => ({
+          slug: txt(sp.slug, 100).replace(/\s+/g, '-').toLowerCase() || 'sort',
+          level: num(sp.level, 0, 9, 0),
+          name: sp.name === undefined ? undefined : txt(sp.name, 100),
+        })),
+        emplacements: s.sorts.emplacements
+          .slice(0, 10)
+          .map((e) => ({
+            level: num(e.level, 0, 9, 1),
+            max: num(e.max, 0, 16, 0),
+            used: num(e.used, 0, 16, 0),
+          }))
+          .sort((a, b) => a.level - b.level),
+      },
+      capacites: s.capacites.slice(0, 60).map((c) => ({
+        id: c.id,
+        name: txt(c.name, 100) || 'Capacité',
+        description: txt(c.description, 4000),
+      })),
+      personnalite: {
+        traits: s.personnalite.traits ? txt(s.personnalite.traits, 4000) : undefined,
+        ideaux: s.personnalite.ideaux ? txt(s.personnalite.ideaux, 4000) : undefined,
+        liens: s.personnalite.liens ? txt(s.personnalite.liens, 4000) : undefined,
+        defauts: s.personnalite.defauts ? txt(s.personnalite.defauts, 4000) : undefined,
+      },
+      languesEtMaitrises: txt(s.languesEtMaitrises, 4000),
+      equipement: {
+        bourse: {
+          po: num(s.equipement.bourse.po, 0, 1_000_000, 0),
+          pa: num(s.equipement.bourse.pa, 0, 1_000_000, 0),
+          pc: num(s.equipement.bourse.pc, 0, 1_000_000, 0),
+        },
+        objets: s.equipement.objets.slice(0, 200).map((o) => ({
+          name: txt(o.name, 200) || 'Objet',
+          qty: num(o.qty, 0, 9999, 1),
+        })),
+      },
+      couleurPion: txt(s.couleurPion, 20) || '#C0392B',
+    };
+  }
+
+  // ── Helpers d'édition courants ──────────────────────────────
+  function commitNiveau() {
+    sheet.identite.niveau = num(sheet.identite.niveau, 1, 20, 1);
+    sheet.desDeVie.total = sheet.identite.niveau;
+    if (sheet.desDeVie.restants > sheet.desDeVie.total) {
+      sheet.desDeVie.restants = sheet.desDeVie.total;
     }
-    loading = false;
+    touch();
+  }
+
+  function toggleSave(c: CaracKey) {
+    if (readonly) return;
+    sheet.saveProficiencies = { ...sheet.saveProficiencies, [c]: !sheet.saveProficiencies[c] };
+    touch();
+  }
+  function toggleSkill(skill: string) {
+    if (readonly) return;
+    sheet.skillProficiencies = {
+      ...sheet.skillProficiencies,
+      [skill]: !(sheet.skillProficiencies[skill] ?? false),
+    };
+    touch();
+  }
+  function setDeath(key: 'successes' | 'failures', i: number) {
+    if (readonly) return;
+    const cur = sheet.deathSaves[key];
+    sheet.deathSaves = { ...sheet.deathSaves, [key]: i < cur ? i : i + 1 };
+    touch();
+  }
+  function setUsed(row: { level: number; max: number; used: number }, i: number) {
+    if (readonly) return;
+    row.used = i < row.used ? i : i + 1;
+    touch();
+  }
+  function addLevelRow() {
+    if (readonly) return;
+    const next = sheet.sorts.emplacements.reduce((m, e) => Math.max(m, e.level), 0) + 1;
+    if (next > 9) return;
+    sheet.sorts = {
+      ...sheet.sorts,
+      emplacements: [...sheet.sorts.emplacements, { level: next, max: 4, used: 0 }],
+    };
+    touch();
+  }
+  function removeLevelRow(level: number) {
+    if (readonly) return;
+    sheet.sorts = {
+      ...sheet.sorts,
+      emplacements: sheet.sorts.emplacements.filter((e) => e.level !== level),
+      connus: sheet.sorts.connus.filter((sp) => sp.level !== level),
+    };
+    touch();
+  }
+  function addSpell(level: number) {
+    if (readonly) return;
+    sheet.sorts = {
+      ...sheet.sorts,
+      connus: [...sheet.sorts.connus, { slug: `nouveau-sort-${level}`, level, name: 'Nouveau sort' }],
+    };
+    touch();
+  }
+  function removeSpell(slug: string, level: number) {
+    if (readonly) return;
+    sheet.sorts = {
+      ...sheet.sorts,
+      connus: sheet.sorts.connus.filter((sp) => !(sp.slug === slug && sp.level === level)),
+    };
+    touch();
+  }
+  function commitSpellName(sp: { slug: string; name?: string }) {
+    sp.name = txt(sp.name, 100) || txt(sp.slug, 100).replace(/-/g, ' ');
+    touch();
+  }
+
+  function addAttack() {
+    if (readonly) return;
+    sheet.attaques = [
+      ...sheet.attaques,
+      { id: crypto.randomUUID(), name: 'Nouvelle arme', bonus: 0, damage: '1d8' },
+    ];
+    touch();
+  }
+  function removeAttack(id: string) {
+    if (readonly) return;
+    sheet.attaques = sheet.attaques.filter((a) => a.id !== id);
+    touch();
+  }
+  function addCapacite() {
+    if (readonly) return;
+    sheet.capacites = [
+      ...sheet.capacites,
+      { id: crypto.randomUUID(), name: 'Nouvelle capacité', description: '' },
+    ];
+    touch();
+  }
+  function removeCapacite(id: string) {
+    if (readonly) return;
+    sheet.capacites = sheet.capacites.filter((c) => c.id !== id);
+    touch();
+  }
+  function addObjet() {
+    if (readonly) return;
+    sheet.equipement = {
+      ...sheet.equipement,
+      objets: [...sheet.equipement.objets, { name: 'Nouvel objet', qty: 1 }],
+    };
+    touch();
+  }
+  function removeObjet(idx: number) {
+    if (readonly) return;
+    sheet.equipement = {
+      ...sheet.equipement,
+      objets: sheet.equipement.objets.filter((_, i) => i !== idx),
+    };
+    touch();
   }
 
   function rollWith(mod: number, label: string) {
     if (onRoll) onRoll(mod, label);
   }
-
   function onCaracClick(carac: CaracKey) {
     rollWith(getMod(sheet, carac), `Test de ${CARAC_LABELS[carac].toLowerCase()}`);
   }
@@ -106,12 +321,48 @@
     rollWith(getSkillBonus(sheet, skill), `${skill}`);
   }
   function onInitClick() {
-    const bonus = getInitiativeBonus(sheet) ?? 0;
-    rollWith(bonus, "Initiative");
+    rollWith(getInitiativeBonus(sheet) ?? 0, 'Initiative');
   }
   function onAttackClick(atkId: string) {
     const atk = sheet.attaques.find((a) => a.id === atkId);
-    if (atk) rollWith(atk.bonus, `Attaque — ${atk.name}`);
+    if (atk) rollWith(Number(atk.bonus) || 0, `Attaque — ${atk.name}`);
+  }
+
+  function adjustPv(delta: number) {
+    if (readonly || !onPvDelta) return;
+    onPvDelta(delta);
+  }
+
+  async function commitPvTemp() {
+    pvTemp = num(pvTemp, 0, 1000, 0);
+    try {
+      const res = await api.characters.updatePvTemp(char.id, pvTemp);
+      pvTemp = res.pvTemp;
+    } catch {
+      /* la valeur brute reste affichée, resynchronisée au prochain chargement */
+    }
+  }
+
+  async function toggleInspiration() {
+    if (readonly || saveState === 'saving') return;
+    try {
+      const res = await api.characters.toggleInspiration(char.id);
+      sheet.inspiration = res.inspiration;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let pvPct = $derived(
+    Math.max(0, Math.min(100, (pv / Math.max(1, num(sheet.pvMax, 0, 1000, 1))) * 100)),
+  );
+
+  const spellsSorted = $derived(
+    [...sheet.sorts.emplacements].sort((a, b) => a.level - b.level),
+  );
+
+  function spellLabel(sp: { slug: string; name?: string }): string {
+    return sp.name ?? sp.slug.replace(/-/g, ' ');
   }
 </script>
 
@@ -120,8 +371,22 @@
   <header class="sheet-header">
     <a href="/" class="back-btn">← retour à la table</a>
     <div class="header-title">Feuille de personnage</div>
-    <div class="header-hint">Cliquez sur une carac, une compétence ou une attaque pour lancer le dé</div>
+    <div class="header-hint">
+      {#if readonly}
+        Lecture seule{char.role === 'mj' ? '' : " — seule votre fiche est modifiable"}
+      {:else}
+        Les valeurs soulignées au survol sont modifiables · cliquez carac, initiative ou attaque pour
+        lancer le dé
+      {/if}
+    </div>
     <div class="grow"></div>
+    {#if saveState === 'dirty' || saveState === 'saving'}
+      <span class="save-pill">modifications…</span>
+    {:else if saveState === 'saved'}
+      <span class="save-pill ok">enregistré</span>
+    {:else if saveState === 'error'}
+      <span class="save-pill err">{saveError}</span>
+    {/if}
     <span class="hdr-meta">Héros & Dragons · DRS</span>
   </header>
 
@@ -129,31 +394,35 @@
   <div class="char-header-wrap">
     <div class="char-header">
       <div class="char-name-col">
-        <div class="char-name">{sheet.identite.nom}</div>
-        <div class="char-citation">« {sheet.identite.citation ?? ''} »</div>
+        <div class="char-name"><Editable {readonly} w={210} value={sheet.identite.nom} onchange={(v) => (sheet.identite.nom = String(v))} oncommit={touch} ontype={touch} /></div>
+        <div class="char-citation">« <Editable {readonly} w={220} value={sheet.identite.citation ?? ''} onchange={(v) => (sheet.identite.citation = String(v))} placeholder="citation" oncommit={touch} ontype={touch} /> »</div>
       </div>
       <div class="char-divider"></div>
       <div class="char-meta-grid">
         <div class="char-meta-item">
           <div class="meta-label">Classe & niveau</div>
-          <div class="meta-value">{sheet.identite.classe} {sheet.identite.niveau}</div>
+          <div class="meta-value">
+            <Editable {readonly} w={110} value={sheet.identite.classe} onchange={(v) => (sheet.identite.classe = String(v))} oncommit={touch} ontype={touch} />
+            <Editable {readonly} type="number" min={1} max={20} w={34} align="center" value={sheet.identite.niveau} onchange={(v) => (sheet.identite.niveau = Number(v))} oncommit={commitNiveau} ontype={touch} />
+          </div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Race</div>
-          <div class="meta-value">{sheet.identite.race}</div>
+          <div class="meta-value"><Editable {readonly} w={130} value={sheet.identite.race} onchange={(v) => (sheet.identite.race = String(v))} oncommit={touch} ontype={touch} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Historique</div>
-          <div class="meta-value">{sheet.identite.historique}</div>
+          <div class="meta-value"><Editable {readonly} w={130} value={sheet.identite.historique} onchange={(v) => (sheet.identite.historique = String(v))} oncommit={touch} ontype={touch} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Alignement</div>
-          <div class="meta-value">{sheet.identite.alignement}</div>
+          <div class="meta-value"><Editable {readonly} w={120} value={sheet.identite.alignement} onchange={(v) => (sheet.identite.alignement = String(v))} oncommit={touch} ontype={touch} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Points d'expérience</div>
           <div class="meta-value">
-            {sheet.identite.xp.toLocaleString('fr')} <span class="meta-sub">/ {getNextXpThreshold(sheet.identite.xp).toLocaleString('fr')}</span>
+            <Editable {readonly} type="number" min={0} w={70} value={sheet.identite.xp} onchange={(v) => (sheet.identite.xp = Number(v))} oncommit={touch} ontype={touch} />
+            <span class="meta-sub" title="Seuil calculé selon l'XP">/ {getNextXpThreshold(num(sheet.identite.xp, 0, 5e6, 0)).toLocaleString('fr')}</span>
           </div>
         </div>
       </div>
@@ -169,11 +438,13 @@
           class="carac-card"
           style="border-radius: var({['--sketchy-1', '--sketchy-2', '--sketchy-3', '--sketchy-4', '--sketchy-5', '--sketchy-6'][i % 6]});"
           onclick={() => onCaracClick(c)}
-          title="Lancer un test"
+          title="Cliquez pour lancer un test"
         >
           <div class="carac-label">{CARAC_LABELS[c]}</div>
-          <div class="carac-mod">{formatMod(getMod(sheet, c))}</div>
-          <div class="carac-value">{sheet.caracs[c]}</div>
+          <div class="carac-mod" title="Modificateur calculé">{formatMod(getMod(sheet, c))}</div>
+          <div class="carac-value">
+            <Editable {readonly} type="number" min={1} max={30} align="center" w={42} value={sheet.caracs[c]} onchange={(v) => (sheet.caracs[c] = Number(v))} oncommit={() => { sheet.caracs[c] = num(sheet.caracs[c], 1, 30, 10); touch(); }} ontype={touch} />
+          </div>
         </div>
       {/each}
 
@@ -181,6 +452,7 @@
         class="inspi-card"
         class:on={sheet.inspiration}
         onclick={toggleInspiration}
+        title={readonly ? undefined : 'Basculer l’inspiration'}
       >
         <div class="mini-label">INSPIRATION</div>
         <div class="inspi-value">{sheet.inspiration ? 'Oui' : '—'}</div>
@@ -188,7 +460,7 @@
 
       <div class="mastery-card">
         <div class="mini-label">MAÎTRISE</div>
-        <div class="mastery-value">{formatMod(getProficiency(sheet))}</div>
+        <div class="mastery-value" title="Calculée selon le niveau">{formatMod(getProficiency(sheet))}</div>
       </div>
     </div>
 
@@ -197,10 +469,19 @@
       <div class="block saves-block">
         <BlockLabel text="Sauvegardes" />
         {#each caracs as c (c)}
-          <div class="save-row" onclick={() => onSaveClick(c)}>
-            <span class="dot" class:prof={sheet.saveProficiencies[c]}>{sheet.saveProficiencies[c] ? '●' : '○'}</span>
+          <div class="save-row" onclick={() => onSaveClick(c)} title="Cliquez pour lancer la sauvegarde">
+            <button
+              class="dot"
+              class:prof={sheet.saveProficiencies[c]}
+              class:clickable={!readonly}
+              title={readonly ? undefined : 'Maîtrise : cliquez pour basculer'}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleSave(c);
+              }}
+            >{sheet.saveProficiencies[c] ? '●' : '○'}</button>
             <span class="save-name">{saveNames[c]}</span>
-            <span class="save-bonus">{formatMod(getSaveBonus(sheet, c))}</span>
+            <span class="save-bonus" title="mod + maîtrise">{formatMod(getSaveBonus(sheet, c))}</span>
           </div>
         {/each}
       </div>
@@ -208,25 +489,34 @@
       <div class="block skills-block">
         <BlockLabel text="Compétences" />
         {#each SKILLS as skill (skill)}
-          <div class="skill-row" onclick={() => onSkillClick(skill)}>
-            <span class="dot" class:prof={sheet.skillProficiencies[skill] ?? false}>{(sheet.skillProficiencies[skill] ?? false) ? '●' : '○'}</span>
+          <div class="skill-row" onclick={() => onSkillClick(skill)} title="Cliquez pour lancer le jet">
+            <button
+              class="dot"
+              class:prof={sheet.skillProficiencies[skill] ?? false}
+              class:clickable={!readonly}
+              title={readonly ? undefined : 'Maîtrise : cliquez pour basculer'}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleSkill(skill);
+              }}
+            >{sheet.skillProficiencies[skill] ?? false ? '●' : '○'}</button>
             <span class="skill-name">
               {skill}
               <span class="skill-ab">{SKILL_CARAC[skill].toUpperCase()}</span>
             </span>
-            <span class="skill-bonus">{formatMod(getSkillBonus(sheet, skill))}</span>
+            <span class="skill-bonus" title="mod + maîtrise">{formatMod(getSkillBonus(sheet, skill))}</span>
           </div>
         {/each}
       </div>
 
       <div class="pp-block">
         <span class="pp-label">Perception passive</span>
-        <span class="pp-value">{getPassivePerception(sheet)}</span>
+        <span class="pp-value" title="Calculée : 10 + mod Sagesse">{getPassivePerception(sheet)}</span>
       </div>
 
       <div class="langues-block">
         <div class="langues-title">Langues & maîtrises</div>
-        <div class="langues-text">{sheet.languesEtMaitrises}</div>
+        <Editable {readonly} type="area" value={sheet.languesEtMaitrises} onchange={(v) => (sheet.languesEtMaitrises = String(v))} placeholder="Commun, elfique · armures · outils…" oncommit={touch} ontype={touch} />
       </div>
     </div>
 
@@ -235,15 +525,21 @@
       <div class="combat-stats">
         <div class="stat-card" style="border-radius: var(--sketchy-3);">
           <div class="mini-label">CA</div>
-          <div class="stat-value big">{sheet.ca}</div>
+          <div class="stat-value big">
+            <Editable {readonly} type="number" min={0} max={40} align="center" w={48} className="ed-big" value={sheet.ca} onchange={(v) => (sheet.ca = Number(v))} oncommit={() => { sheet.ca = num(sheet.ca, 0, 40, 10); touch(); }} ontype={touch} />
+          </div>
         </div>
-        <div class="stat-card clickable" style="border-radius: var(--sketchy-6);" onclick={onInitClick} title="Lancer l'initiative">
+        <div class="stat-card clickable" style="border-radius: var(--sketchy-6);" onclick={onInitClick} title="Cliquez pour lancer l'initiative">
           <div class="mini-label">INITIATIVE</div>
-          <div class="stat-value big accent">{formatMod(getInitiativeBonus(sheet))}</div>
+          <div class="stat-value big accent">
+            <Editable {readonly} type="number" min={-5} max={20} align="center" w={44} className="ed-big ed-accent" value={sheet.initiativeBonus} onchange={(v) => (sheet.initiativeBonus = Number(v))} oncommit={() => { sheet.initiativeBonus = num(sheet.initiativeBonus, -5, 20, 0); touch(); }} ontype={touch} />
+          </div>
         </div>
         <div class="stat-card" style="border-radius: var(--sketchy-8);">
           <div class="mini-label">VITESSE</div>
-          <div class="stat-value big">{sheet.vitesse}</div>
+          <div class="stat-value big">
+            <Editable {readonly} align="center" w={72} className="ed-big" value={sheet.vitesse} onchange={(v) => (sheet.vitesse = String(v))} oncommit={touch} ontype={touch} />
+          </div>
         </div>
       </div>
 
@@ -253,25 +549,46 @@
           <div class="pv-bar-bg">
             <div class="pv-bar-fill" style="width: {pvPct}%;"></div>
           </div>
-          {#if char.canEdit}
-            <button class="pv-btn minus" onclick={() => adjustPv(-1)} disabled={loading}>−</button>
-            <button class="pv-btn plus" onclick={() => adjustPv(1)} disabled={loading}>+</button>
+          {#if !readonly}
+            <button class="pv-btn minus" onclick={() => adjustPv(-1)} disabled={!onPvDelta}>−</button>
+            <button class="pv-btn plus" onclick={() => adjustPv(1)} disabled={!onPvDelta}>+</button>
           {/if}
         </div>
         <div class="pv-extras">
-          <span>PV {pv} / {char.pvMax}</span>
-          <span>PV temporaires : {pvTemp}</span>
-          <span>Dés de vie : {sheet.desDeVie.restants}/{sheet.desDeVie.total} × d{sheet.desDeVie.faces}</span>
+          <span>PV {pv} /
+            {#if readonly}
+              {sheet.pvMax}
+            {:else}
+              <Editable type="number" min={0} max={1000} align="center" w={44} value={sheet.pvMax} onchange={(v) => (sheet.pvMax = Number(v))} oncommit={() => { sheet.pvMax = num(sheet.pvMax, 0, 1000, 0); touch(); }} ontype={touch} />
+            {/if}
+          </span>
+          <span>PV temporaires :
+            {#if readonly}
+              {pvTemp}
+            {:else}
+              <Editable type="number" min={0} max={1000} align="center" w={40} value={pvTemp} onchange={(v) => (pvTemp = Number(v))} oncommit={commitPvTemp} />
+            {/if}
+          </span>
+          <span>
+            Dés de vie :
+            {#if readonly}
+              {sheet.desDeVie.restants}/{sheet.desDeVie.total} × d{sheet.desDeVie.faces}
+            {:else}
+              <Editable type="number" min={0} w={30} align="center" value={sheet.desDeVie.restants} onchange={(v) => (sheet.desDeVie.restants = Number(v))} oncommit={() => { sheet.desDeVie.restants = num(sheet.desDeVie.restants, 0, sheet.desDeVie.total, 0); touch(); }} ontype={touch} />
+              /<span title="Déterminé par le niveau">{sheet.identite.niveau}</span> × d
+              <Editable type="number" min={4} max={12} w={34} align="center" value={sheet.desDeVie.faces} onchange={(v) => (sheet.desDeVie.faces = Number(v))} oncommit={() => { sheet.desDeVie.faces = num(sheet.desDeVie.faces, 4, 12, 8); touch(); }} ontype={touch} />
+            {/if}
+          </span>
         </div>
         <div class="death-saves">
           <span class="ds-title">Jets contre la mort</span>
           <span class="ds-sub">réussites</span>
           {#each [0, 1, 2] as i (i)}
-            <span class="ds-pip ok" class:filled={i < sheet.deathSaves.successes}>{i < sheet.deathSaves.successes ? '⦿' : '○'}</span>
+            <button class="ds-pip ok" class:filled={i < sheet.deathSaves.successes} disabled={readonly} onclick={() => setDeath('successes', i)}>{i < sheet.deathSaves.successes ? '⦿' : '○'}</button>
           {/each}
           <span class="ds-sub ko-margin">échecs</span>
           {#each [0, 1, 2] as i (i)}
-            <span class="ds-pip ko" class:filled={i < sheet.deathSaves.failures}>{i < sheet.deathSaves.failures ? '⦿' : '○'}</span>
+            <button class="ds-pip ko" class:filled={i < sheet.deathSaves.failures} disabled={readonly} onclick={() => setDeath('failures', i)}>{i < sheet.deathSaves.failures ? '⦿' : '○'}</button>
           {/each}
         </div>
       </div>
@@ -282,40 +599,81 @@
           <span>Arme</span>
           <span>Att.</span>
           <span>Dégâts</span>
+          <span></span>
         </div>
         {#each sheet.attaques as atk (atk.id)}
-          <div class="attack-row" onclick={() => onAttackClick(atk.id)} title="Jet d'attaque">
-            <span class="atk-name">{atk.name}</span>
-            <span class="atk-bonus">{formatMod(atk.bonus)}</span>
-            <span class="atk-dmg">{atk.damage}</span>
+          <div class="attack-row" onclick={() => onAttackClick(atk.id)} title="Cliquez pour lancer l'attaque">
+            <span class="atk-name"><Editable {readonly} w={130} value={atk.name} onchange={(v) => (atk.name = String(v))} oncommit={touch} ontype={touch} /></span>
+            <span class="atk-bonus"><Editable {readonly} type="number" min={-5} max={30} align="center" w={38} className="ed-accent" value={atk.bonus} onchange={(v) => (atk.bonus = Number(v))} oncommit={() => { atk.bonus = num(atk.bonus, -5, 30, 0); touch(); }} ontype={touch} /></span>
+            <span class="atk-dmg"><Editable {readonly} w={90} value={atk.damage} onchange={(v) => (atk.damage = String(v))} oncommit={touch} ontype={touch} /></span>
+            {#if !readonly}
+              <button class="row-x" title="Retirer cette attaque" onclick={(e) => { e.stopPropagation(); removeAttack(atk.id); }}>✕</button>
+            {/if}
           </div>
         {/each}
+        {#if !readonly}
+          <button class="add-row" onclick={addAttack}>+ attaque</button>
+        {/if}
       </div>
 
       {#if getShowSpells(sheet)}
         <div class="block spells-block">
-          <BlockLabel text={`Sorts de ${sheet.identite.classe.toLowerCase()}`} />
+          <BlockLabel text={`Sorts de ${(sheet.identite.classe || '…').toLowerCase()}`} />
           <div class="spell-stats">
-            <span>DD sauvegarde <strong>{getSpellSaveDc(sheet)}</strong></span>
-            <span>Att. de sort <strong class="accent">{formatMod(getSpellAttackBonus(sheet) ?? 0)}</strong></span>
-            <span>Carac. <strong>{sheet.sorts.caracIncantation?.toUpperCase()}</strong></span>
+            <span>DD sauvegarde <strong title="Calculé : 8 + maîtrise + mod">{getSpellSaveDc(sheet)}</strong></span>
+            <span>Att. de sort <strong class="accent" title="Calculé : maîtrise + mod">{formatMod(getSpellAttackBonus(sheet) ?? 0)}</strong></span>
+            <span>Carac.
+              {#if readonly}
+                <strong>{sheet.sorts.caracIncantation?.toUpperCase() ?? '—'}</strong>
+              {:else}
+                <select
+                  class="carac-select"
+                  bind:value={sheet.sorts.caracIncantation}
+                  onchange={touch}
+                >
+                  <option value={null}>—</option>
+                  <option value="for">FOR</option>
+                  <option value="dex">DEX</option>
+                  <option value="con">CON</option>
+                  <option value="int">INT</option>
+                  <option value="sag">SAG</option>
+                  <option value="cha">CHA</option>
+                </select>
+              {/if}
+            </span>
           </div>
-          {#each sheet.sorts.emplacements as lv (lv.level)}
+          {#each spellsSorted as lv (lv.level)}
             <div class="spell-level">
               <div class="sl-header">
                 <span class="sl-level">niveau {lv.level}</span>
                 <span class="sl-caption">emplacements :</span>
                 {#each Array(lv.max) as _, i (i)}
-                  <span class="slot-pip" class:used={i < lv.used}>{i < lv.used ? '⦿' : '○'}</span>
+                  <button class="slot-pip" class:used={i < lv.used} disabled={readonly} title={readonly ? undefined : 'Cocher / libérer'} onclick={() => setUsed(lv, i)}>{i < lv.used ? '⦿' : '○'}</button>
                 {/each}
+                {#if !readonly}
+                  <span class="sl-caption">max</span>
+                  <Editable type="number" min={0} max={16} w={34} align="center" value={lv.max} onchange={(v) => (lv.max = Number(v))} oncommit={() => { lv.max = num(lv.max, 0, 16, 0); if (lv.used > lv.max) lv.used = lv.max; touch(); }} ontype={touch} />
+                  <button class="row-x" title="Supprimer ce palier" onclick={() => removeLevelRow(lv.level)}>✕</button>
+                {/if}
               </div>
               <div class="sl-spells">
                 {#each sheet.sorts.connus.filter((s) => s.level === lv.level) as sp (sp.slug)}
-                  <span class="spell-chip">{sp.slug.replace(/-/g, ' ')}</span>
+                  <span class="spell-chip">
+                    <Editable {readonly} w={Math.max(60, spellLabel(sp).length * 7 + 8)} value={spellLabel(sp)} onchange={(v) => (sp.name = String(v))} oncommit={() => commitSpellName(sp)} ontype={touch} />
+                    {#if !readonly}
+                      <button class="chip-x" title="Retirer" onclick={() => removeSpell(sp.slug, lv.level)}>✕</button>
+                    {/if}
+                  </span>
                 {/each}
+                {#if !readonly}
+                  <button class="add-spell" onclick={() => addSpell(lv.level)}>+ sort</button>
+                {/if}
               </div>
             </div>
           {/each}
+          {#if !readonly}
+            <button class="add-row" onclick={addLevelRow}>+ palier de sorts</button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -326,44 +684,49 @@
         <BlockLabel text="Capacités & traits" />
         {#each sheet.capacites as trait (trait.id)}
           <div class="trait-item">
-            <div class="trait-name">{trait.name}</div>
-            <div class="trait-desc">{trait.description}</div>
+            <div class="trait-name-row">
+              <span class="trait-name"><Editable {readonly} w={180} value={trait.name} onchange={(v) => (trait.name = String(v))} oncommit={touch} ontype={touch} /></span>
+              {#if !readonly}
+                <button class="row-x" title="Retirer" onclick={() => removeCapacite(trait.id)}>✕</button>
+              {/if}
+            </div>
+            <div class="trait-desc"><Editable {readonly} type="area" value={trait.description} onchange={(v) => (trait.description = String(v))} placeholder="description…" oncommit={touch} ontype={touch} /></div>
           </div>
         {/each}
+        {#if !readonly}
+          <button class="add-row" onclick={addCapacite}>+ capacité</button>
+        {/if}
       </div>
 
       <div class="block persona-block">
         <BlockLabel text="Personnalité" />
-        {#if sheet.personnalite.traits}
-          <div class="persona-item"><span class="persona-key">traits — </span><span class="persona-val">{sheet.personnalite.traits}</span></div>
-        {/if}
-        {#if sheet.personnalite.ideaux}
-          <div class="persona-item"><span class="persona-key">idéal — </span><span class="persona-val">{sheet.personnalite.ideaux}</span></div>
-        {/if}
-        {#if sheet.personnalite.liens}
-          <div class="persona-item"><span class="persona-key">lien — </span><span class="persona-val">{sheet.personnalite.liens}</span></div>
-        {/if}
-        {#if sheet.personnalite.defauts}
-          <div class="persona-item"><span class="persona-key">défaut — </span><span class="persona-val">{sheet.personnalite.defauts}</span></div>
-        {/if}
+        <div class="persona-item"><span class="persona-key">traits — </span><Editable {readonly} className="ed-persona" value={sheet.personnalite.traits ?? ''} onchange={(v) => (sheet.personnalite.traits = String(v))} placeholder="…" oncommit={touch} ontype={touch} /></div>
+        <div class="persona-item"><span class="persona-key">idéal — </span><Editable {readonly} className="ed-persona" value={sheet.personnalite.ideaux ?? ''} onchange={(v) => (sheet.personnalite.ideaux = String(v))} placeholder="…" oncommit={touch} ontype={touch} /></div>
+        <div class="persona-item"><span class="persona-key">lien — </span><Editable {readonly} className="ed-persona" value={sheet.personnalite.liens ?? ''} onchange={(v) => (sheet.personnalite.liens = String(v))} placeholder="…" oncommit={touch} ontype={touch} /></div>
+        <div class="persona-item"><span class="persona-key">défaut — </span><Editable {readonly} className="ed-persona" value={sheet.personnalite.defauts ?? ''} onchange={(v) => (sheet.personnalite.defauts = String(v))} placeholder="…" oncommit={touch} ontype={touch} /></div>
       </div>
 
       <div class="block equip-block">
         <BlockLabel text="Équipement" />
         <div class="bourse">
-          <span>{sheet.equipement.bourse.po} <span class="coin po">po</span></span>
-          <span>{sheet.equipement.bourse.pa} <span class="coin pa">pa</span></span>
-          <span>{sheet.equipement.bourse.pc} <span class="coin pc">pc</span></span>
+          <span>{#if readonly}{sheet.equipement.bourse.po}{:else}<Editable type="number" min={0} w={52} align="center" value={sheet.equipement.bourse.po} onchange={(v) => (sheet.equipement.bourse.po = Number(v))} oncommit={() => { sheet.equipement.bourse.po = num(sheet.equipement.bourse.po, 0, 1e6, 0); touch(); }} ontype={touch} />{/if} <span class="coin po">po</span></span>
+          <span>{#if readonly}{sheet.equipement.bourse.pa}{:else}<Editable type="number" min={0} w={52} align="center" value={sheet.equipement.bourse.pa} onchange={(v) => (sheet.equipement.bourse.pa = Number(v))} oncommit={() => { sheet.equipement.bourse.pa = num(sheet.equipement.bourse.pa, 0, 1e6, 0); touch(); }} ontype={touch} />{/if} <span class="coin pa">pa</span></span>
+          <span>{#if readonly}{sheet.equipement.bourse.pc}{:else}<Editable type="number" min={0} w={52} align="center" value={sheet.equipement.bourse.pc} onchange={(v) => (sheet.equipement.bourse.pc = Number(v))} oncommit={() => { sheet.equipement.bourse.pc = num(sheet.equipement.bourse.pc, 0, 1e6, 0); touch(); }} ontype={touch} />{/if} <span class="coin pc">pc</span></span>
         </div>
         <div class="equip-list">
-          {#each sheet.equipement.objets as item (item.name)}
+          {#each sheet.equipement.objets as item, idx (item.name + idx)}
             <div class="equip-row">
-              <span class="equip-name">{item.name}</span>
-              <span class="equip-qty">×{item.qty}</span>
+              <span class="equip-name"><Editable {readonly} w={190} value={item.name} onchange={(v) => (item.name = String(v))} oncommit={touch} ontype={touch} /></span>
+              <span class="equip-qty">×<Editable {readonly} type="number" min={0} max={9999} w={40} align="center" value={item.qty} onchange={(v) => (item.qty = Number(v))} oncommit={() => { item.qty = num(item.qty, 0, 9999, 1); touch(); }} ontype={touch} /></span>
+              {#if !readonly}
+                <button class="row-x" title="Jeter cet objet" onclick={() => removeObjet(idx)}>✕</button>
+              {/if}
             </div>
           {/each}
         </div>
-        <div class="equip-note">Le sac complet se gère depuis l'onglet Inventaire de la table</div>
+        {#if !readonly}
+          <button class="add-row" onclick={addObjet}>+ objet</button>
+        {/if}
       </div>
     </div>
   </div>
@@ -415,6 +778,26 @@
     font-size: 12px;
     color: var(--text-3);
   }
+  .save-pill {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--text-2);
+    border: 1.5px dashed var(--border);
+    border-radius: 10px 3px 12px 3px;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .save-pill.ok {
+    color: #8ab58d;
+    border-style: solid;
+    border-color: var(--border);
+  }
+  .save-pill.err {
+    color: var(--accent-text);
+    border-style: solid;
+    border-color: var(--accent-border);
+  }
 
   .char-header-wrap {
     max-width: 1290px;
@@ -435,7 +818,7 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    min-width: 220px;
+    min-width: 230px;
   }
   .char-name {
     font-family: var(--font-title);
@@ -459,6 +842,9 @@
     gap: 8px 18px;
     align-content: center;
   }
+  .char-meta-item {
+    min-width: 0;
+  }
   .meta-label {
     font-weight: 700;
     font-size: 10.5px;
@@ -470,6 +856,10 @@
     font-size: 14.5px;
     font-weight: 600;
     color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    flex-wrap: wrap;
   }
   .meta-sub {
     font-size: 10.5px;
@@ -482,7 +872,7 @@
     margin: 16px auto 0;
     padding: 0 22px;
     display: grid;
-    grid-template-columns: 172px 236px 1fr 1fr;
+    grid-template-columns: 178px 242px 1fr 1fr;
     gap: 14px;
     align-items: start;
   }
@@ -523,11 +913,12 @@
     font-family: var(--font-title);
     font-size: 26px;
     color: var(--accent-text);
-    line-height: 1;
+    line-height: 1.2;
   }
   .carac-value {
-    font-size: 12px;
     color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.1;
   }
 
   .inspi-card {
@@ -586,8 +977,18 @@
   .save-row:hover { color: var(--accent-text); }
   .save-name { flex: 1; }
   .save-bonus { font-size: 12.5px; }
-  .dot { font-size: 12.5px; color: var(--border); }
+
+  .dot {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--border);
+    line-height: 1;
+  }
   .dot.prof { color: var(--accent-text); }
+  .dot.clickable { cursor: pointer; }
 
   .skill-row {
     display: flex;
@@ -624,8 +1025,7 @@
     border-radius: 12px;
     padding: 9px 13px;
   }
-  .langues-title { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
-  .langues-text { font-size: 12.5px; line-height: 1.55; margin-top: 3px; }
+  .langues-title { font-size: 13.5px; font-weight: 500; color: var(--text-2); margin-bottom: 4px; }
 
   /* ── Colonne 3: Combat ── */
   .combat-stats {
@@ -648,8 +1048,13 @@
     background: var(--bg);
   }
   .stat-value { color: var(--heading); }
-  .stat-value.big { font-family: var(--font-title); font-size: 23px; line-height: 1; }
+  .stat-value.big { font-family: var(--font-title); font-size: 23px; line-height: 1.2; }
   .stat-value.accent { color: var(--accent-text); }
+  :global(.ed-big) {
+    font-family: var(--font-title);
+    font-size: 23px;
+  }
+  :global(.ed-accent) { color: var(--accent-text); }
 
   .pv-block {
     border: 2px solid var(--border);
@@ -688,7 +1093,9 @@
     color: var(--text-2);
     margin-top: 5px;
     flex-wrap: wrap;
+    align-items: baseline;
   }
+  .pv-extras span { display: inline-flex; align-items: baseline; gap: 3px; }
 
   .death-saves {
     display: flex;
@@ -702,15 +1109,25 @@
   .ds-title { font-size: 13px; font-weight: 500; color: var(--text-2); margin-right: 5px; }
   .ds-sub { font-size: 11.5px; color: var(--text-2); }
   .ko-margin { margin-left: 6px; }
-  .ds-pip { font-size: 14px; color: var(--border); cursor: pointer; user-select: none; }
+  .ds-pip {
+    font-size: 14px;
+    color: var(--border);
+    background: none;
+    border: none;
+    padding: 0 1px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+  }
+  .ds-pip:disabled { cursor: default; }
   .ds-pip.ok.filled { color: #8ab58d; }
   .ds-pip.ko.filled { color: var(--accent-text); }
 
   .attacks-block { border-radius: 12px 235px 14px 245px / 235px 12px 255px 14px; }
   .attacks-header {
     display: grid;
-    grid-template-columns: 1fr 58px 1fr;
-    gap: 8px;
+    grid-template-columns: 1fr 58px 1fr 20px;
+    gap: 4px 8px;
     font-weight: 700;
     font-size: 10.5px;
     color: var(--text-3);
@@ -721,18 +1138,41 @@
   }
   .attack-row {
     display: grid;
-    grid-template-columns: 1fr 58px 1fr;
-    gap: 8px;
-    padding: 4px 0;
+    grid-template-columns: 1fr 58px 1fr 20px;
+    gap: 4px 8px;
+    padding: 3px 0;
     border-bottom: 1px dashed var(--border-soft);
     font-size: 12.5px;
     cursor: pointer;
-    align-items: baseline;
+    align-items: center;
   }
-  .attack-row:hover { color: var(--accent-text); }
-  .atk-name { font-weight: 600; }
+  .atk-name { font-weight: 600; min-width: 0; }
   .atk-bonus { font-size: 12.5px; color: var(--accent-text); }
-  .atk-dmg { font-size: 12px; }
+  .atk-dmg { font-size: 12px; color: var(--text); }
+
+  .row-x {
+    font-family: var(--font-body); font-weight: 700; font-size: 10px;
+    width: 17px; height: 17px; padding: 0;
+    background: transparent; border: 1.5px dashed transparent; border-radius: 6px;
+    color: var(--text-3); cursor: pointer; line-height: 1;
+    opacity: 0; transition: opacity 0.12s;
+    align-self: center; justify-self: center;
+  }
+  .attack-row:hover .row-x,
+  .trait-item:hover .row-x,
+  .equip-row:hover .row-x,
+  .sl-header:hover .row-x,
+  .row-x:focus { opacity: 1; }
+  .row-x:hover { border-color: var(--accent-border); color: var(--accent-text); }
+
+  .add-row {
+    font-family: var(--font-body); font-size: 12px; font-weight: 500;
+    width: 100%; text-align: left; margin-top: 5px;
+    padding: 4px 9px; background: transparent;
+    border: 2px dashed var(--border); border-radius: 10px;
+    color: var(--text-2); cursor: pointer;
+  }
+  .add-row:hover { border-color: var(--accent); color: var(--text); }
 
   .spells-block { border-radius: var(--sketchy-5); }
   .spell-stats {
@@ -742,36 +1182,85 @@
     color: var(--text-2);
     border-bottom: 1px solid var(--border-soft);
     padding-bottom: 6px;
+    flex-wrap: wrap;
+    align-items: baseline;
   }
   .spell-stats strong { color: var(--text); }
   .spell-stats strong.accent { color: var(--accent-text); }
+  .carac-select {
+    font-family: var(--font-body);
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--heading);
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    padding: 1px 4px;
+    outline: none;
+  }
   .spell-level { margin-top: 7px; }
-  .sl-header { display: flex; align-items: baseline; gap: 8px; }
+  .sl-header { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .sl-level { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
   .sl-caption { font-size: 12px; color: var(--text-3); }
-  .sl-slots { display: flex; gap: 4px; margin: 4px 0; }
-  .slot-pip { font-size: 14px; color: var(--border); cursor: pointer; user-select: none; }
+  .slot-pip {
+    font-size: 14px;
+    color: var(--border);
+    background: none;
+    border: none;
+    padding: 0 1px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+  }
+  .slot-pip:disabled { cursor: default; }
   .slot-pip.used { color: var(--accent-text); }
-  .sl-spells { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .sl-spells { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; align-items: center; }
   .spell-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     font-size: 12px;
-    padding: 2px 10px;
+    padding: 1px 4px 1px 8px;
     border: 2px solid var(--accent-border);
     border-radius: 10px 3px 12px 3px;
     color: var(--accent-text);
     background: var(--bg);
   }
+  .chip-x {
+    font-family: var(--font-body); font-weight: 700; font-size: 9px;
+    background: none; border: none; color: var(--text-3); cursor: pointer; padding: 0 2px;
+  }
+  .chip-x:hover { color: var(--accent-text); }
+  .add-spell {
+    font-family: var(--font-body); font-size: 11.5px;
+    background: transparent; border: 1.5px dashed var(--border); border-radius: 10px 3px 12px 3px;
+    color: var(--text-2); cursor: pointer; padding: 2px 9px;
+  }
+  .add-spell:hover { border-color: var(--accent); color: var(--accent-text); }
 
   /* ── Colonne 4 ── */
   .traits-block { border-radius: var(--sketchy-3); }
-  .trait-item { padding: 4px 0; border-bottom: 1px dashed var(--border-soft); }
-  .trait-name { font-size: 13px; font-weight: 600; color: var(--text); }
-  .trait-desc { font-size: 12px; color: var(--text-2); line-height: 1.45; margin-top: 1px; }
+  .trait-item { padding: 5px 0; border-bottom: 1px dashed var(--border-soft); }
+  .trait-name-row { display: flex; align-items: center; gap: 4px; }
+  .trait-name { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; }
+  .trait-desc { font-size: 12px; color: var(--text-2); line-height: 1.45; margin-top: 2px; }
 
   .persona-block { border-radius: 12px 220px 12px 225px / 225px 12px 255px 12px; }
-  .persona-item { padding: 3px 0; border-bottom: 1px dashed var(--border-soft); }
-  .persona-key { font-size: 13px; font-weight: 500; color: var(--accent-text); }
-  .persona-val { font-style: italic; font-size: 12.5px; color: var(--text-2); }
+  .persona-item {
+    padding: 3px 0;
+    border-bottom: 1px dashed var(--border-soft);
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+  }
+  .persona-key { font-size: 13px; font-weight: 500; color: var(--accent-text); flex: none; }
+  :global(.ed-persona) {
+    font-style: italic;
+    font-size: 12.5px;
+    color: var(--text-2);
+    flex: 1;
+    min-width: 0;
+  }
 
   .equip-block { border-radius: var(--sketchy-5); }
   .bourse {
@@ -782,18 +1271,19 @@
     border-bottom: 1px solid var(--border-soft);
     padding-bottom: 6px;
   }
+  .bourse span { display: inline-flex; align-items: baseline; gap: 3px; }
   .coin { font-size: 10.5px; }
   .coin.po { color: var(--coin-po); }
   .coin.pa { color: var(--coin-pa); }
   .coin.pc { color: var(--coin-pc); }
   .equip-row {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
+    gap: 6px;
     font-size: 12.5px;
-    padding: 3px 0;
+    padding: 2px 0;
     border-bottom: 1px dashed var(--border-soft);
   }
-  .equip-qty { font-size: 12px; color: var(--text-2); }
-  .equip-note { font-size: 12.5px; color: var(--text-3); margin-top: 5px; }
+  .equip-name { flex: 1; min-width: 0; }
+  .equip-qty { font-size: 12px; color: var(--text-2); display: inline-flex; align-items: center; gap: 2px; }
 </style>

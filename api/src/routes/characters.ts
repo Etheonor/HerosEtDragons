@@ -393,7 +393,12 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
 
   await db
     .update(schema.characters)
-    .set({ sheet: body, pvMax: body.pvMax, updatedAt: new Date() })
+    .set({
+      sheet: body,
+      pvMax: body.pvMax,
+      name: body.identite?.nom?.trim() || char.name,
+      updatedAt: new Date(),
+    })
     .where(eq(schema.characters.id, charId));
 
   await notifyTable(c, char.campaignId, charId);
