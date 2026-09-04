@@ -81,7 +81,7 @@
   <div class="center"><p class="error">{error}</p></div>
 {:else if char}
   <CharacterSheet {char} {onRoll} {onPvDelta} />
-  <DiceOverlay anim={store?.diceAnim ?? null} fixed />
+  <DiceOverlay anim={store?.diceAnim ?? null} />
 {/if}
 
 <style>

@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { DiceAnim } from '$lib/ws';
 
-  let { anim, fixed = false }: { anim: DiceAnim | null; fixed?: boolean } = $props();
+  let {
+    anim,
+    duration = 3200,
+  }: { anim: DiceAnim | null; duration?: number } = $props();
 
   let currentFace = $state<number | string>('?');
   let rotating = $state(false);
@@ -55,7 +58,7 @@
       rotation = Math.random() * 10 - 5;
     }, 75);
 
-    const duration = 1200;
+    const dur = Math.max(800, duration);
 
     stopTimer = setTimeout(() => {
       if (tick) clearInterval(tick);
@@ -63,11 +66,11 @@
       rotating = false;
       rotation = -2;
       currentFace = a.n > 1 ? a.total : a.faces[0] ?? a.total;
-    }, duration);
+    }, dur);
 
     hideTimer = setTimeout(() => {
       visible = false;
-    }, duration + 1700);
+    }, dur + 1700);
   }
 
   function formatDetail(d: DiceAnim): string {
@@ -79,7 +82,7 @@
 </script>
 
 {#if visible && anim}
-  <div class="dice-overlay" class:fixed>
+  <div class="dice-overlay">
     <div class="dice-column">
       <div
         class="dice-shape"
@@ -101,9 +104,6 @@
 
 <style>
   .dice-overlay {
-    position: absolute;
-  }
-  .dice-overlay.fixed {
     position: fixed;
     inset: 0;
     display: flex;
