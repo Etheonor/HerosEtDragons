@@ -119,6 +119,7 @@ export interface CharacterSheet {
   languesEtMaitrises: string;
   portrait?: string | null;
   racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
+  pvAuto?: boolean;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];

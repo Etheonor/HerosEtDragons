@@ -11,7 +11,7 @@ import {
   type Carac,
   type Skill,
 } from "$shared/rules";
-import { findRace, racialBonus } from "$shared/hd";
+import { findClass, findRace, racialBonus } from "$shared/hd";
 import type { CharacterSheet } from "./api";
 
 export type CaracKey = "for" | "dex" | "con" | "int" | "sag" | "cha";
@@ -49,6 +49,19 @@ export function racialBreakdown(sheet: CharacterSheet): Partial<Record<CaracKey,
 
 export function effectiveCarac(sheet: CharacterSheet, carac: CaracKey): number {
   return sheet.caracs[carac] + (racialBreakdown(sheet)[carac] ?? 0);
+}
+
+/**
+ * PV officiels H&D : niveau 1 = DV max + mod CON ; ensuite moyenne du DV
+ * (moitié + 1) + mod CON par niveau. null si la classe n'est pas reconnue.
+ */
+export function suggestedPvMax(sheet: CharacterSheet): number | null {
+  const c = findClass(sheet.identite?.classe);
+  if (!c) return null;
+  const con = abilityModifier(effectiveCarac(sheet, "con"));
+  const level = Math.max(1, Math.min(20, sheet.identite?.niveau || 1));
+  const avg = c.hitDie / 2 + 1;
+  return Math.max(1, c.hitDie + con + (level - 1) * (avg + con));
 }
 
 export function getMod(sheet: CharacterSheet, carac: CaracKey): number {

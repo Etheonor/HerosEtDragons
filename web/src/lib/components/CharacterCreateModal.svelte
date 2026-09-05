@@ -283,6 +283,7 @@
           vitesse: vitesse.trim() || '9 m',
           initiativeBonus: dexMod,
           pvMax: Math.max(1, Math.min(100, Math.trunc(pvMax) || pvSuggere)),
+          pvAuto: !pvEdited,
           desDeVie: { faces: classe.hitDie, total: 1, restants: 1 },
           sorts: { caracIncantation: classe.casting, connus: [], emplacements: [] },
           couleurPion: couleur,

@@ -33,7 +33,7 @@
   } from '@rollwith/shared/hd';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary } from '$lib/hd-text';
-  import { racialBreakdown, effectiveCarac } from '$lib/char-utils';
+  import { racialBreakdown, effectiveCarac, suggestedPvMax } from '$lib/char-utils';
 
   let {
     char,
@@ -95,6 +95,23 @@
   // ── Apport course/classe (hd.ts, données officielles DRS) ────
   const raceInfo = $derived(findRace(sheet.identite?.race));
   const classInfo = $derived(findClass(sheet.identite?.classe));
+
+  // PV auto : temps que le joueur ne les a pas forcés, pvMax suit
+  // DV + niveau + CON effective (modification instantanée, autosave).
+  const pvAutoOn = $derived(sheet.pvAuto !== false);
+  const pvSuggested = $derived(suggestedPvMax(sheet));
+  $effect(() => {
+    if (readonly || !pvAutoOn || pvSuggested === null) return;
+    if (sheet.pvMax !== pvSuggested) {
+      sheet.pvMax = pvSuggested;
+      touch();
+    }
+  });
+  function setPvAuto(on: boolean) {
+    sheet.pvAuto = on;
+    if (on && pvSuggested !== null) sheet.pvMax = pvSuggested;
+    touch();
+  }
   // ── Bonus raciaux : TOUJOURS calculés, aucune action requise ──
   // char-utils.effectiveCarac = base + breakdown (sauvegardé ou déduit de la
   // table officielle). Seule exception logique : les bonus « au choix » du
@@ -714,7 +731,14 @@
             {#if readonly}
               {sheet.pvMax}
             {:else}
-              <Editable type="number" min={0} max={1000} align="center" w={44} value={sheet.pvMax} onchange={(v) => (sheet.pvMax = Number(v))} oncommit={() => { sheet.pvMax = num(sheet.pvMax, 0, 1000, 0); touch(); }} ontype={touch} />
+              <Editable type="number" min={0} max={1000} align="center" w={44} value={sheet.pvMax} onchange={(v) => (sheet.pvMax = Number(v))} oncommit={() => { if (pvAutoOn && pvSuggested !== null && sheet.pvMax !== pvSuggested) sheet.pvAuto = false; sheet.pvMax = num(sheet.pvMax, 0, 1000, 0); touch(); }} ontype={touch} />
+              {#if pvSuggested !== null}
+                {#if pvAutoOn}
+                  <button class="pv-auto-chip" title="Recalculé depuis DV, niveau et CON — clique pour forcer la valeur" onclick={() => setPvAuto(false)}>auto</button>
+                {:else}
+                  <button class="pv-manual-chip" title="Repasser en calcul automatique" onclick={() => setPvAuto(true)}>manuel · auto ?</button>
+                {/if}
+              {/if}
             {/if}
           </span>
           <span>PV temporaires :
@@ -1162,6 +1186,19 @@
   }
   .racial-cancel:hover { color: var(--text); }
   .step-note { font-size: 11.5px; color: var(--text-2); }
+  .pv-auto-chip {
+    font-family: var(--font-body); font-size: 9.5px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--accent-text); border: 1.5px solid var(--accent-border);
+    border-radius: 8px 3px 8px 3px; background: transparent; padding: 0 6px; cursor: pointer;
+    line-height: 1.6;
+  }
+  .pv-auto-chip:hover { background: var(--bg); }
+  .pv-manual-chip {
+    font-family: var(--font-body); font-size: 9.5px; font-weight: 700;
+    color: var(--text-3); border: 1.5px dashed var(--border); border-radius: 8px 3px 8px 3px;
+    background: transparent; padding: 0 6px; cursor: pointer; line-height: 1.6;
+  }
+  .pv-manual-chip:hover { color: var(--accent-text); border-color: var(--accent-border); }
   .char-name-col {
     display: flex;
     flex-direction: column;

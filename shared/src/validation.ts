@@ -167,6 +167,11 @@ export function validateCharacterSheet(raw: unknown): string | null {
     if (pErr) return pErr;
   }
 
+  if (s.pvAuto !== undefined && s.pvAuto !== null) {
+    const aErr = bool(s.pvAuto, "pvAuto");
+    if (aErr) return aErr;
+  }
+
   if (s.racial !== undefined && s.racial !== null) {
     if (!isObj(s.racial)) return "racial : objet attendu";
     for (const [k, v] of Object.entries(s.racial as Record<string, unknown>)) {

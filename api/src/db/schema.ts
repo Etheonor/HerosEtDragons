@@ -334,6 +334,8 @@ export interface CharacterSheet {
   portrait?: string | null;
   /** détail des bonus raciaux appliqués (création assistée) — purement informatif */
   racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
+  /** pvMax suivi automatiquement (DV + niveau + CON) tant que le joueur ne l'a pas forcé */
+  pvAuto?: boolean;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];
