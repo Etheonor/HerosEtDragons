@@ -22,7 +22,7 @@
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
-  import { findRace, findClass, racialBonus, type Carac } from '@rollwith/shared/hd';
+  import { findRace, findClass, racialBonus, RACES, CLASSES, type Carac } from '@rollwith/shared/hd';
 
   let {
     char,
@@ -92,6 +92,23 @@
   const CARAC_LABELS_FR: Record<Carac, string> = {
     for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
   };
+  const raceOptions = $derived(RACES.map((r) => r.label));
+  const classOptions = $derived(CLASSES.map((c) => c.label));
+
+  // historiques : depuis le compendium (repli : saisie libre sans suggestions)
+  let backgroundOptions = $state<string[]>([]);
+  $effect(() => {
+    const cid = char.campaignId;
+    if (!cid || backgroundOptions.length) return;
+    void api.compendium
+      .entries(cid, { category: 'historiques', limit: 50 })
+      .then((res) => {
+        backgroundOptions = res.entries.map((e) => e.title);
+      })
+      .catch(() => {
+        /* suggestions indisponibles */
+      });
+  });
 
   // ── Autosave ─────────────────────────────────────────────────
   let saveState = $state<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
@@ -450,17 +467,17 @@
         <div class="char-meta-item">
           <div class="meta-label">Classe & niveau</div>
           <div class="meta-value">
-            <Editable {readonly} w={110} value={sheet.identite.classe} onchange={(v) => (sheet.identite.classe = String(v))} oncommit={touch} ontype={touch} />
+            <Editable {readonly} w={110} options={classOptions} value={sheet.identite.classe} onchange={(v) => (sheet.identite.classe = String(v))} oncommit={touch} ontype={touch} />
             <Editable {readonly} type="number" min={1} max={20} w={34} align="center" value={sheet.identite.niveau} onchange={(v) => (sheet.identite.niveau = Number(v))} oncommit={commitNiveau} ontype={touch} />
           </div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Race</div>
-          <div class="meta-value"><Editable {readonly} w={130} value={sheet.identite.race} onchange={(v) => (sheet.identite.race = String(v))} oncommit={touch} ontype={touch} /></div>
+          <div class="meta-value"><Editable {readonly} w={130} options={raceOptions} value={sheet.identite.race} onchange={(v) => (sheet.identite.race = String(v))} oncommit={touch} ontype={touch} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Historique</div>
-          <div class="meta-value"><Editable {readonly} w={130} value={sheet.identite.historique} onchange={(v) => (sheet.identite.historique = String(v))} oncommit={touch} ontype={touch} /></div>
+          <div class="meta-value"><Editable {readonly} w={130} options={backgroundOptions} value={sheet.identite.historique} onchange={(v) => (sheet.identite.historique = String(v))} oncommit={touch} ontype={touch} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Alignement</div>

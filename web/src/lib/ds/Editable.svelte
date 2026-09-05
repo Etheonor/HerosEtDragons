@@ -13,6 +13,7 @@
     ontype,
     onchange,
     className = '',
+    options,
   }: {
     value?: string | number;
     type?: 'text' | 'number' | 'area';
@@ -27,7 +28,11 @@
     ontype?: () => void;
     onchange?: (v: string | number) => void;
     className?: string;
+    /** suggestions (datalist natif) — la saisie libre reste autorisée */
+    options?: string[];
   } = $props();
+
+  const uid = $props.id();
 
   // Tampon texte : l'input manipule une string ; la valeur remontée au parent
   // est typée selon `type` (number parsé) à chaque frappe.
@@ -79,6 +84,7 @@
     {max}
     {placeholder}
     {title}
+    list={options ? `${uid}-list` : undefined}
     bind:value={buf}
     readonly={readonly}
     style={w ? `width: ${w}px;` : undefined}
@@ -94,6 +100,13 @@
     onpointerdown={(e) => e.stopPropagation()}
     onclick={(e) => e.stopPropagation()}
   />
+  {#if options}
+    <datalist id="{uid}-list">
+      {#each options as opt (opt)}
+        <option value={opt}></option>
+      {/each}
+    </datalist>
+  {/if}
 {/if}
 
 <style>
