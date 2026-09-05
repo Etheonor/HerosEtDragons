@@ -689,7 +689,7 @@
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <a href="/compendium" class="compendium-link">Compendium</a>
+    <a href="/compendium?campaign={campaignId}" class="compendium-link">Compendium</a>
     <div class="grow"></div>
     <div class="quick-dice">
       <span class="qd-label">Lancer</span>
