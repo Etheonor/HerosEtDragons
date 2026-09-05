@@ -255,12 +255,25 @@ export class GameTableDO extends DurableObject<Env> {
     const attachment: WsAttachment = { userId, name, role, charId, color };
     server.serializeAttachment(attachment);
 
-    const snapshot = await this.buildSnapshot(role);
-    server.send(JSON.stringify({ type: "snapshot", ...snapshot }));
-
-    this.broadcastPresence();
+    // L'upgrade (101) part IMMÉDIATEMENT. Le snapshot (plusieurs lectures D1)
+    // est construit après : un handshake lent pendant un cold start multi-connect
+    // faisait échouer la connexion (interruption au chargement de la page).
+    void this.afterUpgrade(server, role).catch(() => {
+      /* le client se reconnecte ; le prochain snapshot passera */
+    });
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Snapshot envoyé juste après l'upgrade (non bloquant pour le 101). */
+  private async afterUpgrade(ws: WebSocket, role: "mj" | "player"): Promise<void> {
+    const snapshot = await this.buildSnapshot(role);
+    try {
+      ws.send(JSON.stringify({ type: "snapshot", ...snapshot }));
+    } catch {
+      /* socket fermée entre-temps */
+    }
+    this.broadcastPresence();
   }
 
   // Les handlers DO font des cycles lecture/modification/écriture (cache liveState
