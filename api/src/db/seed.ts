@@ -11,7 +11,7 @@ export const kaelithSheet: CharacterSheet = {
     xp: 7340,
     citation: "la brume ne me cache rien",
   },
-  caracs: { for: 12, dex: 17, con: 14, int: 10, sag: 16, cha: 13 },
+  caracs: { for: 12, dex: 15, con: 14, int: 10, sag: 16, cha: 13 },
   saveProficiencies: { for: false, dex: true, con: true, int: false, sag: true, cha: false },
   skillProficiencies: {
     Acrobaties: false,

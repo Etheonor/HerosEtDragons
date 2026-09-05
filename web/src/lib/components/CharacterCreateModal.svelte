@@ -158,6 +158,11 @@
   function finalOf(k: CaracKey): number {
     return Math.min(20, (baseOf(k) ?? 8) + (racial[k] ?? 0));
   }
+  const caracsBase = $derived.by(() => {
+    const out = {} as Record<CaracKey, number>;
+    for (const { k } of CARAC_SLOTS) out[k] = Math.max(3, Math.min(20, baseOf(k) ?? 8));
+    return out;
+  });
   function totalRacial(k: CaracKey): number {
     return racial[k] ?? 0;
   }
@@ -270,7 +275,7 @@
             alignement: alignement.trim(),
             xp: 0,
           },
-          caracs: caracsFinaux,
+          caracs: caracsBase,
           racial,
           saveProficiencies: saves,
           skillProficiencies: skillProf,

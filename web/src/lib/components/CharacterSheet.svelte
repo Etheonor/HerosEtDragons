@@ -33,6 +33,7 @@
   } from '@rollwith/shared/hd';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary } from '$lib/hd-text';
+  import { racialBreakdown, effectiveCarac } from '$lib/char-utils';
 
   let {
     char,
@@ -94,48 +95,39 @@
   // ── Apport course/classe (hd.ts, données officielles DRS) ────
   const raceInfo = $derived(findRace(sheet.identite?.race));
   const classInfo = $derived(findClass(sheet.identite?.classe));
-  // Bonus déjà appliqué ? sheet.racial garde le détail de ce qui EST inclus
-  // dans les valeurs. Sinon, on prévisualise ce que la course apporterait.
-  const racialApplied = $derived(!!sheet.racial && Object.keys(sheet.racial).length > 0);
-  const racialShown = $derived<Partial<Record<Carac, number>> | null>(
-    racialApplied ? sheet.racial ?? null : raceInfo ? racialBonus(raceInfo) : null,
-  );
-
-  let racialPanel = $state(false);
-  let freeChosen = $state<Carac[]>([]);
+  // ── Bonus raciaux : TOUJOURS calculés, aucune action requise ──
+  // char-utils.effectiveCarac = base + breakdown (sauvegardé ou déduit de la
+  // table officielle). Seule exception logique : les bonus « au choix » du
+  // demi-elfe, qu'il faut désigner une fois (pas un déclencheur de calcul).
+  const racialShown = $derived(racialBreakdown(sheet));
   const freeNeeded = $derived(raceInfo?.bonus.free?.count ?? 0);
   const freeCandidates = $derived(raceInfo ? freeChoiceCandidates(raceInfo) : []);
-  const pendingBonus = $derived.by<Partial<Record<Carac, number>> | null>(() => {
-    if (!raceInfo || racialApplied) return null;
-    return racialBonus(raceInfo, freeChosen);
+  const freeAssigned = $derived.by(() => {
+    if (!freeNeeded) return true;
+    const saved = sheet.racial;
+    if (!saved) return false;
+    const fixedMin = Object.values(racialBonus(raceInfo!)).reduce<number>((a, b) => a + (b ?? 0), 0);
+    const savedTotal = Object.values(saved).reduce<number>((a, b) => a + (b ?? 0), 0);
+    return savedTotal >= fixedMin + freeNeeded;
   });
-  const pendingNeedsFree = $derived(freeNeeded > 0 && freeChosen.length < freeNeeded);
-  const pendingReady = $derived(!!pendingBonus && !pendingNeedsFree && Object.values(pendingBonus).some((v) => (v ?? 0) > 0));
+  const freeMissing = $derived(!!raceInfo && freeNeeded > 0 && !freeAssigned);
 
+  let freeChosen = $state<Carac[]>([]);
   function toggleFreePick(c: Carac) {
     if (freeChosen.includes(c)) freeChosen = freeChosen.filter((x) => x !== c);
     else if (freeChosen.length < freeNeeded) freeChosen = [...freeChosen, c];
   }
-
-  function applyRacial() {
-    if (!raceInfo || !pendingBonus || !pendingReady) return;
-    for (const [k, v] of Object.entries(pendingBonus) as [Carac, number][]) {
-      sheet.caracs[k] = Math.max(3, Math.min(20, sheet.caracs[k] + v));
-    }
-    sheet.racial = { ...pendingBonus };
-    racialPanel = false;
+  function saveFreePicks() {
+    if (!raceInfo) return;
+    sheet.racial = { ...racialBonus(raceInfo, freeChosen) };
+    touch();
+  }
+  function rechooseFree() {
+    sheet.racial = null;
     freeChosen = [];
     touch();
   }
 
-  function unapplyRacial() {
-    if (!racialApplied) return;
-    for (const [k, v] of Object.entries(sheet.racial ?? {}) as [Carac, number][]) {
-      sheet.caracs[k] = Math.max(3, Math.min(20, sheet.caracs[k] - (v ?? 0)));
-    }
-    sheet.racial = null;
-    touch();
-  }
   const CARAC_LABELS_FR: Record<Carac, string> = {
     for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
   };
@@ -557,14 +549,22 @@
           {#if raceInfo}
             <span class="rule-chip race-chip">
               {raceInfo.label}
-              {#each Object.entries(racialShown ?? {}) as [k, v] (k)}
+              {#each Object.entries(racialShown) as [k, v] (k)}
                 <b>+{v} {CARAC_LABELS_FR[k as Carac]}</b>
               {/each}
+              {#if freeMissing}<b class="free-warn">· +1×{freeNeeded} à désigner</b>{/if}
             </span>
-            {#if racialApplied}
-              <button class="racial-undo" title="Soustrait les bonus enregistrés des valeurs actuelles" onclick={unapplyRacial}>retirer le bonus</button>
-            {:else}
-              <button class="racial-apply" onclick={() => (racialPanel = !racialPanel)}>+ Appliquer le bonus racial</button>
+            {#if freeNeeded && freeMissing}
+              <span class="free-inline">
+                {#each freeCandidates as c (c)}
+                  <button class="free-pick" class:on={freeChosen.includes(c)} disabled={freeChosen.length >= freeNeeded && !freeChosen.includes(c)} onclick={() => toggleFreePick(c)}>
+                    {CARAC_LABELS_FR[c]}
+                  </button>
+                {/each}
+                <button class="racial-apply solid" disabled={freeChosen.length < freeNeeded} onclick={saveFreePicks}>Valider</button>
+              </span>
+            {:else if freeNeeded}
+              <button class="racial-undo" title="Redésigner les bonus libres" onclick={rechooseFree}>redésigner</button>
             {/if}
           {/if}
           {#if classInfo}
@@ -576,29 +576,6 @@
             </span>
           {/if}
         </div>
-        {#if racialPanel && raceInfo && !racialApplied}
-          <div class="racial-panel">
-            {#if pendingNeedsFree}
-              <span class="mini-label">choisis {freeNeeded - freeChosen.length} carac{freeNeeded - freeChosen.length > 1 ? 's' : ''} pour le +1 racial :</span>
-              <div class="free-picks">
-                {#each freeCandidates as c (c)}
-                  <button class="free-pick" class:on={freeChosen.includes(c)} onclick={() => toggleFreePick(c)}>
-                    {CARAC_LABELS_FR[c]}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-            <div class="racial-panel-foot">
-              <span class="step-note">
-                {#each Object.entries(pendingBonus ?? {}) as [k, v] (k)}
-                  {CARAC_LABELS_FR[k as Carac]} +{v}&nbsp;
-                {/each}
-              </span>
-              <button class="racial-apply solid" disabled={!pendingReady} onclick={applyRacial}>Appliquer</button>
-              <button class="racial-cancel" onclick={() => (racialPanel = false)}>Annuler</button>
-            </div>
-          </div>
-        {/if}
       {/if}
       </div>
     </div>
@@ -619,8 +596,8 @@
           <div class="carac-mod" title="Modificateur calculé">{formatMod(getMod(sheet, c))}</div>
           <div class="carac-value">
             <Editable {readonly} type="number" min={1} max={30} align="center" w={42} value={sheet.caracs[c]} onchange={(v) => (sheet.caracs[c] = Number(v))} oncommit={() => { sheet.caracs[c] = num(sheet.caracs[c], 1, 30, 10); touch(); }} ontype={touch} />
-            {#if racialShown?.[c]}
-              <span class="racial-badge" class:pending={!racialApplied} title={racialApplied ? `Dont +${racialShown[c]} racial (${raceInfo?.label ?? 'course'})` : `Non appliqué : +${racialShown[c]} (${raceInfo?.label ?? 'course'}) — utilise « Appliquer le bonus racial »`}>+{racialShown[c]}</span>
+            {#if racialShown[c]}
+              <span class="racial-badge" title="+{racialShown[c]} racial ({raceInfo?.label ?? 'course'}) — appliqué automatiquement">+{racialShown[c]}<b class="eff">={effectiveCarac(sheet, c)}</b></span>
             {/if}
           </div>
         </div>
@@ -1141,8 +1118,12 @@
   .race-chip { border-color: var(--accent-border); }
   .racial-badge {
     font-family: var(--font-body); font-size: 10.5px; font-weight: 700;
-    color: var(--accent-text); vertical-align: super; margin-left: 1px;
+    color: var(--accent-text); vertical-align: super; margin-left: 3px; white-space: nowrap;
   }
+  .racial-badge .eff { color: var(--text-2); font-weight: 500; margin-left: 2px; }
+  .free-inline { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .free-warn { color: var(--coin-po); }
+  .free-pick:disabled { opacity: .4; cursor: default; }
   .racial-badge.pending {
     border: 1px dashed var(--accent-border);
     border-radius: 6px 2px 6px 2px;
