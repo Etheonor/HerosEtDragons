@@ -2,7 +2,9 @@
 title: "Aasimar"
 sidebarDepth: 0
 ---
+
 # Aasimar
+
 ## Traits des aasimars
 
 **Augmentation de caractéristiques**. Votre valeur de Charisme augmente de 2 et votre valeur de Sagesse de 1.  

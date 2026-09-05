@@ -45,7 +45,10 @@ export function extractTables(md: string): Table[] {
           } else if (cells.every((c) => c === "")) {
             // séparateur vide — ignorer
           } else {
-            rows.push({ cells: cells.map((c) => c.replace(/\*\*/g, "").trim()), group: currentGroup });
+            rows.push({
+              cells: cells.map((c) => c.replace(/\*\*/g, "").trim()),
+              group: currentGroup,
+            });
           }
           j++;
         }

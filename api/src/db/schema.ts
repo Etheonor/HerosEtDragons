@@ -176,6 +176,38 @@ export const maps = sqliteTable("maps", {
     .notNull(),
 });
 
+export const compendiumEntries = sqliteTable(
+  "compendium_entries",
+  {
+    key: text("key").primaryKey(), // "<category>/<slug>"
+    category: text("category").notNull(),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    source: text("source").notNull().default("DRS"),
+    sourcePage: integer("source_page"),
+    meta: text("meta", { mode: "json" }),
+    body: text("body", { mode: "json" }),
+    visibility: text("visibility", { enum: ["public", "mj"] })
+      .notNull()
+      .default("public"),
+    origin: text("origin", { enum: ["drs", "maison"] })
+      .notNull()
+      .default("drs"),
+    searchText: text("search_text").notNull().default(""),
+    version: integer("version").notNull().default(1),
+    hash: text("hash").notNull(),
+    ingestCommit: text("ingest_commit"),
+    campaignId: text("campaign_id"), // homebrew rattaché à une campagne
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("compendium_category_idx").on(table.category)],
+);
+
 export const journal = sqliteTable(
   "journal",
   {

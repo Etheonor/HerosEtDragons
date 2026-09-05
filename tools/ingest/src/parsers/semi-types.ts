@@ -71,7 +71,13 @@ export function parseClassFile(slug: string, raw: string) {
           aptIdx !== -1
             ? (row.cells[aptIdx] ?? "")
                 .split(",")
-                .map((s) => s.replace(/\[|\]/g, "").replace(/\(.*?\)/g, "").replace(/\*\*/g, "").trim())
+                .map((s) =>
+                  s
+                    .replace(/\[|\]/g, "")
+                    .replace(/\(.*?\)/g, "")
+                    .replace(/\*\*/g, "")
+                    .trim(),
+                )
                 .filter(Boolean)
             : [],
         extras,
@@ -102,7 +108,11 @@ function fieldsBySection(content: string): { label: string; text: string }[][] {
       continue;
     }
     const m = /^\s*\*\*(.+?)\*\*\s*[.:]?\s+(.+?)\s*$/.exec(line);
-    if (m) sections[sections.length - 1]!.push({ label: m[1]!.trim(), text: m[2]!.replace(/ {2,}$/, "").trim() });
+    if (m)
+      sections[sections.length - 1]!.push({
+        label: m[1]!.trim(),
+        text: m[2]!.replace(/ {2,}$/, "").trim(),
+      });
   }
   return sections;
 }
@@ -128,7 +138,9 @@ export function parseBackgroundFile(slug: string, raw: string) {
   };
   apply(meta, sections[0] ?? []);
   const variants: Record<string, unknown>[] = [];
-  const variantTitles = [...content.matchAll(/^## Variante\s*[:：]\s*(.+?)\s*$/gim)].map((m) => m[1]!.trim());
+  const variantTitles = [...content.matchAll(/^## Variante\s*[:：]\s*(.+?)\s*$/gim)].map((m) =>
+    m[1]!.trim(),
+  );
   sections.slice(1).forEach((fields, i) => {
     const v: Record<string, unknown> = { title: variantTitles[i] ?? `Variante ${i + 1}` };
     apply(v, fields);

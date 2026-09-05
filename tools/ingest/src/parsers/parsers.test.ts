@@ -10,7 +10,8 @@ import { buildEquipmentEntries } from "./equipement";
 import { extractTables } from "../markdown-tables";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const fx = (...p: string[]) => readFileSync(path.join(__dirname, "../../test/fixtures", ...p), "utf8");
+const fx = (...p: string[]) =>
+  readFileSync(path.join(__dirname, "../../test/fixtures", ...p), "utf8");
 
 describe("parseSpellFile", () => {
   const e = parseSpellFile("agrandir-retrecir", fx("grimoire/agrandir-retrecir/README.md"));
@@ -138,7 +139,13 @@ describe("extraire des tableaux (markdown-tables)", () => {
     expect(tables).toHaveLength(1);
     expect(tables[0]!.rows).toHaveLength(2);
     expect(tables[0]!.rows[0]!.group).toBe("Armes de corps-à-corps courantes");
-    expect(tables[0]!.rows[1]!.cells).toEqual(["Dague", "2 po", "1d4 perforant", "0,5 kg", "Finesse, légère"]);
+    expect(tables[0]!.rows[1]!.cells).toEqual([
+      "Dague",
+      "2 po",
+      "1d4 perforant",
+      "0,5 kg",
+      "Finesse, légère",
+    ]);
   });
 
   it("armures : liens d'ancre pour le slug", () => {

@@ -1,13 +1,7 @@
 // Grimoire : fiches YAML (niveau, école, composants, durée, classes).
 import matter from "gray-matter";
 import type { SpellMeta } from "@rollwith/shared/compendium";
-import {
-  asNumber,
-  asString,
-  asStringArray,
-  makeEntry,
-  splitBodySections,
-} from "../util.js";
+import { asNumber, asString, asStringArray, makeEntry, splitBodySections } from "../util.js";
 
 export function parseSpellFile(slug: string, raw: string): ReturnType<typeof makeEntry> {
   const { data, content } = matter(raw);

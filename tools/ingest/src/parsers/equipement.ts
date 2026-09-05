@@ -63,6 +63,7 @@ function normalizeName(cell: string): { text: string; anchor: string | null } {
 
 export function parseEquipmentTables(drsDocsDir: string, source: EquipmentSource) {
   const spec = SPECS[source];
+  if (!spec) throw new Error(`Source d'équipement inconnue : ${source}`);
   const md = readFileSync(path.join(drsDocsDir, spec.file), "utf8");
   return buildEquipmentEntries(md, spec, spec.file);
 }
