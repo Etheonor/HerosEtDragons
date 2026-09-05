@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createAuth } from "./auth";
 import { createDb, schema } from "./db";
 import { asc, eq, and, or, gt } from "drizzle-orm";
-import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
+import { consumeInvitation } from "./invitations";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";

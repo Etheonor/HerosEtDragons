@@ -30,26 +30,6 @@ interface WranglerJson {
   result?: { results?: ExistingRow[] };
 }
 
-function readExisting(remote: boolean): ExistingRow[] {
-  const out = execFileSync(
-    "npx",
-    [
-      "wrangler",
-      "d1",
-      "execute",
-      "rollwith-hd",
-      "--command",
-      "SELECT category, slug, hash, version FROM compendium_entries",
-      "--json",
-      remote ? "--remote" : "--local",
-    ],
-    { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  const parsed = JSON.parse(out.slice(out.indexOf("["))) as WranglerJson[] | WranglerJson;
-  const first = Array.isArray(parsed) ? parsed[0] : parsed;
-  return first?.results ?? first?.result?.results ?? [];
-}
-
 function main() {
   const drsPath = opt("drs") ?? defaultDrsPath();
   const outDir = opt("out") ?? path.join(__dirname, "../out");

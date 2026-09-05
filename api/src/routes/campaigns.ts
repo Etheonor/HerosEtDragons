@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
-import { eq, and, gt, lt, desc } from "drizzle-orm";
+import { eq, and, lt, desc } from "drizzle-orm";
 import { requireAuth, type AuthVariables } from "../middleware";
 import { consumeInvitation } from "../invitations";
 

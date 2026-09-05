@@ -1,7 +1,14 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "import"],
-  "ignorePatterns": ["design", "**/.svelte-kit", "**/build", "**/dist", "**/.wrangler"],
+  "ignorePatterns": [
+    "design",
+    "design V2",
+    "**/.svelte-kit",
+    "**/build",
+    "**/dist",
+    "**/.wrangler"
+  ],
   "rules": {
     "no-unused-vars": "error",
     "no-console": "warn"

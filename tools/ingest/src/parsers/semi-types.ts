@@ -1,7 +1,7 @@
 // Fiches semi-typées : races, classes, historiques.
 // Frontmatter pauvre (`title`), corps structuré par conventions markdown.
 import matter from "gray-matter";
-import { makeEntry, slugify, splitBodySections } from "../util.js";
+import { makeEntry, splitBodySections } from "../util.js";
 
 /** Lignes `**Libellé**. texte` ou `**Libellé** : texte` → paires. */
 export function parseBoldFields(content: string): { label: string; text: string }[] {
