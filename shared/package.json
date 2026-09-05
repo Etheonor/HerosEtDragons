@@ -37,6 +37,10 @@
     "./validation": {
       "types": "./dist/validation.d.ts",
       "import": "./dist/validation.js"
+    },
+    "./compendium": {
+      "types": "./dist/compendium.d.ts",
+      "import": "./dist/compendium.js"
     }
   },
   "scripts": {

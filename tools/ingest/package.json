@@ -6,9 +6,16 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ingest": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
   },
   "devDependencies": {
+    "@rollwith/shared": "workspace:*",
+    "@types/node": "^26.4.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.0",
     "vitest": "^3.2.4"
   }

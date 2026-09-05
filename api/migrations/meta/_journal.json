@@ -36,6 +36,20 @@
       "when": 1788120530665,
       "tag": "0004_supreme_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788608841354,
+      "tag": "0005_nervous_night_thrasher",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788611253286,
+      "tag": "0006_mighty_green_goblin",
+      "breakpoints": true
     }
   ]
 }

@@ -206,6 +206,38 @@ export const api = {
         body: JSON.stringify(sheet),
       }),
   },
+  compendium: {
+    categories: (campaignId: string) =>
+      fetchJson<{
+        categories: { category: string; count: number; locked: boolean }[];
+        isMj: boolean;
+      }>(`/api/compendium/categories?campaign=${encodeURIComponent(campaignId)}`),
+    entries: (
+      campaignId: string,
+      opts: { category?: string; q?: string; offset?: number; limit?: number } = {},
+    ) => {
+      const qs = new URLSearchParams({ campaign: campaignId });
+      if (opts.category) qs.set("category", opts.category);
+      if (opts.q) qs.set("q", opts.q);
+      if (opts.offset) qs.set("offset", String(opts.offset));
+      if (opts.limit) qs.set("limit", String(opts.limit));
+      return fetchJson<{
+        entries: CompendiumEntryDto[];
+        total: number;
+        offset: number;
+        limit: number;
+      }>(`/api/compendium/entries?${qs.toString()}`);
+    },
+    share: (campaignId: string, category: string, slug: string) =>
+      fetchJson<{ ok: true }>("/api/compendium/share", {
+        method: "POST",
+        body: JSON.stringify({ campaignId, category, slug }),
+      }),
+    entry: (campaignId: string, category: string, slug: string) =>
+      fetchJson<CompendiumEntryDto>(
+        `/api/compendium/entry/${encodeURIComponent(category)}/${encodeURIComponent(slug)}?campaign=${encodeURIComponent(campaignId)}`,
+      ),
+  },
   maps: {
     list: (campaignId: string) =>
       fetchJson<{ maps: MapSummary[] }>(`/api/maps/campaigns/${campaignId}`),
@@ -272,4 +304,16 @@ export interface NpcTemplate extends NpcTemplateInput {
   id: string;
   source: { category: string; slug: string } | null;
   updatedAt: number;
+}
+
+export interface CompendiumEntryDto {
+  category: string;
+  slug: string;
+  title: string;
+  source: string;
+  sourcePage: number | null;
+  meta: Record<string, unknown> | null;
+  body: { heading: string | null; markdown: string }[] | null;
+  visibility: "public" | "mj";
+  origin: "drs" | "maison";
 }

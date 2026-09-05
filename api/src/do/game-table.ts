@@ -411,6 +411,39 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   /**
+   * RPC REST : le MJ partage une fiche du compendium au journal de la table.
+   * Enregistre la fiche dans compendium_shares (les joueurs pourront
+   * l'ouvrir malgré visibility:"mj") + une entrée de journal « share ».
+   */
+  async shareCompendium(input: {
+    category: string;
+    slug: string;
+    title: string;
+    sharedBy: string;
+  }): Promise<void> {
+    await this.ensureCampaignId();
+    if (!this.campaignId) return;
+    const db = this.getDb();
+    await db
+      .insert(schema.compendiumShares)
+      .values({
+        campaignId: this.campaignId,
+        category: input.category,
+        slug: input.slug,
+      })
+      .onConflictDoNothing();
+    const entry = this.makeJournalEntry("share", input.sharedBy, null, input.title);
+    entry.ref = {
+      type: "compendium",
+      category: input.category,
+      slug: input.slug,
+      title: input.title,
+    };
+    await this.appendJournal(entry);
+    this.broadcastAll({ type: "journal", entry });
+  }
+
+  /**
    * RPC appelé par les routes REST après une modification de personnage hors WS
    * (feuille, PV REST…) — audit §3.4 : la table voit la changement immédiatement.
    * Diffuse la carte complète via le canal role-aware (masque PV PNJ si besoin).

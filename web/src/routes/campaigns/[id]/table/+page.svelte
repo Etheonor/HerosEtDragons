@@ -7,6 +7,8 @@
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
+  import CompendiumTooltip from '$lib/components/CompendiumTooltip.svelte';
+  import { slugify } from '$lib/slug';
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -14,10 +16,14 @@
   let { params } = $props();
   let campaignId = params.id;
 
+  // Repli si le compendium n'est pas encore ingéré ; la liste réelle est
+  // chargée depuis la catégorie « etats » au montage (8.5).
   const CONDITIONS = [
-    'À terre', 'Agrippé', 'Assourdi', 'Aveuglé', 'Charmé', 'Effrayé', 'Empoisonné',
-    'Entravé', 'Étourdi', 'Inconscient', 'Invisible', 'Paralysé', 'Pétrifié',
+    'À terre', 'Assourdi', 'Aveuglé', 'Charmé', 'Empoigné', 'Empoisonné',
+    'Entravé', 'Étourdi', 'Inconscient', 'Invisible', 'Neutralisé', 'Paralysé',
+    'Pétrifié', 'Terrorisé', 'Repoussé', 'Surpris',
   ];
+  let stateOptions = $state<string[]>(CONDITIONS);
 
   let store = $state<TableStore>({
     connected: false,
@@ -216,6 +222,16 @@
   }
 
   onMount(async () => {
+    // états pilotés par le compendium (noms officiels DRS)
+    try {
+      const r = await api.compendium.entries(campaignId, { category: 'etats', limit: 100 });
+      const list = r.entries
+        .filter((e) => ((e.meta ?? {}) as Record<string, unknown>).kind === 'etat')
+        .map((e) => e.title);
+      if (list.length) stateOptions = list;
+    } catch {
+      /* le repli CONDITIONS suffit */
+    }
     session = await auth.getSession();
     try {
       const detail = await api.campaigns.detail(campaignId);
@@ -689,7 +705,7 @@
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <a href="/compendium" class="compendium-link">Compendium</a>
+    <a href="/compendium?campaign={campaignId}" class="compendium-link">Compendium</a>
     <div class="grow"></div>
     <div class="quick-dice">
       <span class="qd-label">Lancer</span>
@@ -750,18 +766,20 @@
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <span
-                class="cond-chip"
-                role={isMj ? 'button' : undefined}
-                tabindex={isMj ? 0 : undefined}
-                title={isMj ? 'Cliquez pour retirer' : cond}
-                onclick={() => removeCondition(c.id, cond)}
-              >{cond}</span>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+                <span
+                  class="cond-chip"
+                  role={isMj ? 'button' : undefined}
+                  tabindex={isMj ? 0 : undefined}
+                  title={isMj ? 'Cliquez pour retirer' : cond}
+                  onclick={() => removeCondition(c.id, cond)}
+                >{cond}</span>
+              </CompendiumTooltip>
             {/each}
             {#if isMj}
               <select class="cond-select" value="" onchange={(e) => addCondition(c.id, e)}>
                 <option value="">+ état</option>
-                {#each CONDITIONS as cond (cond)}
+                {#each stateOptions as cond (cond)}
                   <option>{cond}</option>
                 {/each}
               </select>
@@ -803,7 +821,9 @@
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <span class="cond-chip" title={cond}>{cond}</span>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+                <span class="cond-chip">{cond}</span>
+              </CompendiumTooltip>
             {/each}
             {#if isMj}
               <select class="cond-select" value="" onchange={(e) => addCondition(c.id, e)}>
@@ -1016,6 +1036,16 @@
                   </div>
                 {:else if entry.kind === 'system'}
                   <span class="journal-system">{entry.text}</span>
+                {:else if entry.kind === 'share'}
+                  <span class="journal-system">✦ {entry.who ?? 'Le MJ'} a partagé</span>
+                  {#if entry.ref?.type === 'compendium'}
+                    <a
+                      class="share-chip"
+                      href="/compendium?campaign={campaignId}&cat={entry.ref.category}&slug={entry.ref.slug}"
+                    >{entry.ref.title ?? entry.text}</a>
+                  {:else}
+                    <span class="journal-text">{entry.text}</span>
+                  {/if}
                 {/if}
               </div>
             {/each}
@@ -1539,6 +1569,12 @@
   .journal-who { font-weight: 600; }
   .journal-text { color: var(--text); }
   .journal-entry.entry-system .journal-system { font-style: italic; color: var(--text-2); }
+  .share-chip {
+    font-size: 12px; font-weight: 700; text-decoration: none;
+    color: var(--accent-text); border: 1.5px solid var(--accent-border);
+    border-radius: var(--sketchy-badge); padding: 1px 8px;
+  }
+  .share-chip:hover { background: var(--bg); }
   .roll-card {
     flex-basis: 100%;
     border: 2px solid var(--border); border-radius: 225px 12px 240px 14px / 12px 235px 13px 225px;

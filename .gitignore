@@ -22,3 +22,6 @@ dist
 # Sources brutes des portraits (BMP ~18 Mo) : outil local, hors dépôt.
 # Les WebP générés sont eux commis dans web/static/portraits.
 portraits/
+
+# sorties de l'outil d'ingestion (locales)
+tools/ingest/out/
