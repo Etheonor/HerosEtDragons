@@ -23,6 +23,8 @@
   import { api } from '$lib/api';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
   import { findRace, findClass, racialBonus, RACES, CLASSES, type Carac } from '@rollwith/shared/hd';
+  import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
+  import { bonusRacialText, classSummary } from '$lib/hd-text';
 
   let {
     char,
@@ -92,21 +94,35 @@
   const CARAC_LABELS_FR: Record<Carac, string> = {
     for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
   };
-  const raceOptions = $derived(RACES.map((r) => r.label));
-  const classOptions = $derived(CLASSES.map((c) => c.label));
+  const compLink = (cat: string, slug: string) =>
+    `/compendium?campaign=${encodeURIComponent(char.campaignId)}&cat=${cat}&slug=${slug}`;
 
-  // historiques : depuis le compendium (repli : saisie libre sans suggestions)
-  let backgroundOptions = $state<string[]>([]);
+  const raceChoices = $derived<ChoiceOption[]>(
+    RACES.map((r) => ({ title: r.label, sub: bonusRacialText(r), link: compLink('races', r.key) })),
+  );
+  const classChoices = $derived<ChoiceOption[]>(
+    CLASSES.map((c) => ({ title: c.label, sub: classSummary(c), link: compLink('classes', c.key) })),
+  );
+
+  // historiques : depuis le compendium
+  let backgroundChoices = $state<ChoiceOption[]>([]);
   $effect(() => {
     const cid = char.campaignId;
-    if (!cid || backgroundOptions.length) return;
+    if (!cid || backgroundChoices.length) return;
     void api.compendium
       .entries(cid, { category: 'historiques', limit: 50 })
       .then((res) => {
-        backgroundOptions = res.entries.map((e) => e.title);
+        backgroundChoices = res.entries.map((e) => {
+          const m = (e.meta ?? {}) as Record<string, unknown>;
+          return {
+            title: e.title,
+            sub: Array.isArray(m.skills) ? (m.skills as string[]).join(' · ') : undefined,
+            link: compLink('historiques', e.slug),
+          };
+        });
       })
       .catch(() => {
-        /* suggestions indisponibles */
+        /* grille vide : le mode personnalisé du picker suffit */
       });
   });
 
@@ -467,17 +483,17 @@
         <div class="char-meta-item">
           <div class="meta-label">Classe & niveau</div>
           <div class="meta-value">
-            <Editable {readonly} w={110} options={classOptions} value={sheet.identite.classe} onchange={(v) => (sheet.identite.classe = String(v))} oncommit={touch} ontype={touch} />
+            <ChoicePicker {readonly} value={sheet.identite.classe} options={classChoices} onpick={(t) => { sheet.identite.classe = t; touch(); }} />
             <Editable {readonly} type="number" min={1} max={20} w={34} align="center" value={sheet.identite.niveau} onchange={(v) => (sheet.identite.niveau = Number(v))} oncommit={commitNiveau} ontype={touch} />
           </div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Race</div>
-          <div class="meta-value"><Editable {readonly} w={130} options={raceOptions} value={sheet.identite.race} onchange={(v) => (sheet.identite.race = String(v))} oncommit={touch} ontype={touch} /></div>
+          <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.race} options={raceChoices} onpick={(t) => { sheet.identite.race = t; touch(); }} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Historique</div>
-          <div class="meta-value"><Editable {readonly} w={130} options={backgroundOptions} value={sheet.identite.historique} onchange={(v) => (sheet.identite.historique = String(v))} oncommit={touch} ontype={touch} /></div>
+          <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.historique} options={backgroundChoices} onpick={(t) => { sheet.identite.historique = t; touch(); }} /></div>
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Alignement</div>
