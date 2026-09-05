@@ -8,7 +8,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
+  },
   "devDependencies": {
+    "@rollwith/shared": "workspace:*",
+    "@types/node": "^26.4.1",
     "typescript": "^5.9.0",
     "vitest": "^3.2.4"
   }
