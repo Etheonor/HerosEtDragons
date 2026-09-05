@@ -294,6 +294,9 @@ export const notes = sqliteTable(
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Catégories d'armure — pilotent le calcul de CA (table DRS). */
+export type ArmorKind = "legere" | "intermediaire" | "lourde" | "bouclier";
+
 export interface CharacterSheet {
   identite: {
     nom: string;
@@ -323,6 +326,7 @@ export interface CharacterSheet {
   deathSaves: { successes: number; failures: number };
   inspiration: boolean;
   attaques: { id: string; name: string; bonus: number; damage: string }[];
+  armures: { id: string; name: string; ca: number; kind: ArmorKind; equipee: boolean }[];
   sorts: {
     caracIncantation: "for" | "dex" | "con" | "int" | "sag" | "cha" | null;
     connus: { slug: string; level: number; name?: string }[];
@@ -336,6 +340,8 @@ export interface CharacterSheet {
   racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
   /** pvMax suivi automatiquement (DV + niveau + CON) tant que le joueur ne l'a pas forcé */
   pvAuto?: boolean;
+  /** CA suivie automatiquement (armures équipées + bouclier) tant qu'elle n'est pas forcée */
+  caAuto?: boolean;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];

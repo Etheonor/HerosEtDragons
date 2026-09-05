@@ -23,6 +23,7 @@ function baseSheet(): Record<string, unknown> {
     deathSaves: { successes: 0, failures: 0 },
     inspiration: false,
     attaques: [{ id: "a1", name: "Arc long", bonus: 7, damage: "1d8+3" }],
+    armures: [{ id: "ar1", name: "Cuir clouté", ca: 12, kind: "legere", equipee: true }],
     sorts: { caracIncantation: "sag", connus: [], emplacements: [] },
     capacites: [{ id: "c1", name: "Archétype", description: "…" }],
     personnalite: { traits: "Je parle peu." },
@@ -35,6 +36,28 @@ function baseSheet(): Record<string, unknown> {
 describe("validateCharacterSheet", () => {
   it("accepte une feuille conforme", () => {
     expect(validateCharacterSheet(baseSheet())).toBeNull();
+  });
+
+  it("accepte une feuille sans armures (fiches existantes)", () => {
+    const s = baseSheet();
+    delete (s as Record<string, unknown>).armures;
+    expect(validateCharacterSheet(s)).toBeNull();
+  });
+
+  it("refuse une armure hors bornes", () => {
+    const s = baseSheet();
+    (s as Record<string, unknown>).armures = [
+      { id: "x", name: "armure", ca: 99, kind: "lourde", equipee: true },
+    ];
+    expect(validateCharacterSheet(s)).toMatch(/armure CA/);
+  });
+
+  it("refuse une catégorie d'armure inconnue", () => {
+    const s = baseSheet();
+    (s as Record<string, unknown>).armures = [
+      { id: "x", name: "armure", ca: 14, kind: "légère", equipee: true },
+    ];
+    expect(validateCharacterSheet(s)).toMatch(/armure catégorie/);
   });
 
   it("refuse une carac hors bornes", () => {

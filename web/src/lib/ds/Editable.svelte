@@ -14,6 +14,8 @@
     onchange,
     className = '',
     options,
+    autosize = false,
+    bare = false,
   }: {
     value?: string | number;
     type?: 'text' | 'number' | 'area';
@@ -30,6 +32,10 @@
     className?: string;
     /** suggestions (datalist natif) — la saisie libre reste autorisée */
     options?: string[];
+    /** textarea qui grandit avec son contenu (hauteur auto, pas de scroll) */
+    autosize?: boolean;
+    /** textarea sans bordure (nom, citation dans l'en-tête) */
+    bare?: boolean;
   } = $props();
 
   const uid = $props.id();
@@ -39,8 +45,19 @@
   let buf = $state(String(value ?? ''));
   let focused = $state(false);
 
+  let areaEl = $state<HTMLTextAreaElement | undefined>();
+
   $effect(() => {
     if (!focused) buf = String(value ?? '');
+  });
+
+  $effect(() => {
+    if (type !== 'area' || !autosize) return;
+    const el = areaEl;
+    if (!el) return;
+    void buf;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   });
 
   function sync() {
@@ -58,7 +75,8 @@
 
 {#if type === 'area'}
   <textarea
-    class="ed area {className}"
+    bind:this={areaEl}
+    class="ed area {bare ? 'bare' : ''} {autosize ? 'autosize' : ''} {className}"
     class:ro={readonly}
     {placeholder}
     {title}
@@ -151,6 +169,24 @@
     padding: 6px 9px;
     resize: vertical;
     line-height: 1.5;
+  }
+  .area.autosize {
+    resize: none;
+    overflow: hidden;
+  }
+  .area.bare {
+    border: none;
+    background: transparent;
+    padding: 0;
+    line-height: 1.25;
+  }
+  .area.bare:not(.ro):hover {
+    border-bottom: 2px dotted var(--text-3);
+  }
+  .area.bare:not(.ro):focus {
+    border-bottom: 2px dotted var(--accent);
+    background: var(--bg);
+    border-radius: 4px 1px 4px 1px;
   }
   .area:not(.ro):hover {
     border-color: var(--text-2);

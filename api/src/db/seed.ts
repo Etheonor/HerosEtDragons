@@ -33,7 +33,7 @@ export const kaelithSheet: CharacterSheet = {
     Représentation: false,
     Supercherie: true,
   },
-  ca: 17,
+  ca: 16,
   vitesse: "10,5 m",
   initiativeBonus: 3,
   pvMax: 45,
@@ -45,6 +45,11 @@ export const kaelithSheet: CharacterSheet = {
     { id: "a2", name: "Rapière", bonus: 7, damage: "1d8+3 perforant" },
     { id: "a3", name: "Dague", bonus: 7, damage: "1d4+3 perforant" },
   ],
+  armures: [
+    { id: "ar1", name: "Armure de cuir clouté", ca: 12, kind: "legere", equipee: true },
+    { id: "ar2", name: "Bouclier", ca: 2, kind: "bouclier", equipee: true },
+  ],
+  caAuto: true,
   sorts: {
     caracIncantation: "sag",
     connus: [

@@ -85,6 +85,7 @@ function blankSheet(name: string): CharacterSheet {
     deathSaves: { successes: 0, failures: 0 },
     inspiration: false,
     attaques: [],
+    armures: [],
     sorts: { caracIncantation: null, connus: [], emplacements: [] },
     capacites: [],
     personnalite: {},

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { effectiveCarac, getMod, getPassivePerception, racialBreakdown } from "./char-utils";
+import {
+  caBreakdown,
+  effectiveCarac,
+  getMod,
+  getPassivePerception,
+  racialBreakdown,
+  suggestedCa,
+} from "./char-utils";
 import type { CharacterSheet } from "./api";
 
 function sheet(over: Partial<CharacterSheet>): CharacterSheet {
@@ -16,6 +23,7 @@ function sheet(over: Partial<CharacterSheet>): CharacterSheet {
     deathSaves: { successes: 0, failures: 0 },
     inspiration: false,
     attaques: [],
+    armures: [],
     sorts: { caracIncantation: null, connus: [], emplacements: [] },
     capacites: [],
     personnalite: {},
@@ -93,5 +101,110 @@ describe("bonus racial automatique", () => {
     });
     expect(racialBreakdown(s)).toEqual({});
     expect(effectiveCarac(s, "dex")).toBe(10);
+  });
+});
+
+describe("suggestedCa (règles DRS : armure + bouclier, pas d'empilement)", () => {
+  function s(over: Partial<CharacterSheet>): CharacterSheet {
+    return sheet({ caracs: { for: 10, dex: 14, con: 10, int: 10, sag: 10, cha: 10 }, ...over });
+  }
+
+  it("sans armure : 10 + mod Dex", () => {
+    expect(suggestedCa(s({}))).toBe(12);
+  });
+
+  it("armure légère équipée : CA de base + mod Dex complet", () => {
+    expect(
+      suggestedCa(
+        s({ armures: [{ id: "a", name: "Cuir clouté", ca: 12, kind: "legere", equipee: true }] }),
+      ),
+    ).toBe(14);
+  });
+
+  it("armure intermédiaire : mod Dex plafonné à +2", () => {
+    expect(
+      suggestedCa(
+        s({
+          caracs: { for: 10, dex: 18, con: 10, int: 10, sag: 10, cha: 10 },
+          armures: [
+            { id: "a", name: "Chemise de mailles", ca: 13, kind: "intermediaire", equipee: true },
+          ],
+        }),
+      ),
+    ).toBe(15);
+  });
+
+  it("armure lourde : sans mod Dex", () => {
+    expect(
+      suggestedCa(
+        s({
+          caracs: { for: 10, dex: 18, con: 10, int: 10, sag: 10, cha: 10 },
+          armures: [{ id: "a", name: "Harnois", ca: 18, kind: "lourde", equipee: true }],
+        }),
+      ),
+    ).toBe(18);
+  });
+
+  it("bouclier : +2", () => {
+    expect(
+      suggestedCa(
+        s({
+          armures: [
+            { id: "a", name: "Cuir", ca: 11, kind: "legere", equipee: true },
+            { id: "b", name: "Bouclier", ca: 2, kind: "bouclier", equipee: true },
+          ],
+        }),
+      ),
+    ).toBe(15);
+  });
+
+  it("deux armures équipées : la meilleure gagne (pas d'empilement)", () => {
+    expect(
+      suggestedCa(
+        s({
+          armures: [
+            { id: "a", name: "Cuir", ca: 11, kind: "legere", equipee: true },
+            { id: "b", name: "Harnois", ca: 18, kind: "lourde", equipee: true },
+          ],
+        }),
+      ),
+    ).toBe(18);
+  });
+
+  it("armure non équipée : ignorée", () => {
+    expect(
+      suggestedCa(
+        s({
+          armures: [{ id: "a", name: "Harnois", ca: 18, kind: "lourde", equipee: false }],
+        }),
+      ),
+    ).toBe(12);
+  });
+
+  it("armure pire que rien : on garde la CA à nu (10 + Dex)", () => {
+    expect(
+      suggestedCa(
+        s({
+          armures: [{ id: "a", name: "Bricolage", ca: 2, kind: "legere", equipee: true }],
+        }),
+      ),
+    ).toBe(12);
+  });
+
+  it("caBreakdown signale le plancher du nu", () => {
+    const c = s({
+      armures: [{ id: "a", name: "Bricolage", ca: 2, kind: "legere", equipee: true }],
+    });
+    expect(caBreakdown(c)).toBe("Bricolage 2 + Dex +2 = 4 · nu 12 = 12");
+  });
+
+  it("caBreakdown décrit le calcul", () => {
+    const c = s({
+      armures: [
+        { id: "a", name: "Cuir clouté", ca: 12, kind: "legere", equipee: true },
+        { id: "b", name: "Bouclier", ca: 2, kind: "bouclier", equipee: true },
+      ],
+    });
+    expect(caBreakdown(c)).toBe("Cuir clouté 12 + Dex +2 = 14 · bouclier +2 = 16");
   });
 });

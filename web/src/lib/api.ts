@@ -109,6 +109,7 @@ export interface CharacterSheet {
   deathSaves: { successes: number; failures: number };
   inspiration: boolean;
   attaques: { id: string; name: string; bonus: number; damage: string }[];
+  armures: SheetArmor[];
   sorts: {
     caracIncantation: "for" | "dex" | "con" | "int" | "sag" | "cha" | null;
     connus: { slug: string; level: number; name?: string }[];
@@ -120,11 +121,27 @@ export interface CharacterSheet {
   portrait?: string | null;
   racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
   pvAuto?: boolean;
+  /** CA suivie automatiquement (armures équipées + bouclier) tant qu'elle n'est pas forcée */
+  caAuto?: boolean;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];
   };
   couleurPion: string;
+}
+
+/** Catégories d'armure — pilotent le calcul de CA (table DRS). */
+export type ArmorKind = "legere" | "intermediaire" | "lourde" | "bouclier";
+export const ARMOR_KINDS: ArmorKind[] = ["legere", "intermediaire", "lourde", "bouclier"];
+
+export interface SheetArmor {
+  id: string;
+  name: string;
+  /** CA de base (ou bonus pour un bouclier) */
+  ca: number;
+  kind: ArmorKind;
+  /** portée : une armure + un bouclier max (pas d'empilement) */
+  equipee: boolean;
 }
 
 export interface CharacterDetail {

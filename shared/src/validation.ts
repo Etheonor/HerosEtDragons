@@ -123,6 +123,27 @@ export function validateCharacterSheet(raw: unknown): string | null {
     if (e) return e;
   }
 
+  if (s.armures !== undefined && s.armures !== null) {
+    if (!Array.isArray(s.armures) || s.armures.length > 30) return "armures invalide";
+    const kinds = ["legere", "intermediaire", "lourde", "bouclier"];
+    for (const a of s.armures as unknown[]) {
+      if (!isObj(a)) return "armure invalide";
+      const e = check([
+        str(a.id, 60, "armure id"),
+        str(a.name, 100, "armure nom"),
+        int(a.ca, 0, 40, "armure CA"),
+        typeof a.kind === "string" && kinds.includes(a.kind) ? null : "armure catégorie",
+        bool(a.equipee, "armure équipée"),
+      ]);
+      if (e) return e;
+    }
+  }
+
+  if (s.caAuto !== undefined && s.caAuto !== null) {
+    const aErr = bool(s.caAuto, "caAuto");
+    if (aErr) return aErr;
+  }
+
   if (!Array.isArray(s.capacites) || s.capacites.length > 60) return "capacites invalide";
   for (const c of s.capacites as unknown[]) {
     if (!isObj(c)) return "capacité invalide";

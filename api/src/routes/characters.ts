@@ -192,6 +192,7 @@ app.post("/", requireAuth, async (c) => {
     deathSaves: { successes: 0, failures: 0 },
     inspiration: false,
     attaques: body.sheet?.attaques ?? [],
+    armures: body.sheet?.armures ?? [],
     sorts: body.sheet?.sorts ?? { caracIncantation: null, connus: [], emplacements: [] },
     capacites: body.sheet?.capacites ?? [],
     personnalite: body.sheet?.personnalite ?? {},

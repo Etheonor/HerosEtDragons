@@ -17,6 +17,7 @@
     SKILL_CARAC,
     type CaracKey,
   } from '$lib/char-utils';
+  import { ARMOR_KINDS, type ArmorKind, type SheetArmor } from '$lib/api';
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
@@ -24,7 +25,6 @@
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
   import {
     findRace,
-    findClass,
     racialBonus,
     freeChoiceCandidates,
     RACES,
@@ -33,7 +33,7 @@
   } from '@rollwith/shared/hd';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary } from '$lib/hd-text';
-  import { racialBreakdown, effectiveCarac, suggestedPvMax } from '$lib/char-utils';
+  import { racialBreakdown, effectiveCarac, suggestedPvMax, suggestedCa, caBreakdown } from '$lib/char-utils';
 
   let {
     char,
@@ -84,7 +84,7 @@
   $effect(() => {
     if (char.sheet !== lastSheetRef) {
       lastSheetRef = char.sheet;
-      sheet = char.sheet;
+      sheet = { ...char.sheet, armures: char.sheet.armures ?? [] };
     }
     pv = char.pv;
     pvTemp = char.pvTemp;
@@ -92,9 +92,18 @@
 
   const readonly = $derived(!char.canEdit);
 
+  // Nom trop long : la police suit la longueur (34→18px), le textarea autorise
+  // 2 lignes si vraiment nécessaire — rien ne déborde du cadre.
+  const nameFont = $derived(
+    Math.max(18, Math.min(34, 34 - Math.max(0, (sheet.identite.nom || '').length - 10) * 1.1)),
+  );
+
+  // Anciennes fiches sans le champ : défensif (la validation rend le champ
+  // requis à l'écriture, mais les lignes D1 existantes peuvent l'ignorer).
+  const armures = $derived(sheet.armures ?? []);
+
   // ── Apport course/classe (hd.ts, données officielles DRS) ────
   const raceInfo = $derived(findRace(sheet.identite?.race));
-  const classInfo = $derived(findClass(sheet.identite?.classe));
 
   // PV auto : temps que le joueur ne les a pas forcés, pvMax suit
   // DV + niveau + CON effective (modification instantanée, autosave).
@@ -110,6 +119,28 @@
   function setPvAuto(on: boolean) {
     sheet.pvAuto = on;
     if (on && pvSuggested !== null) sheet.pvMax = pvSuggested;
+    touch();
+  }
+
+  // ── CA auto : une armure équipée (+ bouclier) détermine la CA. ──
+  // Règle d'or : aucune action requise — dès qu'on équipe une armure, la CA
+  // suit. Tant qu'aucune armure n'est équipée on ne touche pas à une CA
+  // manuelle (moine, armure naturelle…) ; l'échappatoire = caAuto=false.
+  const hasEquippedArmor = $derived((sheet.armures ?? []).some((a) => a.equipee));
+  const caAutoOn = $derived(
+    sheet.caAuto === true || (sheet.caAuto === undefined && hasEquippedArmor),
+  );
+  $effect(() => {
+    if (readonly || !caAutoOn) return;
+    const s = suggestedCa(sheet);
+    if (sheet.ca !== s) {
+      sheet.ca = s;
+      touch();
+    }
+  });
+  function setCaAuto(on: boolean) {
+    sheet.caAuto = on;
+    if (on) sheet.ca = suggestedCa(sheet);
     touch();
   }
   // ── Bonus raciaux : TOUJOURS calculés, aucune action requise ──
@@ -268,6 +299,14 @@
         bonus: num(a.bonus, -5, 30, 0),
         damage: txt(a.damage, 40),
       })),
+      armures: (s.armures ?? []).slice(0, 30).map((a) => ({
+        id: a.id,
+        name: txt(a.name, 100) || 'Armure',
+        ca: num(a.ca, 0, 40, 10),
+        kind: ARMOR_KINDS.includes(a.kind as ArmorKind) ? (a.kind as ArmorKind) : 'legere',
+        equipee: !!a.equipee,
+      })),
+      caAuto: s.caAuto,
       sorts: {
         caracIncantation: s.sorts.caracIncantation,
         connus: s.sorts.connus.slice(0, 200).map((sp) => ({
@@ -399,6 +438,57 @@
     sheet.attaques = sheet.attaques.filter((a) => a.id !== id);
     touch();
   }
+  function addArmure() {
+    if (readonly) return;
+    sheet.armures = [
+      ...(sheet.armures ?? []),
+      { id: crypto.randomUUID(), name: 'Nouvelle armure', ca: 10, kind: 'legere', equipee: false },
+    ];
+    touch();
+  }
+  function removeArmure(id: string) {
+    if (readonly) return;
+    const next = (sheet.armures ?? []).filter((a) => a.id !== id);
+    sheet.armures = next;
+    if (!next.some((a) => a.equipee) && sheet.caAuto !== false) {
+      sheet.ca = 10 + getMod(sheet, 'dex');
+    }
+    touch();
+  }
+  function toggleArmureEquip(id: string) {
+    if (readonly) return;
+    const cur = sheet.armures ?? [];
+    const arm = cur.find((a) => a.id === id);
+    if (!arm) return;
+    const turningOn = !arm.equipee;
+    // Exclusif par catégorie : une armure + un bouclier max (règle DRS).
+    const next = cur.map((a) => {
+      if (a.id === id) return { ...a, equipee: turningOn };
+      if (turningOn && a.kind === 'bouclier' && arm.kind === 'bouclier') {
+        return { ...a, equipee: false };
+      }
+      if (turningOn && a.kind !== 'bouclier' && arm.kind !== 'bouclier') {
+        return { ...a, equipee: false };
+      }
+      return a;
+    });
+    sheet.armures = next;
+    if (!next.some((a) => a.equipee) && sheet.caAuto !== false) {
+      sheet.ca = 10 + getMod(sheet, 'dex');
+    }
+    touch();
+  }
+  const ARMOR_LABELS: Record<ArmorKind, string> = {
+    legere: 'légère',
+    intermediaire: 'intermédiaire',
+    lourde: 'lourde',
+    bouclier: 'bouclier',
+  };
+  function onArmorKindChange(arm: SheetArmor, kind: ArmorKind) {
+    if (kind === 'bouclier' && arm.ca === 10) arm.ca = 2; // DRS : bouclier = +2
+    arm.kind = kind;
+    touch();
+  }
   function addCapacite() {
     if (readonly) return;
     sheet.capacites = [
@@ -528,8 +618,14 @@
         {/if}
       </button>
       <div class="char-name-col">
-        <div class="char-name"><Editable {readonly} w={210} value={sheet.identite.nom} onchange={(v) => (sheet.identite.nom = String(v))} oncommit={touch} ontype={touch} /></div>
-        <div class="char-citation">« <Editable {readonly} w={220} value={sheet.identite.citation ?? ''} onchange={(v) => (sheet.identite.citation = String(v))} placeholder="citation" oncommit={touch} ontype={touch} /> »</div>
+        <div class="char-name" style="font-size: {nameFont}px;">
+          <Editable {readonly} type="area" autosize bare value={sheet.identite.nom} onchange={(v) => (sheet.identite.nom = String(v))} oncommit={touch} ontype={touch} placeholder="nom" />
+        </div>
+        <div class="char-citation">
+          <span class="q-mark">«</span>
+          <Editable {readonly} type="area" autosize bare className="ed-citation" value={sheet.identite.citation ?? ''} onchange={(v) => (sheet.identite.citation = String(v))} placeholder="citation" oncommit={touch} ontype={touch} />
+          <span class="q-mark">»</span>
+        </div>
       </div>
       <div class="char-divider"></div>
       <div class="char-meta-col">
@@ -544,6 +640,21 @@
         <div class="char-meta-item">
           <div class="meta-label">Race</div>
           <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.race} options={raceChoices} onpick={(t) => { sheet.identite.race = t; touch(); }} /></div>
+          {#if raceInfo && freeMissing}
+            <div class="free-meta">
+              <span class="free-warn">+{freeNeeded} au choix</span>
+              <span class="free-inline">
+                {#each freeCandidates as c (c)}
+                  <button class="free-pick" class:on={freeChosen.includes(c)} disabled={freeChosen.length >= freeNeeded && !freeChosen.includes(c)} onclick={() => toggleFreePick(c)}>
+                    {CARAC_LABELS_FR[c]}
+                  </button>
+                {/each}
+                <button class="racial-apply solid" disabled={freeChosen.length < freeNeeded} onclick={saveFreePicks}>Valider</button>
+              </span>
+            </div>
+          {:else if raceInfo && freeNeeded}
+            <button class="racial-undo" title="Redésigner les bonus libres" onclick={rechooseFree}>redésigner</button>
+          {/if}
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Historique</div>
@@ -561,41 +672,8 @@
           </div>
         </div>
       </div>
-      {#if raceInfo || classInfo}
-        <div class="rules-strip">
-          {#if raceInfo}
-            <span class="rule-chip race-chip">
-              {raceInfo.label}
-              {#each Object.entries(racialShown) as [k, v] (k)}
-                <b>+{v} {CARAC_LABELS_FR[k as Carac]}</b>
-              {/each}
-              {#if freeMissing}<b class="free-warn">· +1×{freeNeeded} à désigner</b>{/if}
-            </span>
-            {#if freeNeeded && freeMissing}
-              <span class="free-inline">
-                {#each freeCandidates as c (c)}
-                  <button class="free-pick" class:on={freeChosen.includes(c)} disabled={freeChosen.length >= freeNeeded && !freeChosen.includes(c)} onclick={() => toggleFreePick(c)}>
-                    {CARAC_LABELS_FR[c]}
-                  </button>
-                {/each}
-                <button class="racial-apply solid" disabled={freeChosen.length < freeNeeded} onclick={saveFreePicks}>Valider</button>
-              </span>
-            {:else if freeNeeded}
-              <button class="racial-undo" title="Redésigner les bonus libres" onclick={rechooseFree}>redésigner</button>
-            {/if}
-          {/if}
-          {#if classInfo}
-            <span class="rule-chip class-chip">
-              {classInfo.label}
-              <b>DV d{classInfo.hitDie}</b>
-              <b>sauvegardes {classInfo.saves.map((k) => k.toUpperCase()).join(' · ')}</b>
-              {#if classInfo.casting}<b>incantation {classInfo.casting.toUpperCase()}</b>{/if}
-            </span>
-          {/if}
-        </div>
-      {/if}
       </div>
-    </div>
+  </div>
   </div>
 
   <!-- Corps 4 colonnes -->
@@ -695,11 +773,18 @@
     <!-- ── Colonne 3: Combat ── -->
     <div class="col col-combat">
       <div class="combat-stats">
-        <div class="stat-card" style="border-radius: var(--sketchy-3);">
+        <div class="stat-card" style="border-radius: var(--sketchy-3);" title={caBreakdown(sheet)}>
           <div class="mini-label">CA</div>
           <div class="stat-value big">
-            <Editable {readonly} type="number" min={0} max={40} align="center" w={48} className="ed-big" value={sheet.ca} onchange={(v) => (sheet.ca = Number(v))} oncommit={() => { sheet.ca = num(sheet.ca, 0, 40, 10); touch(); }} ontype={touch} />
+            <Editable {readonly} type="number" min={0} max={40} align="center" w={48} className="ed-big" value={sheet.ca} onchange={(v) => (sheet.ca = Number(v))} oncommit={() => { sheet.ca = num(sheet.ca, 0, 40, 10); if (caAutoOn && sheet.ca !== suggestedCa(sheet)) sheet.caAuto = false; touch(); }} ontype={touch} />
           </div>
+          {#if !readonly && (caAutoOn || sheet.caAuto === false)}
+            {#if caAutoOn}
+              <button class="ca-auto-chip" title="Calculée : {caBreakdown(sheet)} — cliquez pour forcer la valeur" onclick={() => setCaAuto(false)}>auto</button>
+            {:else}
+              <button class="ca-manual-chip" title="Repasser en calcul automatique" onclick={() => setCaAuto(true)}>manuel · auto ?</button>
+            {/if}
+          {/if}
         </div>
         <div class="stat-card clickable" style="border-radius: var(--sketchy-6);" onclick={onInitClick} title="Cliquez pour lancer l'initiative">
           <div class="mini-label">INITIATIVE</div>
@@ -776,7 +861,7 @@
         <BlockLabel text="Attaques" />
         <div class="attacks-header">
           <span>Arme</span>
-          <span>Att.</span>
+          <span title="Bonus d'attaque ajouté au d20 : mod de caractéristique + maîtrise (si maîtrisé)">Att.</span>
           <span>Dégâts</span>
           <span></span>
         </div>
@@ -792,6 +877,41 @@
         {/each}
         {#if !readonly}
           <button class="add-row" onclick={addAttack}>+ attaque</button>
+        {/if}
+      </div>
+
+      <div class="block armors-block">
+        <BlockLabel text="Armures" />
+        <div class="armors-header">
+          <span title="Équipée : une armure + un bouclier max, exclusif par catégorie"></span>
+          <span>Armure</span>
+          <span title="CA de base de l'armure — elle REMPLACE le 10 de base (11 à 18 au DRS ; +2 pour un bouclier)">CA</span>
+          <span>Type</span>
+          <span></span>
+        </div>
+        {#each armures as arm (arm.id)}
+          <div class="armor-row" title={arm.equipee ? 'Équipée — compte dans la CA' : 'Non équipée'}>
+            <button class="dot" class:prof={arm.equipee} disabled={readonly} title={readonly ? undefined : 'Équipée : cliquez pour basculer'} onclick={() => toggleArmureEquip(arm.id)}>{arm.equipee ? '●' : '○'}</button>
+            <span class="armor-name"><Editable {readonly} w={140} value={arm.name} onchange={(v) => (arm.name = String(v))} oncommit={touch} ontype={touch} /></span>
+            <span class="armor-ca"><Editable {readonly} type="number" min={0} max={40} align="center" w={38} value={arm.ca} onchange={(v) => (arm.ca = Number(v))} oncommit={() => { arm.ca = num(arm.ca, 0, 40, 10); touch(); }} ontype={touch} /></span>
+            <span class="armor-kind">
+              {#if readonly}
+                {ARMOR_LABELS[arm.kind] ?? arm.kind}
+              {:else}
+                <select class="armor-select" value={arm.kind} onchange={(e) => onArmorKindChange(arm, (e.target as HTMLSelectElement).value as ArmorKind)}>
+                  {#each ARMOR_KINDS as k (k)}
+                    <option value={k}>{ARMOR_LABELS[k]}</option>
+                  {/each}
+                </select>
+              {/if}
+            </span>
+            {#if !readonly}
+              <button class="row-x" title="Retirer cette armure" onclick={() => removeArmure(arm.id)}>✕</button>
+            {/if}
+          </div>
+        {/each}
+        {#if !readonly}
+          <button class="add-row" onclick={addArmure}>+ armure</button>
         {/if}
       </div>
 
@@ -1125,21 +1245,19 @@
     padding: 14px 20px;
   }
   .char-meta-col {
-    flex: 1;
+    flex: 2 1 0;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  .rules-strip { display: flex; gap: 8px; flex-wrap: wrap; }
-  .rule-chip {
-    font-size: 11px; font-weight: 700; letter-spacing: .03em;
-    border: 1.5px solid var(--border); border-radius: var(--sketchy-badge);
-    padding: 2px 9px; color: var(--text-2); display: inline-flex; gap: 7px; align-items: baseline;
-    white-space: nowrap;
+  .free-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    margin-top: 3px;
   }
-  .rule-chip b { color: var(--accent-text); font-weight: 700; }
-  .race-chip { border-color: var(--accent-border); }
   .racial-badge {
     font-family: var(--font-body); font-size: 10.5px; font-weight: 700;
     color: var(--accent-text); vertical-align: super; margin-left: 3px; white-space: nowrap;
@@ -1203,13 +1321,18 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    min-width: 230px;
+    flex: 1 1 0;
+    min-width: 260px;
   }
   .char-name {
     font-family: var(--font-title);
     font-size: 34px;
-    line-height: 1.05;
+    line-height: 1.08;
     color: var(--heading);
+    min-width: 0;
+  }
+  .char-name :global(.ed) {
+    line-height: 1.08;
   }
   .portrait-frame {
     width: 96px;
@@ -1247,9 +1370,25 @@
     color: var(--text-3);
   }
   .char-citation {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-top: 2px;
     font-size: 14px;
     font-weight: 700;
     color: var(--text-2);
+    min-width: 0;
+  }
+  .q-mark {
+    color: var(--text-3);
+    font-weight: 700;
+    line-height: 1.35;
+    flex: none;
+  }
+  :global(.ed-citation) {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.45;
   }
   .char-divider {
     width: 2px;
@@ -1461,6 +1600,9 @@
     background: var(--panel);
     padding: 9px 4px;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .stat-card.clickable {
     cursor: pointer;
@@ -1473,6 +1615,19 @@
   .stat-value { color: var(--heading); }
   .stat-value.big { font-family: var(--font-title); font-size: 23px; line-height: 1.2; }
   .stat-value.accent { color: var(--accent-text); }
+  .ca-auto-chip {
+    font-family: var(--font-body); font-size: 9.5px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--accent-text); border: 1.5px solid var(--accent-border);
+    border-radius: 8px 3px 8px 3px; background: transparent; padding: 0 6px; cursor: pointer;
+    line-height: 1.6; margin-top: 3px;
+  }
+  .ca-auto-chip:hover { background: var(--bg); }
+  .ca-manual-chip {
+    font-family: var(--font-body); font-size: 9.5px; font-weight: 700;
+    color: var(--text-3); border: 1.5px dashed var(--border); border-radius: 8px 3px 8px 3px;
+    background: transparent; padding: 0 6px; cursor: pointer; line-height: 1.6; margin-top: 3px;
+  }
+  .ca-manual-chip:hover { color: var(--accent-text); border-color: var(--accent-border); }
   :global(.ed-big) {
     font-family: var(--font-title);
     font-size: 23px;
@@ -1573,6 +1728,43 @@
   .atk-bonus { font-size: 12.5px; color: var(--accent-text); }
   .atk-dmg { font-size: 12px; color: var(--text); }
 
+  .armors-block { border-radius: var(--sketchy-5); }
+  .armors-header {
+    display: grid;
+    grid-template-columns: 16px 1fr 44px 1fr 20px;
+    gap: 4px 8px;
+    font-weight: 700;
+    font-size: 10.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .armor-row {
+    display: grid;
+    grid-template-columns: 16px 1fr 44px 1fr 20px;
+    gap: 4px 8px;
+    padding: 3px 0;
+    border-bottom: 1px dashed var(--border-soft);
+    font-size: 12.5px;
+    align-items: center;
+  }
+  .armor-name { font-weight: 600; min-width: 0; }
+  .armor-ca { font-size: 12.5px; color: var(--accent-text); }
+  .armor-kind { font-size: 11.5px; color: var(--text-2); }
+  .armor-select {
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    background: var(--bg);
+    color: var(--heading);
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    padding: 1px 3px;
+    outline: none;
+    max-width: 100%;
+  }
+
   .row-x {
     font-family: var(--font-body); font-weight: 700; font-size: 10px;
     width: 17px; height: 17px; padding: 0;
@@ -1584,6 +1776,7 @@
   .attack-row:hover .row-x,
   .trait-item:hover .row-x,
   .equip-row:hover .row-x,
+  .armor-row:hover .row-x,
   .sl-header:hover .row-x,
   .row-x:focus { opacity: 1; }
   .row-x:hover { border-color: var(--accent-border); color: var(--accent-text); }

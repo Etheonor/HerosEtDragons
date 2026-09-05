@@ -12,7 +12,7 @@ import {
   type Skill,
 } from "$shared/rules";
 import { findClass, findRace, racialBonus } from "$shared/hd";
-import type { CharacterSheet } from "./api";
+import type { ArmorKind, CharacterSheet } from "./api";
 
 export type CaracKey = "for" | "dex" | "con" | "int" | "sag" | "cha";
 
@@ -62,6 +62,63 @@ export function suggestedPvMax(sheet: CharacterSheet): number | null {
   const level = Math.max(1, Math.min(20, sheet.identite?.niveau || 1));
   const avg = c.hitDie / 2 + 1;
   return Math.max(1, c.hitDie + con + (level - 1) * (avg + con));
+}
+
+/** Contribution Dex d'une catégorie d'armure (table DRS). */
+function dexPart(kind: ArmorKind, dexMod: number): number {
+  if (kind === "lourde") return 0;
+  if (kind === "intermediaire") return Math.min(dexMod, 2);
+  return dexMod; // légère : modificateur complet
+}
+
+/**
+ * CA officielle DRS : une armure (ou 10 + mod Dex sans armure) + au plus un
+ * bouclier (+2). Plusieurs armures équipées ne s'empilent pas → la meilleure
+ * gagne ; plusieurs boucliers → un seul bonus. L'armure n'abaisse jamais en
+ * dessous de la CA « à nu » (10 + Dex). Règle d'or : aucun bouton, le dérivé
+ * suit (échappatoire manuelle : caAuto=false).
+ */
+export function suggestedCa(sheet: CharacterSheet): number {
+  const dexMod = abilityModifier(effectiveCarac(sheet, "dex"));
+  const naked = 10 + dexMod;
+  const equipped = (sheet.armures ?? []).filter((a) => a.equipee);
+  const worn = equipped.filter((a) => a.kind !== "bouclier");
+  let base = naked;
+  if (worn.length) {
+    base = Math.max(base, ...worn.map((a) => a.ca + dexPart(a.kind, dexMod)));
+  }
+  const shieldBonus = equipped.some((a) => a.kind === "bouclier")
+    ? Math.max(0, ...equipped.filter((a) => a.kind === "bouclier").map((a) => a.ca))
+    : 0;
+  return Math.max(0, base + shieldBonus);
+}
+
+/** Détail lisible du calcul de CA (infobulle du champ CA). */
+export function caBreakdown(sheet: CharacterSheet): string {
+  const dexMod = abilityModifier(effectiveCarac(sheet, "dex"));
+  const naked = 10 + dexMod;
+  const equipped = (sheet.armures ?? []).filter((a) => a.equipee);
+  const worn = equipped.filter((a) => a.kind !== "bouclier");
+  const hasShield = equipped.some((a) => a.kind === "bouclier");
+  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+
+  let head: string;
+  if (!worn.length) {
+    head = `10 + Dex (${fmt(dexMod)}) = ${naked}`;
+  } else {
+    const chosen = worn.reduce((best, a) =>
+      a.ca + dexPart(a.kind, dexMod) > best.ca + dexPart(best.kind, dexMod) ? a : best,
+    );
+    const d = dexPart(chosen.kind, dexMod);
+    const dTxt = d > 0 ? ` + Dex ${fmt(d)}` : d < 0 ? ` + Dex (${fmt(d)})` : "";
+    const armorCa = chosen.ca + d;
+    head =
+      armorCa >= naked
+        ? `${chosen.name} ${chosen.ca}${dTxt} = ${armorCa}`
+        : `${chosen.name} ${chosen.ca}${dTxt} = ${armorCa} · nu ${naked}`;
+  }
+  const total = suggestedCa(sheet);
+  return hasShield ? `${head} · bouclier +2 = ${total}` : `${head} = ${total}`;
 }
 
 export function getMod(sheet: CharacterSheet, carac: CaracKey): number {
