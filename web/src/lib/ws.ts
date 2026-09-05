@@ -85,24 +85,35 @@ class WsClient {
     error: null,
   };
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = true;
+  private wasConnected = false;
+  private attempts = 0;
 
   connect(campaignId: string) {
+    this.disposed = false;
     this.url = `${window.location.origin.replace("http", "ws")}/api/tables/${campaignId}/ws`;
     this.doConnect();
   }
 
   private doConnect() {
+    if (this.disposed) return;
     if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
       try {
         this.ws.close();
       } catch {
         /* ignore */
       }
+      this.ws = null;
     }
 
+    this.wasConnected = false;
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
+      this.attempts = 0;
+      this.wasConnected = true;
       this.store.connected = true;
       this.store.error = null;
       this.notify();
@@ -118,22 +129,34 @@ class WsClient {
     };
 
     this.ws.onclose = () => {
+      if (this.disposed) return;
       this.store.connected = false;
       this.notify();
       this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
-      this.store.error = "Connexion perdue";
-      this.notify();
+      // Toast uniquement si on perd une connexion établie — pas pendant les
+      // tentatives de handshake (cold start / rechargement) qui sont gérées
+      // silencieusement par le reconnect.
+      if (this.wasConnected) {
+        this.store.error = "Connexion perdue";
+        this.notify();
+      }
     };
   }
 
   private scheduleReconnect() {
+    if (this.disposed) return;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.attempts += 1;
+    // Backoff exponentiel + jitter (évite la rafale si 5 joueurs retombent ensemble)
+    const base = Math.min(8000, 1000 * 2 ** (this.attempts - 1));
+    const jitter = Math.random() * 800;
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.doConnect();
-    }, 2000);
+    }, base + jitter);
   }
 
   private handleMessage(msg: Record<string, unknown>) {
@@ -270,9 +293,21 @@ class WsClient {
   }
 
   disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.disposed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
-      this.ws.close();
+      // Ne pas reconnecter après un arrêt volontaire (le onclose relaierait
+      // sinon un fantôme de connexion pendant le chargement de la page suivante).
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
       this.ws = null;
     }
     this.store.connected = false;
