@@ -6,6 +6,7 @@ import type {
   CharacterCard,
   TableSettings,
 } from "@rollwith/shared/protocol";
+import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
 
 export interface TableState {
   mode: "exploration" | "combat";
@@ -52,13 +53,6 @@ export interface TableStore {
 }
 
 type Listener = (store: TableStore) => void;
-
-const DEFAULT_SETTINGS: TableSettings = {
-  pnjPvVisible: false,
-  sheetsLocked: false,
-  diceDuration: 1200,
-  tokenSize: 44,
-};
 
 let pingSeq = 0;
 

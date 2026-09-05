@@ -26,10 +26,6 @@
       "types": "./dist/rules.d.ts",
       "import": "./dist/rules.js"
     },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
-    },
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js"

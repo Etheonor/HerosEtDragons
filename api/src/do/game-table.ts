@@ -19,6 +19,7 @@ import {
   formatRollDetail,
   formatExpression,
 } from "@rollwith/shared/dice";
+import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
 import { sortInitiative, type InitiativeEntry } from "@rollwith/shared/initiative";
 import { eq, and, inArray, desc } from "drizzle-orm";
 
@@ -1814,12 +1815,7 @@ export class GameTableDO extends DurableObject<Env> {
         combat: state.combat,
       },
       characters,
-      settings: campaign?.settings ?? {
-        pnjPvVisible: false,
-        sheetsLocked: false,
-        diceDuration: 1200,
-        tokenSize: 32,
-      },
+      settings: campaign?.settings ?? DEFAULT_SETTINGS,
       journalTail,
       presence,
     };

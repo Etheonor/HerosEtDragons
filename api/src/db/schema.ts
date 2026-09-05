@@ -7,6 +7,10 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import {
+  DEFAULT_SETTINGS as SHARED_DEFAULT_SETTINGS,
+  type TableSettings,
+} from "@rollwith/shared/protocol";
 
 // ── Better Auth tables (singular names as expected by the library) ───────────
 
@@ -116,12 +120,10 @@ export const campaigns = sqliteTable("campaigns", {
   ownerId: text("owner_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  settings: text("settings", { mode: "json" }).$type<CampaignSettings>().notNull().default({
-    pnjPvVisible: false,
-    sheetsLocked: false,
-    diceDuration: 1200,
-    tokenSize: 32,
-  }),
+  settings: text("settings", { mode: "json" })
+    .$type<CampaignSettings>()
+    .notNull()
+    .default(SHARED_DEFAULT_SETTINGS),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
@@ -349,16 +351,6 @@ export interface CharacterSheet {
   couleurPion: string;
 }
 
-export interface CampaignSettings {
-  pnjPvVisible: boolean;
-  sheetsLocked: boolean;
-  diceDuration: number;
-  tokenSize: number;
-}
+export type CampaignSettings = TableSettings;
 
-export const DEFAULT_SETTINGS: CampaignSettings = {
-  pnjPvVisible: false,
-  sheetsLocked: false,
-  diceDuration: 1200,
-  tokenSize: 32,
-};
+export const DEFAULT_SETTINGS: CampaignSettings = SHARED_DEFAULT_SETTINGS;

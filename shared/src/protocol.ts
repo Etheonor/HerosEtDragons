@@ -111,6 +111,14 @@ export interface TableSettings {
   tokenSize: number;
 }
 
+/** Valeurs par défaut — source unique (serveur et client pré-snapshot). */
+export const DEFAULT_SETTINGS: TableSettings = {
+  pnjPvVisible: false,
+  sheetsLocked: false,
+  diceDuration: 1200,
+  tokenSize: 32,
+};
+
 export interface TableSnapshot {
   type: "snapshot";
   state: TableLiveState;
