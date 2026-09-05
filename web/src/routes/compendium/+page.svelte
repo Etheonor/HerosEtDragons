@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { api, type CompendiumEntryDto } from '$lib/api';
+  import { renderEntryBody, inlineHtml, diceCol } from '$lib/markdown-lite';
   import { monsterAveragePv, monsterCa, caracMod, type MonsterMeta, type SpellMeta } from '@rollwith/shared/compendium';
 
   const campaign = page.url.searchParams.get('campaign') ?? '';
@@ -112,46 +113,7 @@
     }
   }
 
-  // ── Rendu markdown allégé (tout est échappé avant nos propres balises) ──
-  function esc(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function inline(s: string): string {
-    return esc(s)
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/_([^_]+)_/g, "<em>$1</em>")
-      .replace(/\[([^\]]+)\]\((?:#[^)]*|\/[^)]*)\)/g, '<span class="linkish">$1</span>');
-  }
-  function renderBlocks(body: { heading: string | null; markdown: string }[]): {
-    heading: string | null;
-    paras: string[];
-    lists: string[];
-  }[] {
-    return (body ?? []).map((sec) => {
-      const paras: string[] = [];
-      const lists: string[] = [];
-      let buffer: string[] = [];
-      const flush = () => {
-        if (buffer.length) {
-          paras.push(inline(buffer.join(" ")));
-          buffer = [];
-        }
-      };
-      for (const line of (sec.markdown ?? "").split("\n")) {
-        const li = /^\s*[*+-]\s+(.+)/.exec(line);
-        if (li) {
-          flush();
-          lists.push(inline(li[1]!));
-        } else if (!line.trim()) {
-          flush();
-        } else {
-          buffer.push(line.trim());
-        }
-      }
-      flush();
-      return { heading: sec.heading, paras, lists };
-    });
-  }
+  const sections = $derived(selected ? renderEntryBody(selected.body) : []);
 
   async function addToLibrary() {
     if (!selected || !isMj || addedToLibrary) return;
@@ -286,23 +248,72 @@
               {#if m.components?.material && m.components?.materials}
                 <p class="entry-tags">composants : {m.components.materials}</p>
               {/if}
-            {:else if selected.category === 'equipement' && m.kind === 'arme'}
+            {:else if selected.category === 'equipement'}
               <div class="stat-strip">
-                {#if m.damage}<span><b>{m.damage}</b></span>{/if}
+                <span class="strip-kind">{m.kind ?? 'objet'}</span>
+                {#if m.category}<span>{m.category}</span>{/if}
                 {#if m.price}<span><b>{m.price}</b></span>{/if}
+                {#if m.damage}<span><b>{m.damage}</b></span>{/if}
+                {#if m.ac}<span><b>CA {m.ac}</b></span>{/if}
                 {#if m.weight}<span>{m.weight}</span>{/if}
+                {#if m.properties}<span>{m.properties}</span>{/if}
+                {#if m.stealth && m.stealth !== '-'}<span>{m.stealth}</span>{/if}
+              </div>
+            {:else if selected.category === 'objets-magiques'}
+              <div class="stat-strip">
+                {#if m.type}<span class="strip-kind">{m.type}</span>{/if}
+                {#if m.rarity}<span><b>{m.rarity}</b></span>{/if}
+                {#if m.attunement}<span>{m.attunement}</span>{/if}
               </div>
             {/if}
 
             {#if listError}<div class="page-error">{listError}</div>{/if}
 
             <div class="entry-body">
-              {#each renderBlocks(selected.body ?? []) as sec}
+              {#each sections as sec}
                 {#if sec.heading}<h3>{sec.heading}</h3>{/if}
-                {#each sec.paras as p}{@html `<p>${p}</p>`}{/each}
-                {#if sec.lists.length}
-                  <ul>{#each sec.lists as li}{@html `<li>${li}</li>`}{/each}</ul>
-                {/if}
+                {#each sec.blocks as block}
+                  {#if block.type === 'para'}
+                    {@html `<p>${inlineHtml(block.text)}</p>`}
+                  {:else if block.type === 'heading'}
+                    {#if block.level === 4}<h4>{@html inlineHtml(block.text)}</h4>
+                    {:else if block.level === 5}<h5>{@html inlineHtml(block.text)}</h5>
+                    {:else}<h6>{@html inlineHtml(block.text)}</h6>{/if}
+                  {:else if block.type === 'list'}
+                    <ul>{#each block.items as it}{@html `<li>${inlineHtml(it)}</li>`}{/each}</ul>
+                  {:else if block.type === 'table'}
+                    <div class="md-table-wrap">
+                      <table class="md-table">
+                        <thead>
+                          <tr>
+                            {#each block.headers as h}
+                              <th>
+                                {#if diceCol(h) !== null}
+                                  <span class="th-dice"><svg width="1em" height="1em" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M56 32h144a40 40 0 0 1 40 40v112a40 40 0 0 1-40 40H56a40 40 0 0 1-40-40V72a40 40 0 0 1 40-40Zm0 16a24 24 0 0 0-24 24v112a24 24 0 0 0 24 24h144a24 24 0 0 0 24-24V72a24 24 0 0 0-24-24Zm40 32a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Z"/></svg>{diceCol(h)}</span>
+                                {:else}
+                                  {@html inlineHtml(h)}
+                                {/if}
+                              </th>
+                            {/each}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each block.rows as row}
+                            {#if row[0]?.startsWith('__group__')}
+                              <tr class="grp"><td colspan={block.headers.length}>{row[0].slice('__group__'.length)}</td></tr>
+                            {:else}
+                              <tr>
+                                {#each row as cell}
+                                  <td>{@html inlineHtml(cell)}</td>
+                                {/each}
+                              </tr>
+                            {/if}
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  {/if}
+                {/each}
               {/each}
             </div>
           {:else}
@@ -398,6 +409,11 @@
     background: var(--panel); padding: 8px 14px; font-size: 13px;
   }
   .stat-strip b { color: var(--accent-text); font-weight: 700; margin-right: 3px; }
+  .strip-kind {
+    font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--accent-text); border: 1.5px solid var(--accent-border);
+    border-radius: var(--sketchy-badge); padding: 1px 8px;
+  }
   .caracs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 10px 0; }
   .carac {
     border: 2px solid var(--border); background: var(--panel); border-radius: 12px;
@@ -421,6 +437,29 @@
   }
   .entry-body :global(p) { font-size: 13.5px; line-height: 1.6; margin: 6px 0; color: var(--text); }
   .entry-body :global(ul) { margin: 6px 0 6px 18px; font-size: 13.5px; line-height: 1.55; }
+  .entry-body :global(h4) {
+    font-family: var(--font-body); font-weight: 700; font-size: 14px; color: var(--heading);
+    margin: 14px 0 3px;
+  }
+  .entry-body :global(h5), .entry-body :global(h6) {
+    font-weight: 700; font-size: 13px; color: var(--accent-text); margin: 10px 0 2px;
+  }
   .entry-body :global(strong) { color: var(--heading); }
+  .md-table-wrap { overflow-x: auto; margin: 10px 0; }
+  .md-table {
+    border-collapse: collapse; width: 100%; font-size: 13px;
+    border: 2px solid var(--border); border-radius: 8px;
+  }
+  .md-table th {
+    background: var(--panel); color: var(--accent-text); text-align: left;
+    padding: 6px 10px; border: 1px solid var(--border-soft); font-weight: 700; white-space: nowrap;
+  }
+  .md-table td { padding: 5px 10px; border: 1px solid var(--border-soft); vertical-align: top; }
+  .md-table tbody tr:nth-child(even) td { background: rgba(0,0,0,.12); }
+  .md-table tr.grp td {
+    background: var(--selected); color: var(--heading); font-weight: 700;
+    font-family: var(--font-title);
+  }
+  .th-dice { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
   .entry-body :global(.linkish) { color: var(--accent-text); border-bottom: 1px dotted var(--text-3); }
 </style>
