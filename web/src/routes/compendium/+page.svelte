@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { api, type CompendiumEntryDto } from '$lib/api';
-  import { renderEntryBody, inlineHtml, diceCol } from '$lib/markdown-lite';
+  import { renderEntryBody, inlineHtml, diceCol, superHeaders } from '$lib/markdown-lite';
   import { monsterAveragePv, monsterCa, type MonsterMeta, type SpellMeta } from '@rollwith/shared/compendium';
   import { caracMod } from '@rollwith/shared/hd';
 
@@ -318,15 +318,31 @@
                     <div class="md-table-wrap">
                       <table class="md-table">
                         <thead>
+                          {#if block.headerTop}
+                            {@const sup = superHeaders(block.headerTop, block.headers)}
+                            <tr class="super">
+                              {#each sup as s, si (si)}
+                                <th colspan={s.span} rowspan={s.rowspan}>
+                                  {#if diceCol(s.text) !== null}
+                                    <span class="th-dice"><svg width="1em" height="1em" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M56 32h144a40 40 0 0 1 40 40v112a40 40 0 0 1-40 40H56a40 40 0 0 1-40-40V72a40 40 0 0 1 40-40Zm0 16a24 24 0 0 0-24 24v112a24 24 0 0 0 24 24h144a24 24 0 0 0 24-24V72a24 24 0 0 0-24-24Zm40 32a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Z"/></svg>{diceCol(s.text)}</span>
+                                  {:else}
+                                    {@html inlineHtml(s.text)}
+                                  {/if}
+                                </th>
+                              {/each}
+                            </tr>
+                          {/if}
                           <tr>
-                            {#each block.headers as h}
-                              <th>
-                                {#if diceCol(h) !== null}
-                                  <span class="th-dice"><svg width="1em" height="1em" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M56 32h144a40 40 0 0 1 40 40v112a40 40 0 0 1-40 40H56a40 40 0 0 1-40-40V72a40 40 0 0 1 40-40Zm0 16a24 24 0 0 0-24 24v112a24 24 0 0 0 24 24h144a24 24 0 0 0 24-24V72a24 24 0 0 0-24-24Zm40 32a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Z"/></svg>{diceCol(h)}</span>
-                                {:else}
-                                  {@html inlineHtml(h)}
-                                {/if}
-                              </th>
+                            {#each block.headers as h, i}
+                              {#if !block.headerTop || (block.headerTop[i] ?? '') !== h}
+                                <th>
+                                  {#if diceCol(h) !== null}
+                                    <span class="th-dice"><svg width="1em" height="1em" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M56 32h144a40 40 0 0 1 40 40v112a40 40 0 0 1-40 40H56a40 40 0 0 1-40-40V72a40 40 0 0 1 40-40Zm0 16a24 24 0 0 0-24 24v112a24 24 0 0 0 24 24h144a24 24 0 0 0 24-24V72a24 24 0 0 0-24-24Zm40 32a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm68-64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Zm0 64a16 16 0 1 1-16 16a16 16 0 0 1 16-16Z"/></svg>{diceCol(h)}</span>
+                                  {:else}
+                                    {@html inlineHtml(h)}
+                                  {/if}
+                                </th>
+                              {/if}
                             {/each}
                           </tr>
                         </thead>

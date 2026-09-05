@@ -5,6 +5,8 @@
 export interface MdTable {
   type: "table";
   headers: string[];
+  /** en-tête « parent » (2ᵉ ligne DRS avec « ^^ ») → rendu en double ligne */
+  headerTop?: string[];
   rows: string[][];
 }
 export interface MdHeading {
@@ -44,6 +46,45 @@ export function inlineHtml(s: string): string {
 export function diceCol(header: string): number | null {
   const m = /^d\s*(\d{1,3})$/i.exec(header.replace(/\*\*/g, "").trim());
   return m ? Number(m[1]) : null;
+}
+
+export interface SuperHeader {
+  text: string;
+  span: number;
+  rowspan: number;
+}
+
+/**
+ * Transforme un en-tête à 2 niveaux en rangée HTML : les colonnes dont le
+ * label « parent » vaut aussi la sous-colonne (fusion verticale « ^^ ») → un
+ * seul <th rowspan=2> ; sinon le label parent couvre ses sous-colonnes
+ * (colspan), rendues dans la rangée suivante.
+ */
+export function superHeaders(top: string[], bottom: string[]): SuperHeader[] {
+  const out: SuperHeader[] = [];
+  let c = 0;
+  while (c < top.length) {
+    const t = top[c] ?? "";
+    if (t && t === (bottom[c] ?? "")) {
+      out.push({ text: t, span: 1, rowspan: 2 });
+      c++;
+      continue;
+    }
+    if (!t) {
+      out.push({ text: "", span: 1, rowspan: 1 });
+      c++;
+      continue;
+    }
+    let span = 1;
+    let k = c + 1;
+    while (k < top.length && ((top[k] ?? "") === "" || top[k] === t)) {
+      span++;
+      k++;
+    }
+    out.push({ text: t, span, rowspan: 1 });
+    c = k;
+  }
+  return out;
 }
 
 function isTableLine(line: string): boolean {
@@ -99,13 +140,38 @@ export function toBlocks(markdown: string): MdBlock[] {
     if (/^#\s+/.test(trimmed)) continue;
 
     // tableau
-    if (isTableLine(trimmed) && i + 1 < lines.length) {
-      const sep = lines[i + 1] ?? "";
-      if (isTableLine(sep) && /^[\s|:-]+$/.test(sep.trim())) {
+    if (isTableLine(trimmed)) {
+      // Le DRS met parfois l'en-tête sur 2 lignes (colonne « parent » + sous-
+      // colonnes « ^^ ») : le séparateur n'est donc pas forcément la ligne suivante.
+      let sepIdx = -1;
+      const limit = Math.min(i + 4, lines.length);
+      for (let k = i + 1; k < limit; k++) {
+        const cand = lines[k] ?? "";
+        if (isTableLine(cand) && /^[\s|:-]+$/.test(cand.trim())) {
+          sepIdx = k;
+          break;
+        }
+      }
+      if (sepIdx !== -1) {
         flushAll();
-        const headers = splitPipes(trimmed);
+        const headerLines: string[][] = [];
+        for (let k = i; k < sepIdx; k++) headerLines.push(splitPipes(lines[k]!));
+        const width = Math.max(...headerLines.map((h) => h.length));
+        for (const h of headerLines) while (h.length < width) h.push("");
+
+        // « ^^ » = répète la cellule juste au-dessus (fusion verticale du DRS)
+        for (let r = 1; r < headerLines.length; r++) {
+          for (let c = 0; c < width; c++) {
+            if (headerLines[r]![c] === "^^") headerLines[r]![c] = headerLines[r - 1]![c] ?? "";
+          }
+        }
+
+        const headers = headerLines[headerLines.length - 1]!;
+        const headerTop = headerLines.length > 1 ? headerLines[0]! : undefined;
+
         const rows: string[][] = [];
-        let j = i + 2;
+        let prev: string[] | null = null;
+        let j = sepIdx + 1;
         while (j < lines.length && isTableLine(lines[j]!)) {
           const cells = splitPipes(lines[j]!);
           while (cells.length < headers.length) cells.push("");
@@ -115,11 +181,13 @@ export function toBlocks(markdown: string): MdBlock[] {
           if (/^\*\*.*\*\*$/.test(first) && restEmpty) {
             rows.push([`__group__${first.replace(/\*\*/g, "")}`]);
           } else {
-            rows.push(cells);
+            const resolved = cells.map((x, idx) => (x === "^^" ? (prev?.[idx] ?? "") : x));
+            prev = resolved;
+            rows.push(resolved);
           }
           j++;
         }
-        blocks.push({ type: "table", headers, rows });
+        blocks.push({ type: "table", headers, rows, ...(headerTop ? { headerTop } : {}) });
         i = j - 1;
         continue;
       }
