@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { createDb, schema } from "../db";
 import { eq, and, like, or, sql, count } from "drizzle-orm";
 import { requireAuth, type AuthVariables } from "../middleware";
+import type { GameTableDO } from "../do/game-table";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -151,14 +152,22 @@ app.get("/entry/:category/:slug", requireAuth, async (c) => {
     .from(schema.compendiumEntries)
     .where(
       and(
-        visibilityWhere(access),
+        access.isMj
+          ? sql`1=1`
+          : sql`(${schema.compendiumEntries.visibility} = 'public'
+            OR exists (
+              select 1 from compendium_shares
+              where compendium_shares.campaign_id = ${access.campaignId}
+                and compendium_shares.category = ${schema.compendiumEntries.category}
+                and compendium_shares.slug = ${schema.compendiumEntries.slug}
+            ))`,
         eq(schema.compendiumEntries.category, category),
         eq(schema.compendiumEntries.slug, slug),
       ),
     )
     .limit(1);
 
-  // Une fiche `mj` demandée par un joueur → 404 (on ne confirme pas son existence).
+  // Une fiche `mj` non partagée demandée par un joueur → 404 (existence non confirmée).
   if (!row) return c.json({ error: "Introuvable" }, 404);
 
   return c.json({
@@ -172,6 +181,47 @@ app.get("/entry/:category/:slug", requireAuth, async (c) => {
     visibility: row.visibility,
     origin: row.origin,
   });
+});
+
+// ── Partager une fiche au journal (MJ) ─────────────────────────
+
+app.post("/share", requireAuth, async (c) => {
+  const body = await c.req
+    .json<{ campaignId?: string; category?: string; slug?: string }>()
+    .catch(() => null);
+  const { campaignId, category, slug } = body ?? {};
+  if (!campaignId || !category || !slug) return c.json({ error: "paramètres requis" }, 400);
+
+  const db = createDb(c.env.DB);
+  const [membership] = await db
+    .select({ role: schema.members.role })
+    .from(schema.members)
+    .where(
+      and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, c.get("user").id)),
+    )
+    .limit(1);
+  if (!membership || membership.role !== "mj") {
+    return c.json({ error: "Réservé au MJ" }, 403);
+  }
+
+  const [entry] = await db
+    .select({ title: schema.compendiumEntries.title })
+    .from(schema.compendiumEntries)
+    .where(
+      and(eq(schema.compendiumEntries.category, category), eq(schema.compendiumEntries.slug, slug)),
+    )
+    .limit(1);
+  if (!entry) return c.json({ error: "Fiche introuvable" }, 404);
+
+  const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+  const stub = ns.get(ns.idFromName(campaignId));
+  await stub.shareCompendium({
+    category,
+    slug,
+    title: entry.title,
+    sharedBy: c.get("user").name,
+  });
+  return c.json({ ok: true });
 });
 
 export default app;

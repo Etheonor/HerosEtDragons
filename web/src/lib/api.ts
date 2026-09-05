@@ -228,6 +228,11 @@ export const api = {
         limit: number;
       }>(`/api/compendium/entries?${qs.toString()}`);
     },
+    share: (campaignId: string, category: string, slug: string) =>
+      fetchJson<{ ok: true }>("/api/compendium/share", {
+        method: "POST",
+        body: JSON.stringify({ campaignId, category, slug }),
+      }),
     entry: (campaignId: string, category: string, slug: string) =>
       fetchJson<CompendiumEntryDto>(
         `/api/compendium/entry/${encodeURIComponent(category)}/${encodeURIComponent(slug)}?campaign=${encodeURIComponent(campaignId)}`,

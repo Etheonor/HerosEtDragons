@@ -208,6 +208,21 @@ export const compendiumEntries = sqliteTable(
   (table) => [index("compendium_category_idx").on(table.category)],
 );
 
+export const compendiumShares = sqliteTable(
+  "compendium_shares",
+  {
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    slug: text("slug").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.campaignId, table.category, table.slug] })],
+);
+
 export const journal = sqliteTable(
   "journal",
   {

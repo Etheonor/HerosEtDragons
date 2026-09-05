@@ -16,6 +16,7 @@
   let selected = $state<CompendiumEntryDto | null>(null);
   let listError = $state('');
   let addedToLibrary = $state(false);
+  let sharedOk = $state(false);
   let loadingEntry = $state(false);
 
   const LABELS: Record<string, string> = {
@@ -37,6 +38,14 @@
       const res = await api.compendium.categories(campaign);
       categories = res.categories;
       isMj = res.isMj;
+      const deepCat = page.url.searchParams.get('cat');
+      const deepSlug = page.url.searchParams.get('slug');
+      if (deepCat && deepSlug) {
+        activeCategory = deepCat;
+        await loadEntries();
+        selected = await api.compendium.entry(campaign, deepCat, deepSlug).catch(() => null);
+        return;
+      }
       if (!categories.find((c) => c.category === activeCategory)) {
         activeCategory = categories[0]?.category ?? '';
       }
@@ -73,8 +82,21 @@
     }
   }
 
+  async function shareEntry() {
+    if (!selected || !isMj || sharedOk) return;
+    try {
+      await api.compendium.share(campaign, selected.category, selected.slug);
+      sharedOk = true;
+    } catch (e) {
+      listError = e instanceof Error ? e.message : 'Partage impossible';
+    }
+  }
+
   function selectCategory(cat: string) {
-    if (activeCategory === cat && !search) return;
+    if (activeCategory === cat && !search) {
+      selected = null;
+      return;
+    }
     activeCategory = cat;
     search = '';
     void loadEntries();
@@ -86,6 +108,7 @@
     if (!campaign) return;
     loadingEntry = true;
     addedToLibrary = false;
+    sharedOk = false;
     try {
       selected = await api.compendium.entry(campaign, e.category, e.slug);
     } catch (err) {
@@ -210,6 +233,15 @@
               <p class="entry-source">{selected.source}{selected.sourcePage ? ` · p. ${selected.sourcePage}` : ''}</p>
             </div>
 
+            {#if isMj}
+              <div class="entry-actions">
+                {#if sharedOk}
+                  <span class="added">partagée au journal ✓</span>
+                {:else}
+                  <button class="action" onclick={shareEntry}>Partager au journal</button>
+                {/if}
+              </div>
+            {/if}
             {#if selected.category === 'bestiaire'}
               <div class="stat-strip">
                 <span><b>CA</b> {monsterCa(m as Partial<MonsterMeta>)}</span>
