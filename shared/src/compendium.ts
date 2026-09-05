@@ -149,7 +149,7 @@ export function sizeHitDie(size: string | undefined): number {
   }
 }
 
-export function caracMod(score: number): number {
+function caracMod(score: number): number {
   return Math.floor((score - 10) / 2);
 }
 

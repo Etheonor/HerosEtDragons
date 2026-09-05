@@ -162,6 +162,22 @@ export function validateCharacterSheet(raw: unknown): string | null {
   const langErr = str(s.languesEtMaitrises, TEXT_MAX, "langues & maîtrises");
   if (langErr) return langErr;
 
+  if (s.portrait !== undefined && s.portrait !== null) {
+    const pErr = str(s.portrait, 80, "portrait");
+    if (pErr) return pErr;
+  }
+
+  if (s.racial !== undefined && s.racial !== null) {
+    if (!isObj(s.racial)) return "racial : objet attendu";
+    for (const [k, v] of Object.entries(s.racial as Record<string, unknown>)) {
+      if (!["for", "dex", "con", "int", "sag", "cha"].includes(k)) {
+        return `racial : clé inconnue ${k}`;
+      }
+      const e = int(v, 0, 4, `racial ${k}`);
+      if (e) return e;
+    }
+  }
+
   const equip = s.equipement;
   if (!isObj(equip)) return "equipement manquant";
   const bourse = equip.bourse;

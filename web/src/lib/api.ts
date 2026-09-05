@@ -118,6 +118,7 @@ export interface CharacterSheet {
   personnalite: { traits?: string; ideaux?: string; liens?: string; defauts?: string };
   languesEtMaitrises: string;
   portrait?: string | null;
+  racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
   equipement: {
     bourse: { po: number; pa: number; pc: number };
     objets: { name: string; qty: number }[];

@@ -197,6 +197,7 @@ app.post("/", requireAuth, async (c) => {
     personnalite: body.sheet?.personnalite ?? {},
     languesEtMaitrises: body.sheet?.languesEtMaitrises ?? "",
     portrait: null,
+    racial: body.sheet?.racial ?? null,
     equipement: body.sheet?.equipement ?? { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
     couleurPion: body.sheet?.couleurPion ?? "#C0392B",
   };

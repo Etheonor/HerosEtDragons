@@ -3,7 +3,8 @@
   import { page } from '$app/state';
   import { api, type CompendiumEntryDto } from '$lib/api';
   import { renderEntryBody, inlineHtml, diceCol } from '$lib/markdown-lite';
-  import { monsterAveragePv, monsterCa, caracMod, type MonsterMeta, type SpellMeta } from '@rollwith/shared/compendium';
+  import { monsterAveragePv, monsterCa, type MonsterMeta, type SpellMeta } from '@rollwith/shared/compendium';
+  import { caracMod } from '@rollwith/shared/hd';
 
   const campaign = page.url.searchParams.get('campaign') ?? '';
 

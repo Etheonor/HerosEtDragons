@@ -22,6 +22,7 @@
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
+  import { findRace, findClass, racialBonus, type Carac } from '@rollwith/shared/hd';
 
   let {
     char,
@@ -79,6 +80,18 @@
   });
 
   const readonly = $derived(!char.canEdit);
+
+  // ── Apport course/classe (hd.ts, données officielles DRS) ────
+  const raceInfo = $derived(findRace(sheet.identite?.race));
+  const classInfo = $derived(findClass(sheet.identite?.classe));
+  const racialShown = $derived.by<Partial<Record<Carac, number>> | null>(() => {
+    if (sheet.racial && Object.keys(sheet.racial).length) return sheet.racial;
+    if (raceInfo) return racialBonus(raceInfo);
+    return null;
+  });
+  const CARAC_LABELS_FR: Record<Carac, string> = {
+    for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
+  };
 
   // ── Autosave ─────────────────────────────────────────────────
   let saveState = $state<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
@@ -432,6 +445,7 @@
         <div class="char-citation">« <Editable {readonly} w={220} value={sheet.identite.citation ?? ''} onchange={(v) => (sheet.identite.citation = String(v))} placeholder="citation" oncommit={touch} ontype={touch} /> »</div>
       </div>
       <div class="char-divider"></div>
+      <div class="char-meta-col">
       <div class="char-meta-grid">
         <div class="char-meta-item">
           <div class="meta-label">Classe & niveau</div>
@@ -460,6 +474,27 @@
           </div>
         </div>
       </div>
+      {#if raceInfo || classInfo}
+        <div class="rules-strip">
+          {#if raceInfo}
+            <span class="rule-chip race-chip">
+              {raceInfo.label}
+              {#each Object.entries(racialShown ?? {}) as [k, v] (k)}
+                <b>+{v} {CARAC_LABELS_FR[k as Carac]}</b>
+              {/each}
+            </span>
+          {/if}
+          {#if classInfo}
+            <span class="rule-chip class-chip">
+              {classInfo.label}
+              <b>DV d{classInfo.hitDie}</b>
+              <b>sauvegardes {classInfo.saves.map((k) => k.toUpperCase()).join(' · ')}</b>
+              {#if classInfo.casting}<b>incantation {classInfo.casting.toUpperCase()}</b>{/if}
+            </span>
+          {/if}
+        </div>
+      {/if}
+      </div>
     </div>
   </div>
 
@@ -478,6 +513,9 @@
           <div class="carac-mod" title="Modificateur calculé">{formatMod(getMod(sheet, c))}</div>
           <div class="carac-value">
             <Editable {readonly} type="number" min={1} max={30} align="center" w={42} value={sheet.caracs[c]} onchange={(v) => (sheet.caracs[c] = Number(v))} oncommit={() => { sheet.caracs[c] = num(sheet.caracs[c], 1, 30, 10); touch(); }} ontype={touch} />
+            {#if racialShown?.[c]}
+              <span class="racial-badge" title="Dont +{racialShown[c]} racial ({raceInfo?.label ?? 'course'})">+{racialShown[c]}</span>
+            {/if}
           </div>
         </div>
       {/each}
@@ -979,6 +1017,26 @@
     background: var(--panel);
     padding: 14px 20px;
   }
+  .char-meta-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .rules-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rule-chip {
+    font-size: 11px; font-weight: 700; letter-spacing: .03em;
+    border: 1.5px solid var(--border); border-radius: var(--sketchy-badge);
+    padding: 2px 9px; color: var(--text-2); display: inline-flex; gap: 7px; align-items: baseline;
+    white-space: nowrap;
+  }
+  .rule-chip b { color: var(--accent-text); font-weight: 700; }
+  .race-chip { border-color: var(--accent-border); }
+  .racial-badge {
+    font-family: var(--font-body); font-size: 10.5px; font-weight: 700;
+    color: var(--accent-text); vertical-align: super; margin-left: 1px;
+  }
   .char-name-col {
     display: flex;
     flex-direction: column;
@@ -1119,6 +1177,9 @@
     color: var(--text-2);
     font-size: 12px;
     line-height: 1.1;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
   }
 
   .inspi-card {

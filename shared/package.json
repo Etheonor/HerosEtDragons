@@ -41,6 +41,10 @@
     "./compendium": {
       "types": "./dist/compendium.d.ts",
       "import": "./dist/compendium.js"
+    },
+    "./hd": {
+      "types": "./dist/hd.d.ts",
+      "import": "./dist/hd.js"
     }
   },
   "scripts": {

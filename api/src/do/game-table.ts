@@ -90,6 +90,7 @@ function blankSheet(name: string): CharacterSheet {
     personnalite: {},
     languesEtMaitrises: "",
     portrait: null,
+    racial: null,
     equipement: { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
     couleurPion: "#C0392B",
   };
