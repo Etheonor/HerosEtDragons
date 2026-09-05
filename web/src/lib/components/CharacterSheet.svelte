@@ -22,7 +22,15 @@
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
-  import { findRace, findClass, racialBonus, RACES, CLASSES, type Carac } from '@rollwith/shared/hd';
+  import {
+    findRace,
+    findClass,
+    racialBonus,
+    freeChoiceCandidates,
+    RACES,
+    CLASSES,
+    type Carac,
+  } from '@rollwith/shared/hd';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary } from '$lib/hd-text';
 
@@ -86,11 +94,48 @@
   // ── Apport course/classe (hd.ts, données officielles DRS) ────
   const raceInfo = $derived(findRace(sheet.identite?.race));
   const classInfo = $derived(findClass(sheet.identite?.classe));
-  const racialShown = $derived.by<Partial<Record<Carac, number>> | null>(() => {
-    if (sheet.racial && Object.keys(sheet.racial).length) return sheet.racial;
-    if (raceInfo) return racialBonus(raceInfo);
-    return null;
+  // Bonus déjà appliqué ? sheet.racial garde le détail de ce qui EST inclus
+  // dans les valeurs. Sinon, on prévisualise ce que la course apporterait.
+  const racialApplied = $derived(!!sheet.racial && Object.keys(sheet.racial).length > 0);
+  const racialShown = $derived<Partial<Record<Carac, number>> | null>(
+    racialApplied ? sheet.racial ?? null : raceInfo ? racialBonus(raceInfo) : null,
+  );
+
+  let racialPanel = $state(false);
+  let freeChosen = $state<Carac[]>([]);
+  const freeNeeded = $derived(raceInfo?.bonus.free?.count ?? 0);
+  const freeCandidates = $derived(raceInfo ? freeChoiceCandidates(raceInfo) : []);
+  const pendingBonus = $derived.by<Partial<Record<Carac, number>> | null>(() => {
+    if (!raceInfo || racialApplied) return null;
+    return racialBonus(raceInfo, freeChosen);
   });
+  const pendingNeedsFree = $derived(freeNeeded > 0 && freeChosen.length < freeNeeded);
+  const pendingReady = $derived(!!pendingBonus && !pendingNeedsFree && Object.values(pendingBonus).some((v) => (v ?? 0) > 0));
+
+  function toggleFreePick(c: Carac) {
+    if (freeChosen.includes(c)) freeChosen = freeChosen.filter((x) => x !== c);
+    else if (freeChosen.length < freeNeeded) freeChosen = [...freeChosen, c];
+  }
+
+  function applyRacial() {
+    if (!raceInfo || !pendingBonus || !pendingReady) return;
+    for (const [k, v] of Object.entries(pendingBonus) as [Carac, number][]) {
+      sheet.caracs[k] = Math.max(3, Math.min(20, sheet.caracs[k] + v));
+    }
+    sheet.racial = { ...pendingBonus };
+    racialPanel = false;
+    freeChosen = [];
+    touch();
+  }
+
+  function unapplyRacial() {
+    if (!racialApplied) return;
+    for (const [k, v] of Object.entries(sheet.racial ?? {}) as [Carac, number][]) {
+      sheet.caracs[k] = Math.max(3, Math.min(20, sheet.caracs[k] - (v ?? 0)));
+    }
+    sheet.racial = null;
+    touch();
+  }
   const CARAC_LABELS_FR: Record<Carac, string> = {
     for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
   };
@@ -516,6 +561,11 @@
                 <b>+{v} {CARAC_LABELS_FR[k as Carac]}</b>
               {/each}
             </span>
+            {#if racialApplied}
+              <button class="racial-undo" title="Soustrait les bonus enregistrés des valeurs actuelles" onclick={unapplyRacial}>retirer le bonus</button>
+            {:else}
+              <button class="racial-apply" onclick={() => (racialPanel = !racialPanel)}>+ Appliquer le bonus racial</button>
+            {/if}
           {/if}
           {#if classInfo}
             <span class="rule-chip class-chip">
@@ -526,6 +576,29 @@
             </span>
           {/if}
         </div>
+        {#if racialPanel && raceInfo && !racialApplied}
+          <div class="racial-panel">
+            {#if pendingNeedsFree}
+              <span class="mini-label">choisis {freeNeeded - freeChosen.length} carac{freeNeeded - freeChosen.length > 1 ? 's' : ''} pour le +1 racial :</span>
+              <div class="free-picks">
+                {#each freeCandidates as c (c)}
+                  <button class="free-pick" class:on={freeChosen.includes(c)} onclick={() => toggleFreePick(c)}>
+                    {CARAC_LABELS_FR[c]}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            <div class="racial-panel-foot">
+              <span class="step-note">
+                {#each Object.entries(pendingBonus ?? {}) as [k, v] (k)}
+                  {CARAC_LABELS_FR[k as Carac]} +{v}&nbsp;
+                {/each}
+              </span>
+              <button class="racial-apply solid" disabled={!pendingReady} onclick={applyRacial}>Appliquer</button>
+              <button class="racial-cancel" onclick={() => (racialPanel = false)}>Annuler</button>
+            </div>
+          </div>
+        {/if}
       {/if}
       </div>
     </div>
@@ -547,7 +620,7 @@
           <div class="carac-value">
             <Editable {readonly} type="number" min={1} max={30} align="center" w={42} value={sheet.caracs[c]} onchange={(v) => (sheet.caracs[c] = Number(v))} oncommit={() => { sheet.caracs[c] = num(sheet.caracs[c], 1, 30, 10); touch(); }} ontype={touch} />
             {#if racialShown?.[c]}
-              <span class="racial-badge" title="Dont +{racialShown[c]} racial ({raceInfo?.label ?? 'course'})">+{racialShown[c]}</span>
+              <span class="racial-badge" class:pending={!racialApplied} title={racialApplied ? `Dont +${racialShown[c]} racial (${raceInfo?.label ?? 'course'})` : `Non appliqué : +${racialShown[c]} (${raceInfo?.label ?? 'course'}) — utilise « Appliquer le bonus racial »`}>+{racialShown[c]}</span>
             {/if}
           </div>
         </div>
@@ -1070,6 +1143,44 @@
     font-family: var(--font-body); font-size: 10.5px; font-weight: 700;
     color: var(--accent-text); vertical-align: super; margin-left: 1px;
   }
+  .racial-badge.pending {
+    border: 1px dashed var(--accent-border);
+    border-radius: 6px 2px 6px 2px;
+    padding: 0 3px;
+    opacity: 0.8;
+  }
+  .racial-apply {
+    font-family: var(--font-body); font-size: 11px; font-weight: 700;
+    background: transparent; border: 1.5px dashed var(--accent-border);
+    border-radius: var(--sketchy-badge); padding: 2px 9px; color: var(--accent-text); cursor: pointer;
+  }
+  .racial-apply:hover:not(:disabled) { border-style: solid; background: var(--bg); }
+  .racial-apply:disabled { opacity: .5; cursor: default; }
+  .racial-apply.solid { border-style: solid; background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
+  .racial-undo {
+    font-family: var(--font-body); font-size: 11px;
+    background: none; border: none; cursor: pointer; color: var(--text-3);
+    text-decoration: underline dotted;
+  }
+  .racial-undo:hover { color: var(--accent-text); }
+  .racial-panel {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 9px 12px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .free-picks { display: flex; gap: 5px; flex-wrap: wrap; }
+  .free-pick {
+    font-family: var(--font-body); font-size: 11.5px; font-weight: 500; padding: 3px 10px;
+    background: var(--bg); border: 2px solid var(--border); border-radius: 10px 3px 12px 3px;
+    color: var(--text-2); cursor: pointer;
+  }
+  .free-pick.on { border-color: var(--accent); color: var(--accent-text); }
+  .racial-panel-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .racial-cancel {
+    font-family: var(--font-body); font-size: 12px; background: none; border: none;
+    cursor: pointer; color: var(--text-2);
+  }
+  .racial-cancel:hover { color: var(--text); }
+  .step-note { font-size: 11.5px; color: var(--text-2); }
   .char-name-col {
     display: flex;
     flex-direction: column;
