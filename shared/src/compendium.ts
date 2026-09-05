@@ -121,4 +121,57 @@ export function entryKey(category: CompendiumCategory, slug: string): string {
   return `${category}/${slug}`;
 }
 
+/** Dé de vie d'une créature selon sa taille (Taille → die). */
+export function sizeHitDie(size: string | undefined): number {
+  switch ((size ?? "").toUpperCase()) {
+    case "T":
+    case "TRÈS PETITE":
+    case "TP":
+      return 4;
+    case "P":
+    case "PETITE":
+      return 6;
+    case "M":
+    case "MOYENNE":
+      return 8;
+    case "G":
+    case "GRANDE":
+      return 10;
+    case "TG":
+    case "TRÈS GRANDE":
+      return 12;
+    case "C":
+    case "COLossale":
+    case "COLOSSALE":
+      return 20;
+    default:
+      return 8;
+  }
+}
+
+export function caracMod(score: number): number {
+  return Math.floor((score - 10) / 2);
+}
+
+/** PV moyens estimés d'une créature (le DRS ne stocke que le nombre de dés). */
+export function monsterAveragePv(meta: Partial<MonsterMeta>): number {
+  const count = meta.hitDiceCount ?? 0;
+  if (!count) return 0;
+  const die = sizeHitDie(meta.size);
+  const conMod = caracMod(meta.caracs?.con ?? 10);
+  return Math.max(1, Math.round((count * (die + 1)) / 2 + conMod * count));
+}
+
+/** CA estimée : 10 + mod DEX + bonus d'armure (+ bouclier ~2) quand le DRS ne donne pas de CA chiffrée. */
+export function monsterCa(meta: Partial<MonsterMeta>): number {
+  const first = meta.ca?.[0];
+  if (first?.value !== undefined) return first.value;
+  const armor = first?.armor;
+  const shield = first?.hasShield ? 2 : 0;
+  const dex = caracMod(meta.caracs?.dex ?? 10);
+  // bonus « armure naturelle » donné en valeur implicite par le wiki (ex. gobelin) :
+  // sans valeur chiffrée on estime 10 + dex + bouclier.
+  return 10 + dex + shield + (armor && /naturelle/.test(armor) ? 1 : 0);
+}
+
 // EOF compendium.ts
