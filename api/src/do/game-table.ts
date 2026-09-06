@@ -514,6 +514,32 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ characters: { [charId]: card } });
   }
 
+  /**
+   * RPC appelé par DELETE /api/maps/:id (audit B7) : purge les pions, repères
+   * et le brouillard de la carte supprimée. Si c'était la carte active, la
+   * table repasse sur « aucune carte » (le client remplace sa vue, mapId
+   * présent dans le patch).
+   */
+  async cleanupMap(mapId: string): Promise<void> {
+    await this.ensureCampaignId();
+    const state = await this.getState();
+    const key = this.mapKey(mapId);
+    if (!state.tokensByMap[key] && !state.markersByMap[key] && !state.fog[key]) {
+      if (state.mapId !== mapId) return; // rien à nettoyer
+    }
+    const tokensByMap = { ...state.tokensByMap };
+    const markersByMap = { ...state.markersByMap };
+    const fog = { ...state.fog };
+    delete tokensByMap[key];
+    delete markersByMap[key];
+    delete fog[key];
+    const mapIdActive = state.mapId === mapId ? null : state.mapId;
+    await this.patchState({ mapId: mapIdActive, tokensByMap, markersByMap, fog });
+    if (mapIdActive === null && this.ctx.getWebSockets().length > 0) {
+      this.broadcastRoleAware({ mapId: null, tokens: {}, markers: [] });
+    }
+  }
+
   // ── Handlers : chat & dés ─────────────────────────────────────
 
   private async handleChatSay(ws: WebSocket, att: WsAttachment, text: string) {
@@ -953,7 +979,7 @@ export class GameTableDO extends DurableObject<Env> {
       scores: { ...state.combat.scores, [charId]: roll },
       rollIndex: {
         ...state.combat.rollIndex,
-        [charId]: Object.keys(state.combat.rollIndex).length,
+        [charId]: this.nextRollIndex(state.combat.rollIndex),
       },
     };
 
@@ -975,6 +1001,12 @@ export class GameTableDO extends DurableObject<Env> {
 
     await this.patchState({ combat });
     this.broadcastAll({ type: "delta", patch: { combat } });
+  }
+
+  /** Index de jet suivant : 1 + max (jamais de collision après un retrait). */
+  private nextRollIndex(rollIndex: Record<string, number>): number {
+    const values = Object.values(rollIndex);
+    return values.length > 0 ? Math.max(...values) + 1 : 0;
   }
 
   /** Retire un participant (PNJ supprimé en cours de combat) sans casser l'ordre/le tour en cours. */
@@ -1504,7 +1536,7 @@ export class GameTableDO extends DurableObject<Env> {
     let newCombat: CombatState = {
       ...combat,
       scores: { ...combat.scores, [charId]: total },
-      rollIndex: { ...combat.rollIndex, [charId]: Object.keys(combat.rollIndex).length },
+      rollIndex: { ...combat.rollIndex, [charId]: this.nextRollIndex(combat.rollIndex) },
     };
 
     if (newCombat.participants.every((id) => newCombat.scores[id] !== undefined)) {

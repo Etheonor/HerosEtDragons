@@ -6,7 +6,7 @@
 // puis pilote la table en WS comme le ferait un vrai joueur.
 // ═══════════════════════════════════════════════════════════
 
-import { env, applyD1Migrations } from "cloudflare:test";
+import { env, applyD1Migrations, runInDurableObject } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { createDb, schema } from "../src/db";
 import { eq } from "drizzle-orm";
@@ -435,6 +435,40 @@ describe("GameTableDO — intégration", () => {
     expect(
       (removeDelta.patch as { characters: Record<string, unknown> }).characters[id],
     ).toBeNull();
+  });
+
+  it("cleanupMap (RPC) : suppression d'une carte = pions/repères purgés, carte active → aucune carte", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "token.put", charId: "pnj-1", x: 40, y: 40 });
+    await mj.nextWhere(
+      (m) => (m.patch as { tokens?: Record<string, unknown> } | undefined)?.tokens?.["pnj-1"] !== undefined,
+    );
+    mj.send({ type: "marker.set", x: 10, y: 10, text: "piège" });
+    await mj.nextWhere((m) => (m.patch as { markers?: unknown[] } | undefined)?.markers !== undefined);
+
+    // Suppression de la carte ACTIVE : le DO purge et repasse sur aucune carte.
+    await tableStub().cleanupMap("map-1");
+    const delta = await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    const patch = delta.patch as { mapId: string | null; tokens: Record<string, unknown>; markers: unknown[] };
+    expect(patch.mapId).toBeNull();
+    expect(patch.tokens["pnj-1"]).toBeUndefined();
+    expect(patch.markers).toEqual([]);
+
+    // L'état interne est purgé (storage du DO).
+    await runInDurableObject(tableStub(), async (_instance, state) => {
+      const live = await state.storage.get<{
+        mapId: string | null;
+        tokensByMap: Record<string, unknown>;
+      }>("liveState");
+      expect(live?.mapId).toBeNull();
+      expect(live?.tokensByMap["map-1"]).toBeUndefined();
+    });
   });
 
   it("shareCompendium (RPC) : entrée de journal + ligne compendium_shares, broadcast aux connectés", async () => {

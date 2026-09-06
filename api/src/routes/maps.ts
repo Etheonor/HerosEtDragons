@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { MapSummary } from "@rollwith/shared/dto";
+import type { GameTableDO } from "../do/game-table";
 import { createDb, schema } from "../db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -179,6 +180,15 @@ app.delete("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
 
   if (map.r2Key) await c.env.MAPS.delete(map.r2Key);
   await db.delete(schema.maps).where(eq(schema.maps.id, mapId));
+
+  // Purge des pions/repères/brouillard de cette carte dans le DO (audit B7).
+  try {
+    const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+    const stub = ns.get(ns.idFromName(map.campaignId));
+    await stub.cleanupMap(mapId);
+  } catch {
+    /* table fermée : rien à purger */
+  }
 
   return c.json<{ ok: true }>({ ok: true });
 });

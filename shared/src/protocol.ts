@@ -388,11 +388,6 @@ export interface DiceResultMsg {
   };
 }
 
-export interface CharUpdatedMsg {
-  type: "char.updated";
-  charId: string;
-}
-
 export interface PresenceMsg {
   type: "presence";
   users: PresenceUser[];
@@ -409,7 +404,6 @@ export type ServerMessage =
   | DeltaMsg
   | JournalMsg
   | DiceResultMsg
-  | CharUpdatedMsg
   | PresenceMsg
   | ErrorMsg
   | PingBroadcastMsg;
@@ -487,7 +481,6 @@ export function isServerMessageValid(msg: unknown): msg is ServerMessage {
     "delta",
     "journal",
     "dice.result",
-    "char.updated",
     "presence",
     "error",
     "ping",
