@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { createDb, schema, type CharacterSheet } from "../db";
+import { createDb, schema } from "../db";
+import { createSheet } from "@rollwith/shared/sheet";
 import type {
   JournalEntry,
   Marker,
@@ -21,6 +22,7 @@ import {
 } from "@rollwith/shared/dice";
 import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
 import { sortInitiative, type InitiativeEntry } from "@rollwith/shared/initiative";
+import { clientMessageSchema, type ClientMessageInput } from "@rollwith/shared/ws-validation";
 import { eq, and, inArray, desc } from "drizzle-orm";
 
 interface WsAttachment {
@@ -53,6 +55,27 @@ const FOG_REVEAL_RADIUS_PCT = 9;
 const FOG_REVEAL_MIN_SPACING_PCT = 3;
 const FOG_MAX_REVEALS = 600;
 
+/** Messages validés (ws-validation) — chaque handler reçoit son payload typé. */
+type DiceRollMsg = Extract<ClientMessageInput, { type: "dice.roll" }>;
+type CharHpMsg = Extract<ClientMessageInput, { type: "char.hp" }>;
+type CharConditionMsg = Extract<ClientMessageInput, { type: "char.condition" }>;
+type TokenMoveMsg = Extract<ClientMessageInput, { type: "token.move" }>;
+type TokenPutMsg = Extract<ClientMessageInput, { type: "token.put" }>;
+type TokenRemoveMsg = Extract<ClientMessageInput, { type: "token.remove" }>;
+type NpcDuplicateMsg = Extract<ClientMessageInput, { type: "npc.duplicate" }>;
+type NpcAddFromTemplateMsg = Extract<ClientMessageInput, { type: "npc.addFromTemplate" }>;
+type NpcSaveAsTemplateMsg = Extract<ClientMessageInput, { type: "npc.saveAsTemplate" }>;
+type NpcAddMsg = Extract<ClientMessageInput, { type: "npc.add" }>;
+type NpcRemoveMsg = Extract<ClientMessageInput, { type: "npc.remove" }>;
+type MapSelectMsg = Extract<ClientMessageInput, { type: "map.select" }>;
+type MarkerSetMsg = Extract<ClientMessageInput, { type: "marker.set" }>;
+type MarkerMoveMsg = Extract<ClientMessageInput, { type: "marker.move" }>;
+type MarkerRemoveMsg = Extract<ClientMessageInput, { type: "marker.remove" }>;
+type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
+type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
+type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
+type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
+
 function defaultLiveState(): LiveState {
   return {
     mode: "exploration",
@@ -61,40 +84,6 @@ function defaultLiveState(): LiveState {
     markersByMap: {},
     fog: {},
     combat: null,
-  };
-}
-
-function blankSheet(name: string): CharacterSheet {
-  return {
-    identite: {
-      nom: name,
-      race: "",
-      classe: "",
-      niveau: 1,
-      historique: "",
-      alignement: "",
-      xp: 0,
-    },
-    caracs: { for: 10, dex: 10, con: 10, int: 10, sag: 10, cha: 10 },
-    saveProficiencies: { for: false, dex: false, con: false, int: false, sag: false, cha: false },
-    skillProficiencies: {},
-    ca: 10,
-    vitesse: "9 m",
-    initiativeBonus: 0,
-    pvMax: 0,
-    desDeVie: { faces: 8, total: 1, restants: 1 },
-    deathSaves: { successes: 0, failures: 0 },
-    inspiration: false,
-    attaques: [],
-    armures: [],
-    sorts: { caracIncantation: null, connus: [], emplacements: [] },
-    capacites: [],
-    personnalite: {},
-    languesEtMaitrises: "",
-    portrait: null,
-    racial: null,
-    equipement: { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
-    couleurPion: "#C0392B",
   };
 }
 
@@ -312,61 +301,72 @@ export class GameTableDO extends DurableObject<Env> {
     await this.ensureNpcIds();
     await this.ensureSettings();
 
-    const type = msg.type as string;
+    // A3 : tout payload est revalidé par le schéma partagé (bornes, types,
+    // defaults) avant traitement — plus aucun cast manuel dans les handlers.
+    const parsed = clientMessageSchema.safeParse(msg);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const path = issue?.path.join(".") ?? "";
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "INVALID",
+          msg: `${path ? `${path} : ` : ""}${issue?.message ?? "Message invalide"}`,
+        }),
+      );
+      return;
+    }
+
     try {
-      switch (type) {
+      const m = parsed.data;
+      switch (m.type) {
         case "chat.say":
-          await this.handleChatSay(ws, attachment, msg.text as string);
+          await this.handleChatSay(ws, attachment, m.text);
           break;
         case "dice.roll":
-          await this.handleDiceRoll(ws, attachment, msg);
+          await this.handleDiceRoll(ws, attachment, m);
           break;
         case "char.hp":
-          await this.handleCharHp(ws, attachment, msg);
+          await this.handleCharHp(ws, attachment, m);
           break;
         case "char.condition":
-          await this.handleCharCondition(ws, attachment, msg);
+          await this.handleCharCondition(ws, attachment, m);
           break;
         case "token.move":
-          await this.handleTokenMove(ws, attachment, msg);
+          await this.handleTokenMove(ws, attachment, m);
           break;
         case "token.put":
-          await this.handleTokenPut(ws, attachment, msg);
+          await this.handleTokenPut(ws, attachment, m);
           break;
         case "token.remove":
-          await this.handleTokenRemove(ws, attachment, msg);
+          await this.handleTokenRemove(ws, attachment, m);
           break;
         case "npc.duplicate":
-          await this.handleNpcDuplicate(ws, attachment, msg);
+          await this.handleNpcDuplicate(ws, attachment, m);
           break;
         case "npc.addFromTemplate":
-          await this.handleNpcAddFromTemplate(ws, attachment, msg);
+          await this.handleNpcAddFromTemplate(ws, attachment, m);
           break;
         case "npc.saveAsTemplate":
-          await this.handleNpcSaveAsTemplate(ws, attachment, msg);
+          await this.handleNpcSaveAsTemplate(ws, attachment, m);
           break;
         case "npc.add":
-          await this.handleNpcAdd(ws, attachment, msg);
-          break;
-        case "npc.addFromMonster":
-          ws.send(
-            JSON.stringify({ type: "error", code: "NOT_IMPLEMENTED", msg: "Bientôt disponible" }),
-          );
+          await this.handleNpcAdd(ws, attachment, m);
           break;
         case "npc.remove":
-          await this.handleNpcRemove(ws, attachment, msg);
+          await this.handleNpcRemove(ws, attachment, m);
           break;
         case "map.select":
-          await this.handleMapSelect(ws, attachment, msg);
+          await this.handleMapSelect(ws, attachment, m);
           break;
         case "marker.set":
-          await this.handleMarkerSet(ws, attachment, msg);
+          await this.handleMarkerSet(ws, attachment, m);
           break;
         case "marker.move":
-          await this.handleMarkerMove(ws, attachment, msg);
+          await this.handleMarkerMove(ws, attachment, m);
           break;
         case "marker.remove":
-          await this.handleMarkerRemove(ws, attachment, msg);
+          await this.handleMarkerRemove(ws, attachment, m);
           break;
         case "marker.clear":
           await this.handleMarkerClear(ws, attachment);
@@ -375,7 +375,7 @@ export class GameTableDO extends DurableObject<Env> {
           await this.handleFogEnable(ws, attachment);
           break;
         case "fog.reveal":
-          await this.handleFogReveal(ws, attachment, msg);
+          await this.handleFogReveal(ws, attachment, m);
           break;
         case "fog.cover":
           await this.handleFogCover(ws, attachment);
@@ -384,19 +384,26 @@ export class GameTableDO extends DurableObject<Env> {
           await this.handleFogDisable(ws, attachment);
           break;
         case "ping":
-          this.handlePing(attachment, msg);
+          this.handlePing(attachment, m);
           break;
         case "mode.set":
-          await this.handleModeSet(ws, attachment, msg);
+          await this.handleModeSet(ws, attachment, m);
           break;
         case "initiative.roll":
-          await this.handleInitiativeRoll(ws, attachment, msg);
+          await this.handleInitiativeRoll(ws, attachment, m);
           break;
         case "combat.next":
           await this.handleCombatNext(ws, attachment);
           break;
         default:
-          ws.send(JSON.stringify({ type: "error", code: "UNKNOWN", msg: `Unknown: ${type}` }));
+          // inv.* (phase 7) : validés mais non câblés — même réponse qu'avant.
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              code: "NOT_IMPLEMENTED",
+              msg: "Bientôt disponible",
+            }),
+          );
       }
     } catch (err) {
       ws.send(
@@ -535,24 +542,11 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "journal", entry });
   }
 
-  private async handleDiceRoll(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const sides = Number.isFinite(msg.sides) ? Math.trunc(msg.sides as number) : 20;
-    const n = Number.isFinite(msg.n) ? Math.trunc(msg.n as number) : 1;
-    const mod = Number.isFinite(msg.mod) ? Math.trunc(msg.mod as number) : 0;
-    // Bornes R6.3 : pas de DoS CPU (n = 10⁹) ni de dés absurdes.
-    if (n < 1 || n > 20 || sides < 2 || sides > 100) {
-      ws.send(
-        JSON.stringify({ type: "error", code: "INVALID", msg: "Paramètres de jet hors bornes" }),
-      );
-      return;
-    }
-    const drop = Number.isFinite(msg.drop)
-      ? Math.max(0, Math.min(n - 1, Math.trunc(msg.drop as number)))
-      : 0;
-    const modC = Math.max(-100, Math.min(100, mod));
-    const label = (typeof msg.label === "string" ? msg.label.slice(0, 120) : "") || undefined;
-    const expr = label ?? formatExpression({ n, sides, mod: modC, drop });
-    await this.executeDiceRoll(ws, att, n, sides, modC, expr, drop);
+  private async handleDiceRoll(ws: WebSocket, att: WsAttachment, msg: DiceRollMsg) {
+    const { n, sides, mod, drop } = msg;
+    const label = msg.label || undefined;
+    const expr = label ?? formatExpression({ n, sides, mod, drop });
+    await this.executeDiceRoll(ws, att, n, sides, mod, expr, drop);
   }
 
   private makeRng() {
@@ -628,11 +622,9 @@ export class GameTableDO extends DurableObject<Env> {
 
   // ── Handlers : personnages ─────────────────────────────────────
 
-  private async handleCharHp(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    const deltaRaw = Number.isFinite(msg.delta) ? Math.trunc(msg.delta as number) : 0;
-    const delta = Math.max(-100, Math.min(100, deltaRaw));
-    if (!charId || delta === 0) return;
+  private async handleCharHp(ws: WebSocket, att: WsAttachment, msg: CharHpMsg) {
+    const { charId, delta } = msg;
+    if (delta === 0) return;
 
     const db = this.getDb();
     const [char] = await db
@@ -667,16 +659,9 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ characters: { [charId]: { pv: newPv, pvMax: char.pvMax } } });
   }
 
-  private async handleCharCondition(
-    ws: WebSocket,
-    att: WsAttachment,
-    msg: Record<string, unknown>,
-  ) {
+  private async handleCharCondition(ws: WebSocket, att: WsAttachment, msg: CharConditionMsg) {
     if (att.role !== "mj") return;
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    const cond = typeof msg.cond === "string" ? msg.cond.slice(0, 40) : "";
-    const on = msg.on === true;
-    if (!charId || !cond) return;
+    const { charId, cond, on } = msg;
 
     const db = this.getDb();
     const [char] = await db
@@ -710,32 +695,17 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "delta", patch: { characters: { [charId]: { conditions } } } });
   }
 
-  private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: NpcAddMsg) {
     if (att.role !== "mj") return;
-    const name = (((typeof msg.name === "string" ? msg.name : "") || "PNJ").trim() || "PNJ").slice(
-      0,
-      80,
-    );
-    const pv = Number.isFinite(msg.pv)
-      ? Math.max(1, Math.min(999, Math.trunc(msg.pv as number)))
-      : 1;
-    const ca = Number.isFinite(msg.ca)
-      ? Math.max(1, Math.min(30, Math.trunc(msg.ca as number)))
-      : 10;
-    const init = Number.isFinite(msg.init)
-      ? Math.max(-10, Math.min(20, Math.trunc(msg.init as number)))
-      : 0;
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : null;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : null;
-    const saveAsTemplate = msg.saveAsTemplate === true;
+    const name = (msg.name.trim() || "PNJ").slice(0, 80);
+    const { pv, ca, init, saveAsTemplate } = msg;
+    const x = msg.x ?? null;
+    const y = msg.y ?? null;
 
     await this.ensureNpcIds();
     const db = this.getDb();
     const id = crypto.randomUUID();
-    const sheet = blankSheet(name);
-    sheet.pvMax = pv;
-    sheet.ca = ca;
-    sheet.initiativeBonus = init;
+    const sheet = createSheet({ identite: { nom: name }, pvMax: pv, ca, initiativeBonus: init });
 
     await db.insert(schema.characters).values({
       id,
@@ -817,16 +787,10 @@ export class GameTableDO extends DurableObject<Env> {
   private async handleNpcAddFromTemplate(
     _ws: WebSocket,
     att: WsAttachment,
-    msg: Record<string, unknown>,
+    msg: NpcAddFromTemplateMsg,
   ) {
     if (att.role !== "mj") return;
-    const templateId = typeof msg.templateId === "string" ? msg.templateId : "";
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    const count = Number.isFinite(msg.count)
-      ? Math.max(1, Math.min(20, Math.trunc(msg.count as number)))
-      : 1;
-    if (!templateId || Number.isNaN(x) || Number.isNaN(y)) return;
+    const { templateId, x, y, count } = msg;
 
     const state = await this.getState();
     if (!state.mapId) return;
@@ -852,10 +816,12 @@ export class GameTableDO extends DurableObject<Env> {
     for (let i = 0; i < count; i++) {
       const name = count > 1 ? `${tpl.name} ${String.fromCharCode(65 + i)}` : tpl.name;
       const id = crypto.randomUUID();
-      const sheet = blankSheet(name);
-      sheet.pvMax = tpl.pvMax;
-      sheet.ca = tpl.ca;
-      sheet.initiativeBonus = tpl.initBonus;
+      const sheet = createSheet({
+        identite: { nom: name },
+        pvMax: tpl.pvMax,
+        ca: tpl.ca,
+        initiativeBonus: tpl.initBonus,
+      });
 
       await db.insert(schema.characters).values({
         id,
@@ -916,11 +882,10 @@ export class GameTableDO extends DurableObject<Env> {
   private async handleNpcSaveAsTemplate(
     _ws: WebSocket,
     att: WsAttachment,
-    msg: Record<string, unknown>,
+    msg: NpcSaveAsTemplateMsg,
   ) {
     if (att.role !== "mj") return;
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    if (!charId) return;
+    const charId = msg.charId;
 
     const db = this.getDb();
     const [char] = await db
@@ -1028,10 +993,9 @@ export class GameTableDO extends DurableObject<Env> {
     return { ...combat, participants, scores, rollIndex, order, turn };
   }
 
-  private async handleNpcRemove(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleNpcRemove(ws: WebSocket, att: WsAttachment, msg: NpcRemoveMsg) {
     if (att.role !== "mj") return;
-    const charId = msg.charId as string;
-    if (!charId) return;
+    const charId = msg.charId;
 
     await this.ensureNpcIds();
     const db = this.getDb();
@@ -1100,12 +1064,8 @@ export class GameTableDO extends DurableObject<Env> {
     return Math.max(2, Math.min(98, v));
   }
 
-  private async handleTokenMove(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
-    const tokenId = typeof msg.tokenId === "string" ? msg.tokenId : "";
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    if (!tokenId || Number.isNaN(x) || Number.isNaN(y)) return;
-
+  private async handleTokenMove(_ws: WebSocket, att: WsAttachment, msg: TokenMoveMsg) {
+    const { tokenId, x, y } = msg;
     if (att.role !== "mj" && tokenId !== att.charId) return;
 
     const cx = this.clamp(x);
@@ -1120,12 +1080,9 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   /** Le MJ place un personnage (PJ ou PNJ) sur la carte active. */
-  private async handleTokenPut(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleTokenPut(_ws: WebSocket, att: WsAttachment, msg: TokenPutMsg) {
     if (att.role !== "mj") return;
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    if (!charId || Number.isNaN(x) || Number.isNaN(y)) return;
+    const { charId, x, y } = msg;
 
     const state = await this.getState();
     if (!state.mapId) return;
@@ -1150,10 +1107,9 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   /** Retire le pion de la carte active sans supprimer le personnage. */
-  private async handleTokenRemove(_ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleTokenRemove(_ws: WebSocket, att: WsAttachment, msg: TokenRemoveMsg) {
     if (att.role !== "mj") return;
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    if (!charId) return;
+    const charId = msg.charId;
 
     const state = await this.getState();
     const current = this.tokensOf(state);
@@ -1173,14 +1129,9 @@ export class GameTableDO extends DurableObject<Env> {
     return name + " B";
   }
 
-  private async handleNpcDuplicate(
-    _ws: WebSocket,
-    att: WsAttachment,
-    msg: Record<string, unknown>,
-  ) {
+  private async handleNpcDuplicate(_ws: WebSocket, att: WsAttachment, msg: NpcDuplicateMsg) {
     if (att.role !== "mj") return;
-    const charId = typeof msg.charId === "string" ? msg.charId : "";
-    if (!charId) return;
+    const charId = msg.charId;
 
     const state = await this.getState();
     const source = this.tokensOf(state)[charId];
@@ -1261,10 +1212,9 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware(patch);
   }
 
-  private async handleMapSelect(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleMapSelect(ws: WebSocket, att: WsAttachment, msg: MapSelectMsg) {
     if (att.role !== "mj") return;
-    const mapId = msg.mapId as string;
-    if (!mapId) return;
+    const mapId = msg.mapId;
 
     const db = this.getDb();
     const [map] = await db
@@ -1289,29 +1239,22 @@ export class GameTableDO extends DurableObject<Env> {
     });
   }
 
-  private async handleMarkerSet(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleMarkerSet(ws: WebSocket, att: WsAttachment, msg: MarkerSetMsg) {
     if (att.role !== "mj") return;
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    const text = (
-      ((typeof msg.text === "string" ? msg.text : "") || "repère").trim() || "repère"
-    ).slice(0, 200);
-    if (Number.isNaN(x) || Number.isNaN(y)) return;
+    const { x, y } = msg;
+    const text = (msg.text.trim() || "repère").slice(0, 200);
 
     const state = await this.getState();
-    const id = (msg.id as string) || crypto.randomUUID();
+    const id = msg.id || crypto.randomUUID();
     const marker: Marker = { id, x: this.clamp(x), y: this.clamp(y), text };
     const markers = [...this.markersOf(state), marker];
     await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 
-  private async handleMarkerMove(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleMarkerMove(ws: WebSocket, att: WsAttachment, msg: MarkerMoveMsg) {
     if (att.role !== "mj") return;
-    const id = typeof msg.id === "string" ? msg.id : "";
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    if (!id || Number.isNaN(x) || Number.isNaN(y)) return;
+    const { id, x, y } = msg;
 
     const state = await this.getState();
     const markers = this.markersOf(state).map((m) =>
@@ -1321,10 +1264,9 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 
-  private async handleMarkerRemove(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleMarkerRemove(ws: WebSocket, att: WsAttachment, msg: MarkerRemoveMsg) {
     if (att.role !== "mj") return;
-    const id = msg.id as string;
-    if (!id) return;
+    const id = msg.id;
 
     const state = await this.getState();
     const markers = this.markersOf(state).filter((m) => m.id !== id);
@@ -1358,14 +1300,14 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ fog });
   }
 
-  private async handleFogReveal(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleFogReveal(ws: WebSocket, att: WsAttachment, msg: FogRevealMsg) {
     if (att.role !== "mj") return;
     const state = await this.getState();
     if (!state.mapId) return;
     const current = state.fog[state.mapId];
     if (!current || !current.on) return;
-    const x = this.clamp(msg.x as number);
-    const y = this.clamp(msg.y as number);
+    const x = this.clamp(msg.x);
+    const y = this.clamp(msg.y);
 
     // Skip points too close to an existing reveal: keeps the array bounded
     // (a map can only hold so many non-overlapping circles) instead of growing
@@ -1420,16 +1362,15 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ fog });
   }
 
-  private handlePing(att: WsAttachment, msg: Record<string, unknown>) {
-    const x = Number.isFinite(msg.x) ? (msg.x as number) : NaN;
-    const y = Number.isFinite(msg.y) ? (msg.y as number) : NaN;
-    if (Number.isNaN(x) || Number.isNaN(y)) return;
-    this.broadcastAll({ type: "ping", x: this.clamp(x), y: this.clamp(y) });
+  private handlePing(att: WsAttachment, msg: PingMsg) {
+    const x = this.clamp(msg.x);
+    const y = this.clamp(msg.y);
+    this.broadcastAll({ type: "ping", x, y });
   }
 
-  private async handleModeSet(ws: WebSocket, att: WsAttachment, msg: Record<string, unknown>) {
+  private async handleModeSet(ws: WebSocket, att: WsAttachment, msg: ModeSetMsg) {
     if (att.role !== "mj") return;
-    const mode = msg.mode as "exploration" | "combat";
+    const mode = msg.mode;
     if (mode === "combat") {
       const state = await this.getState();
       const db = this.getDb();
@@ -1505,13 +1446,8 @@ export class GameTableDO extends DurableObject<Env> {
     }
   }
 
-  private async handleInitiativeRoll(
-    ws: WebSocket,
-    att: WsAttachment,
-    msg: Record<string, unknown>,
-  ) {
-    const charId = msg.charId as string;
-    if (!charId) return;
+  private async handleInitiativeRoll(ws: WebSocket, att: WsAttachment, msg: InitiativeRollMsg) {
+    const charId = msg.charId;
 
     const state = await this.getState();
     const combat = state.combat;
