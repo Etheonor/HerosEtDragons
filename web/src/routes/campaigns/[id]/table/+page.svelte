@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { wsClient, type TableStore } from '$lib/ws';
+  import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import type { JournalEntry } from '@rollwith/shared/protocol';
   import { auth } from '$lib/auth-client';
@@ -25,17 +25,8 @@
   ];
   let stateOptions = $state<string[]>(CONDITIONS);
 
-  let store = $state<TableStore>({
-    connected: false,
-    state: { mode: 'exploration', mapId: null, tokens: {}, markers: [], fog: {}, combat: null },
-    characters: [],
-    settings: { pnjPvVisible: false, sheetsLocked: false, diceDuration: 1200, tokenSize: 44 },
-    journal: [],
-    presence: [],
-    pings: [],
-    diceAnim: null,
-    error: null,
-  });
+  // Store runes partagé (ws.svelte.ts) : l'objet mute en place, tout est réactif.
+  let store = $state(tableStore);
 
   let chatText = $state('');
   let journalEl = $state<HTMLDivElement | null>(null);
@@ -124,7 +115,6 @@
   let campaignName = $state('');
   let session = $state<{ user: { id: string; name: string } } | null>(null);
   let isMj = $state(false);
-  let unsub: (() => void) | null = null;
 
   // ── Carte ────────────────────────────────────────────────────
   let maps = $state<MapSummary[]>([]);
@@ -151,7 +141,7 @@
       return;
     }
     lastFogPoint = p;
-    wsClient.send({ type: 'fog.reveal', ...p });
+    sendWs({ type: 'fog.reveal', ...p });
   }
 
   const activeMap = $derived(maps.find((m) => m.id === store.state.mapId) ?? null);
@@ -214,11 +204,11 @@
   });
 
   function rollInitiative(charId: string) {
-    wsClient.send({ type: 'initiative.roll', charId });
+    sendWs({ type: 'initiative.roll', charId });
   }
 
   function combatNext() {
-    wsClient.send({ type: 'combat.next' });
+    sendWs({ type: 'combat.next' });
   }
 
   onMount(async () => {
@@ -242,15 +232,11 @@
     }
     await refreshMaps();
 
-    wsClient.connect(campaignId);
-    unsub = wsClient.subscribe((s) => {
-      store = { ...s };
-    });
+    connectWs(campaignId);
   });
 
   onDestroy(() => {
-    if (unsub) unsub();
-    wsClient.disconnect();
+    disconnectWs();
   });
 
   async function refreshMaps() {
@@ -264,12 +250,12 @@
 
   function sendChat() {
     if (!chatText.trim()) return;
-    wsClient.send({ type: 'chat.say', text: chatText.trim() });
+    sendWs({ type: 'chat.say', text: chatText.trim() });
     chatText = '';
   }
 
   function quickRoll(sides: number) {
-    wsClient.send({ type: 'dice.roll', sides, n: 1, mod: diceMod });
+    sendWs({ type: 'dice.roll', sides, n: 1, mod: diceMod });
     diceHistory = [
       { id: ++diceHistSeq, label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}` },
       ...diceHistory,
@@ -278,7 +264,7 @@
 
   function setMode(mode: 'exploration' | 'combat') {
     if (!isMj) return;
-    wsClient.send({ type: 'mode.set', mode });
+    sendWs({ type: 'mode.set', mode });
   }
 
   function formatTime(ts: number): string {
@@ -287,24 +273,24 @@
   }
 
   function pvDelta(charId: string, delta: number) {
-    wsClient.send({ type: 'char.hp', charId, delta });
+    sendWs({ type: 'char.hp', charId, delta });
   }
 
   function addCondition(charId: string, e: Event) {
     const select = e.target as HTMLSelectElement;
     const cond = select.value;
     if (!cond) return;
-    wsClient.send({ type: 'char.condition', charId, cond, on: true });
+    sendWs({ type: 'char.condition', charId, cond, on: true });
     select.value = '';
   }
 
   function removeCondition(charId: string, cond: string) {
     if (!isMj) return;
-    wsClient.send({ type: 'char.condition', charId, cond, on: false });
+    sendWs({ type: 'char.condition', charId, cond, on: false });
   }
 
   function removeNpc(charId: string) {
-    wsClient.send({ type: 'npc.remove', charId });
+    sendWs({ type: 'npc.remove', charId });
   }
 
   function hasToken(charId: string): boolean {
@@ -313,14 +299,14 @@
 
   function placeOnMap(charId: string) {
     const n = Object.keys(store.state.tokens).length;
-    wsClient.send({ type: 'token.put', charId, x: 46 + ((n % 5) - 2) * 4, y: 50 });
+    sendWs({ type: 'token.put', charId, x: 46 + ((n % 5) - 2) * 4, y: 50 });
   }
 
   // ── Carte : sélection / import ──────────────────────────────
 
   function selectMap(mapId: string) {
     if (!isMj) return;
-    wsClient.send({ type: 'map.select', mapId });
+    sendWs({ type: 'map.select', mapId });
   }
 
   // ── Carte : coordonnées & interactions ──────────────────────
@@ -366,10 +352,10 @@
     const { x, y } = mapXY(e);
     if (drag.kind === 'token') {
       dragOverride = { ...dragOverride, [drag.id]: { x, y } };
-      wsClient.send({ type: 'token.move', tokenId: drag.id, x, y });
+      sendWs({ type: 'token.move', tokenId: drag.id, x, y });
     } else {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
-      wsClient.send({ type: 'marker.move', id: drag.id, x, y });
+      sendWs({ type: 'marker.move', id: drag.id, x, y });
     }
   }
 
@@ -407,7 +393,7 @@
     if (!isMj) return;
     const { x, y } = mapXY(e);
     if (pendingPlace) {
-      wsClient.send({
+      sendWs({
         type: 'npc.addFromTemplate',
         templateId: pendingPlace.templateId,
         x,
@@ -419,7 +405,7 @@
     }
     if (tool === 'move' || tool === 'fog') return;
     if (tool === 'pnj') {
-      wsClient.send({
+      sendWs({
         type: 'npc.add',
         name: npcName.trim() || 'PNJ',
         pv: npcPv,
@@ -430,27 +416,27 @@
         saveAsTemplate: npcSaveAsTemplate,
       });
     } else if (tool === 'marker') {
-      wsClient.send({ type: 'marker.set', x, y, text: markerText.trim() || 'repère' });
+      sendWs({ type: 'marker.set', x, y, text: markerText.trim() || 'repère' });
     }
   }
 
   function onMapDblClick(e: MouseEvent) {
     const { x, y } = mapXY(e);
-    wsClient.send({ type: 'ping', x, y });
+    sendWs({ type: 'ping', x, y });
   }
 
   function markerRemove(id: string, e: Event) {
     e.stopPropagation();
-    wsClient.send({ type: 'marker.remove', id });
+    sendWs({ type: 'marker.remove', id });
   }
 
   function clearMarkers() {
-    wsClient.send({ type: 'marker.clear' });
+    sendWs({ type: 'marker.clear' });
   }
 
   function fogToggle() {
     if (!fogOn) {
-      wsClient.send({ type: 'fog.enable' });
+      sendWs({ type: 'fog.enable' });
       tool = 'fog';
     } else {
       tool = tool === 'fog' ? 'move' : 'fog';
@@ -458,11 +444,11 @@
   }
 
   function fogCover() {
-    wsClient.send({ type: 'fog.cover' });
+    sendWs({ type: 'fog.cover' });
   }
 
   function fogDisable() {
-    wsClient.send({ type: 'fog.disable' });
+    sendWs({ type: 'fog.disable' });
     if (tool === 'fog') tool = 'move';
   }
 
@@ -572,7 +558,7 @@
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       toast = '';
-      wsClient.clearError();
+      clearWsError();
     }, 4000);
   });
 
@@ -593,15 +579,15 @@
   }
 
   function ctxDuplicate() {
-    if (ctxMenu) wsClient.send({ type: 'npc.duplicate', charId: ctxMenu.charId });
+    if (ctxMenu) sendWs({ type: 'npc.duplicate', charId: ctxMenu.charId });
     ctxMenu = null;
   }
   function ctxRemoveToken() {
-    if (ctxMenu) wsClient.send({ type: 'token.remove', charId: ctxMenu.charId });
+    if (ctxMenu) sendWs({ type: 'token.remove', charId: ctxMenu.charId });
     ctxMenu = null;
   }
   function ctxDeleteNpc() {
-    if (ctxMenu) wsClient.send({ type: 'npc.remove', charId: ctxMenu.charId });
+    if (ctxMenu) sendWs({ type: 'npc.remove', charId: ctxMenu.charId });
     ctxMenu = null;
   }
 
@@ -799,7 +785,7 @@
             <span class="card-row-right">
               <span class="card-ca">CA {c.ca}</span>
               {#if isMj}
-                <button class="model-btn" title="Enregistrer comme modèle réutilisable" onclick={() => wsClient.send({ type: 'npc.saveAsTemplate', charId: c.id })}>modèle</button>
+                <button class="model-btn" title="Enregistrer comme modèle réutilisable" onclick={() => sendWs({ type: 'npc.saveAsTemplate', charId: c.id })}>modèle</button>
                 <button class="del-btn" title="Retirer ce PNJ" onclick={() => removeNpc(c.id)}>✕</button>
               {/if}
             </span>

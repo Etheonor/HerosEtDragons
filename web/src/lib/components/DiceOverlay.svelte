@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DiceAnim } from '$lib/ws';
+  import type { DiceAnim } from '$lib/ws.svelte';
 
   let {
     anim,

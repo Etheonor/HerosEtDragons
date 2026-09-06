@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api, type CharacterDetail } from '$lib/api';
-  import { wsClient, type TableStore } from '$lib/ws';
+  import { tableStore, connectWs, disconnectWs, sendWs, type TableStore } from '$lib/ws.svelte';
   import CharacterSheet from '$lib/components/CharacterSheet.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
 
@@ -9,12 +9,11 @@
   let error = $state('');
   let loading = $state(true);
 
-  let store = $state<TableStore | null>(null);
+  let store = $state<TableStore>(tableStore);
 
   let { params } = $props();
   let charId = params.id;
 
-  let unsub: (() => void) | null = null;
 
   onMount(async () => {
     if (!charId) {
@@ -32,16 +31,12 @@
     // Connexion à la table : les jets de la feuille partent au serveur,
     // s'animent ici et alimentent le journal de la campagne (R10.2).
     if (char) {
-      wsClient.connect(char.campaignId);
-      unsub = wsClient.subscribe((s) => {
-        store = { ...s };
-      });
+      connectWs(char.campaignId);
     }
   });
 
   onDestroy(() => {
-    if (unsub) unsub();
-    wsClient.disconnect();
+    disconnectWs();
   });
 
   // Sync temps réel du PV / des états (deltas WS de la table).
@@ -62,12 +57,12 @@
   });
 
   function onRoll(mod: number, label: string) {
-    wsClient.send({ type: 'dice.roll', sides: 20, n: 1, mod, label });
+    sendWs({ type: 'dice.roll', sides: 20, n: 1, mod, label });
   }
 
   function onPvDelta(delta: number) {
     if (!char) return;
-    wsClient.send({ type: 'char.hp', charId: char.id, delta });
+    sendWs({ type: 'char.hp', charId: char.id, delta });
   }
 </script>
 
