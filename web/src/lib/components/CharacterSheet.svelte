@@ -7,12 +7,15 @@
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
   import {
     findRace,
+    findClass,
     racialBonus,
     freeChoiceCandidates,
     RACES,
     CLASSES,
+    spellSlotsFor,
     type Carac,
   } from '@rollwith/shared/hd';
+  import { xpThreshold } from '$shared/rules';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary, CARAC_LABELS_SHORT } from '$lib/hd-text';
   import { suggestedPvMax, suggestedCa } from '$lib/char-utils';
@@ -328,6 +331,63 @@
     touch();
   }
 
+  // ── Montée de niveau (9c) : action dédiée, pas l'édition du champ ──
+  const classInfo = $derived(findClass(sheet.identite?.classe));
+  const canLevelUp = $derived.by(() => {
+    const lvl = sheet.identite.niveau;
+    if (readonly || lvl >= 20) return false;
+    return sheet.identite.xp >= xpThreshold(lvl + 1);
+  });
+  const nextLevelThreshold = $derived(
+    sheet.identite.niveau < 20 ? xpThreshold(sheet.identite.niveau + 1) : null,
+  );
+
+  /** Applique le niveau suivant : DV +1, emplacements de sorts (table DRS),
+   *  aptitudes du niveau depuis le compendium (si joignable). Les PV suivent
+   *  automatiquement (pvAuto → suggestedPvMax). */
+  async function levelUp() {
+    if (!canLevelUp || !classInfo) return;
+    const newLevel = sheet.identite.niveau + 1;
+    sheet.identite.niveau = newLevel;
+    sheet.desDeVie.total = newLevel;
+    sheet.desDeVie.restants = Math.min(sheet.desDeVie.restants + 1, newLevel);
+
+    // Emplacements : table officielle du nouveau niveau (paliers disparus retirés).
+    const slots = spellSlotsFor(classInfo.key, newLevel);
+    sheet.sorts = {
+      ...sheet.sorts,
+      emplacements: slots
+        .map((max, i) => ({ level: i + 1, max, used: 0 }))
+        .filter((s) => s.max > 0)
+        .map((s) => {
+          const old = sheet.sorts.emplacements.find((e) => e.level === s.level);
+          return old ? { ...s, used: Math.min(old.used, s.max) } : s;
+        }),
+    };
+    touch();
+
+    // Aptitudes du nouveau niveau (compendium) : ajoutées aux capacités.
+    try {
+      const entry = await api.compendium.entry(char.campaignId, 'classes', classInfo.key);
+      const evolution = (entry.meta as { evolution?: { level: number; aptitudes: string[] }[] | undefined })
+        ?.evolution;
+      const gained = evolution?.find((e) => e.level === newLevel)?.aptitudes ?? [];
+      if (gained.length > 0) {
+        sheet.capacites = [
+          ...sheet.capacites,
+          ...gained.map((name) => ({
+            id: crypto.randomUUID(),
+            name: `${name} (niv. ${newLevel})`,
+            description: '—',
+          })),
+        ];
+        touch();
+      }
+    } catch {
+      /* compendium indisponible : la montée reste complète (PV/DV/slots) */
+    }
+  }
+
   const pvPct = $derived(
     Math.max(0, Math.min(100, (pv / Math.max(1, num(sheet.pvMax, 0, 1000, 1))) * 100)),
   );
@@ -391,6 +451,16 @@
           <div class="meta-value">
             <ChoicePicker {readonly} value={sheet.identite.classe} options={classChoices} onpick={(t) => { sheet.identite.classe = t; touch(); }} />
             <Editable {readonly} type="number" min={1} max={20} w={34} align="center" value={sheet.identite.niveau} onchange={(v) => (sheet.identite.niveau = Number(v))} oncommit={commitNiveau} ontype={touch} />
+            {#if !readonly && sheet.identite.niveau < 20}
+              <button
+                class="levelup-btn"
+                disabled={!canLevelUp}
+                title={canLevelUp
+                  ? 'Monter au niveau ' + (sheet.identite.niveau + 1) + ' : DV +1, PV (règle officielle), emplacements de sorts et aptitudes'
+                  : 'XP insuffisante — il faut ' + (nextLevelThreshold ?? 0).toLocaleString('fr') + ' XP'}
+                onclick={levelUp}
+              >↑ niv {sheet.identite.niveau + 1}</button>
+            {/if}
           </div>
         </div>
         <div class="char-meta-item">
@@ -882,6 +952,14 @@
     color: var(--text-3);
     font-weight: 400;
   }
+  .levelup-btn {
+    font-family: var(--font-body); font-size: 10.5px; font-weight: 700;
+    background: var(--bg); border: 1.5px solid var(--accent-border);
+    border-radius: 8px 3px 8px 3px; color: var(--accent-text);
+    padding: 1px 7px; cursor: pointer; line-height: 1.5;
+  }
+  .levelup-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
+  .levelup-btn:disabled { opacity: 0.45; cursor: default; }
 
   .sheet-body {
     max-width: 1290px;

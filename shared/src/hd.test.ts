@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  spellSlotsFor,
   CLASSES,
   RACES,
   caracMod,
@@ -57,6 +58,36 @@ describe("bonus raciaux", () => {
     expect(racialBonus(demiElfe, ["cha", "cha", "sag"])).toEqual({ cha: 2, sag: 1 });
     // incomplet : seulement ce qui est choisi
     expect(racialBonus(demiElfe, ["for"])).toEqual({ cha: 2, for: 1 });
+  });
+});
+
+describe("emplacements de sorts (tables DRS)", () => {
+  it("barde : table d'incantateur complet", () => {
+    expect(spellSlotsFor("barde", 1)).toEqual([2, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("barde", 5)).toEqual([4, 3, 2, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("barde", 20)).toEqual([4, 3, 3, 3, 3, 2, 2, 1, 1]);
+  });
+
+  it("magicien : pas d'emplacements au niveau 2, table complète au niveau 9", () => {
+    expect(spellSlotsFor("magicien", 2)).toEqual([3, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("magicien", 9)).toEqual([4, 3, 3, 3, 1, 0, 0, 0, 0]);
+  });
+
+  it("paladin (½ incantateur) : emplacements tardifs, max niveau 5", () => {
+    expect(spellSlotsFor("paladin", 1)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("paladin", 2)).toEqual([2, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("paladin", 5)).toEqual([4, 2, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it("sorcier (pacte) : tous les emplacements au même niveau", () => {
+    expect(spellSlotsFor("sorcier", 1)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("sorcier", 5)).toEqual([0, 0, 2, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("sorcier", 20)).toEqual([0, 0, 0, 0, 4, 0, 0, 0, 0]);
+  });
+
+  it("classe non incantatrice ou niveau hors bornes : zéro", () => {
+    expect(spellSlotsFor("barbare", 5)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(spellSlotsFor("barde", 21)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
   });
 });
 
