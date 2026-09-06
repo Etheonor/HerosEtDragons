@@ -17,7 +17,7 @@
     SKILL_CARAC,
     type CaracKey,
   } from '$lib/char-utils';
-  import { ARMOR_KINDS, type ArmorKind, type SheetArmor } from '$lib/api';
+  import { ARMOR_KINDS, ARMOR_KIND_LABELS, type ArmorKind, type SheetArmor } from '$lib/api';
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
@@ -32,7 +32,7 @@
     type Carac,
   } from '@rollwith/shared/hd';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
-  import { bonusRacialText, classSummary } from '$lib/hd-text';
+  import { bonusRacialText, classSummary, CARAC_LABELS_SHORT, CARAC_NAMES } from '$lib/hd-text';
   import { racialBreakdown, effectiveCarac, suggestedPvMax, suggestedCa, caBreakdown } from '$lib/char-utils';
 
   let {
@@ -46,14 +46,6 @@
   } = $props();
 
   const caracs: CaracKey[] = ['for', 'dex', 'con', 'int', 'sag', 'cha'];
-  const saveNames: Record<CaracKey, string> = {
-    for: 'Force',
-    dex: 'Dextérité',
-    con: 'Constitution',
-    int: 'Intelligence',
-    sag: 'Sagesse',
-    cha: 'Charisme',
-  };
 
   let sheet = $state<CharacterSheet>(char.sheet);
 
@@ -176,9 +168,7 @@
     touch();
   }
 
-  const CARAC_LABELS_FR: Record<Carac, string> = {
-    for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
-  };
+  const CARAC_LABELS_FR = CARAC_LABELS_SHORT;
   const compLink = (cat: string, slug: string) =>
     `/compendium?campaign=${encodeURIComponent(char.campaignId)}&cat=${cat}&slug=${slug}`;
 
@@ -478,12 +468,7 @@
     }
     touch();
   }
-  const ARMOR_LABELS: Record<ArmorKind, string> = {
-    legere: 'légère',
-    intermediaire: 'intermédiaire',
-    lourde: 'lourde',
-    bouclier: 'bouclier',
-  };
+  const ARMOR_LABELS = ARMOR_KIND_LABELS;
   function onArmorKindChange(arm: SheetArmor, kind: ArmorKind) {
     if (kind === 'bouclier' && arm.ca === 10) arm.ca = 2; // DRS : bouclier = +2
     arm.kind = kind;
@@ -526,7 +511,7 @@
     rollWith(getMod(sheet, carac), `Test de ${CARAC_LABELS[carac].toLowerCase()}`);
   }
   function onSaveClick(carac: CaracKey) {
-    rollWith(getSaveBonus(sheet, carac), `Sauvegarde de ${saveNames[carac].toLowerCase()}`);
+    rollWith(getSaveBonus(sheet, carac), `Sauvegarde de ${CARAC_NAMES[carac].toLowerCase()}`);
   }
   function onSkillClick(skill: (typeof SKILLS)[number]) {
     rollWith(getSkillBonus(sheet, skill), `${skill}`);
@@ -730,7 +715,7 @@
                 toggleSave(c);
               }}
             >{sheet.saveProficiencies[c] ? '●' : '○'}</button>
-            <span class="save-name">{saveNames[c]}</span>
+            <span class="save-name">{CARAC_NAMES[c]}</span>
             <span class="save-bonus" title="mod + maîtrise">{formatMod(getSaveBonus(sheet, c))}</span>
           </div>
         {/each}

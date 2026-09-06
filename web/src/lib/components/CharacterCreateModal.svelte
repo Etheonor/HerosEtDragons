@@ -12,7 +12,8 @@
     type ClassInfo,
     type RaceInfo,
   } from '@rollwith/shared/hd';
-  import { SKILLS } from '$lib/char-utils';
+  import { SKILLS, CARAC_NAMES } from '$lib/char-utils';
+  import { bonusRacialText } from '$lib/hd-text';
 
   let {
     campaignId,
@@ -89,14 +90,9 @@
 
   // ── Caractéristiques ─────────────────────────────────────────
   type CaracKey = Carac;
-  const CARAC_SLOTS: { k: CaracKey; label: string }[] = [
-    { k: 'for', label: 'Force' },
-    { k: 'dex', label: 'Dextérité' },
-    { k: 'con', label: 'Constitution' },
-    { k: 'int', label: 'Intelligence' },
-    { k: 'sag', label: 'Sagesse' },
-    { k: 'cha', label: 'Charisme' },
-  ];
+  const CARAC_SLOTS: { k: CaracKey; label: string }[] = (Object.keys(CARAC_NAMES) as CaracKey[]).map(
+    (k) => ({ k, label: CARAC_NAMES[k] }),
+  );
   const STANDARD = [15, 14, 13, 12, 10, 8];
 
   let method = $state<'standard' | 'roll' | 'free'>('standard');
@@ -217,18 +213,6 @@
   // ── Soumission ───────────────────────────────────────────────
   let saving = $state(false);
   let error = $state('');
-
-  function bonusRacialText(r: RaceInfo): string {
-    const b = r.bonus;
-    const parts: string[] = [];
-    const labels: Record<Carac, string> = {
-      for: 'Force', dex: 'Dex', con: 'Const', int: 'Int', sag: 'Sag', cha: 'Charism',
-    };
-    if (b.all) parts.push(`+${b.all} partout`);
-    for (const [k, v] of Object.entries(b.fixed ?? {})) parts.push(`${labels[k as Carac]} +${v}`);
-    if (b.free) parts.push(`+${b.free.value} ×${b.free.count} au choix`);
-    return parts.join(' · ');
-  }
 
   function parseBackgroundEquip(text: string): { po: number; objets: { name: string; qty: number }[] } {
     const poMatch = /(\d+)\s*po/.exec(text);

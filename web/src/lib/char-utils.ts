@@ -12,6 +12,7 @@ import {
   type Skill,
 } from "$shared/rules";
 import { findClass, findRace, racialBonus } from "$shared/hd";
+import { CARAC_NAMES } from "./hd-text";
 import type { ArmorKind, CharacterSheet } from "./api";
 
 export type CaracKey = "for" | "dex" | "con" | "int" | "sag" | "cha";
@@ -25,14 +26,7 @@ export const CARAC_LABELS: Record<CaracKey, string> = {
   cha: "CHA",
 };
 
-export const CARAC_NAMES: Record<CaracKey, string> = {
-  for: "Force",
-  dex: "Dextérité",
-  con: "Constitution",
-  int: "Intelligence",
-  sag: "Sagesse",
-  cha: "Charisme",
-};
+export { CARAC_NAMES };
 
 /**
  * Détail du bonus racial appliqué automatiquement : breakdown sauvé sur la
