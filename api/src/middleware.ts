@@ -12,6 +12,7 @@ export interface AuthVariables {
   };
   discordId: string;
   memberRole: "mj" | "player";
+  membership: { campaignId: string; role: "mj" | "player" } | null;
 }
 
 export type AppContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
@@ -42,30 +43,43 @@ export async function requireAuth(c: AppContext, next: Next) {
     image: session.user.image ?? null,
   });
   c.set("discordId", discordId);
+  c.set("membership", null);
 
   await next();
 }
 
-export async function requireMember(c: AppContext, next: Next) {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) {
-    return c.json({ error: "Campaign ID manquant" }, 400);
-  }
-  const db = createDb(c.env.DB);
-  const member = await db
-    .select()
-    .from(schema.members)
-    .where(
-      and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, c.get("user").id)),
-    )
-    .limit(1);
+/**
+ * Vérifie que l'utilisateur est membre de la campagne — le campaignId vient
+ * du paramètre `:campaignId`, du paramètre `campaign` (query), ou d'un
+ * résolveur qui charge l'objet parent (char/map/template…) quand la route
+ * est adressée par l'id de la ressource. Pose memberRole + membership.
+ */
+export function requireMemberOf(
+  resolve: (c: AppContext) => Promise<string | null | undefined> | string | null | undefined,
+): (c: AppContext, next: Next) => Promise<Response | void> {
+  return async (c, next) => {
+    const campaignId = await resolve(c);
+    if (!campaignId) {
+      return c.json({ error: "Campaign ID manquant" }, 400);
+    }
 
-  if (member.length === 0) {
-    return c.json({ error: "Vous n'êtes pas membre de cette campagne" }, 403);
-  }
+    const db = createDb(c.env.DB);
+    const [member] = await db
+      .select({ role: schema.members.role })
+      .from(schema.members)
+      .where(
+        and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, c.get("user").id)),
+      )
+      .limit(1);
 
-  c.set("memberRole", member[0]!.role);
-  await next();
+    if (!member) {
+      return c.json({ error: "Vous n'êtes pas membre de cette campagne" }, 403);
+    }
+
+    c.set("memberRole", member.role);
+    c.set("membership", { campaignId, role: member.role });
+    await next();
+  };
 }
 
 export async function requireMj(c: AppContext, next: Next) {

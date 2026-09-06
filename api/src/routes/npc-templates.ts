@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
-import { eq, and, count } from "drizzle-orm";
-import { requireAuth, type AuthVariables } from "../middleware";
+import { eq, count } from "drizzle-orm";
+import {
+  requireAuth,
+  requireMemberOf,
+  requireMj,
+  type AppContext,
+  type AuthVariables,
+} from "../middleware";
 import { validateNpcTemplate } from "@rollwith/shared/validation";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -18,18 +24,20 @@ interface TemplateBody {
   notes?: string;
 }
 
-async function getMjMembership(
-  db: ReturnType<typeof createDb>,
-  campaignId: string,
-  userId: string,
-) {
-  const [membership] = await db
-    .select({ role: schema.members.role })
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
+/** Résolveur : campagne d'un modèle adressé par /:templateId. */
+async function templateCampaign(c: AppContext): Promise<string | null> {
+  const templateId = c.req.param("templateId");
+  if (!templateId) return null;
+  const db = createDb(c.env.DB);
+  const [tpl] = await db
+    .select({ campaignId: schema.npcTemplates.campaignId })
+    .from(schema.npcTemplates)
+    .where(eq(schema.npcTemplates.id, templateId))
     .limit(1);
-  return membership ?? null;
+  return tpl?.campaignId ?? null;
 }
+
+const memberOfTemplate = requireMemberOf(templateCampaign);
 
 function toDto(t: typeof schema.npcTemplates.$inferSelect) {
   return {
@@ -48,80 +56,84 @@ function toDto(t: typeof schema.npcTemplates.$inferSelect) {
 
 // ── Liste ──────────────────────────────────────────────────────
 
-app.get("/campaigns/:campaignId", requireAuth, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.get(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
 
-  const db = createDb(c.env.DB);
-  const membership = await getMjMembership(db, campaignId, c.get("user").id);
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
+    const db = createDb(c.env.DB);
 
-  const rows = await db
-    .select()
-    .from(schema.npcTemplates)
-    .where(eq(schema.npcTemplates.campaignId, campaignId))
-    .orderBy(schema.npcTemplates.name);
+    const rows = await db
+      .select()
+      .from(schema.npcTemplates)
+      .where(eq(schema.npcTemplates.campaignId, campaignId))
+      .orderBy(schema.npcTemplates.name);
 
-  return c.json({ templates: rows.map(toDto) });
-});
+    return c.json({ templates: rows.map(toDto) });
+  },
+);
 
 // ── Création ───────────────────────────────────────────────────
 
-app.post("/campaigns/:campaignId", requireAuth, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.post(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
 
-  const db = createDb(c.env.DB);
-  const membership = await getMjMembership(db, campaignId, c.get("user").id);
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
+    const db = createDb(c.env.DB);
 
-  const body = await c.req.json<TemplateBody>().catch(() => null);
-  if (!body) return c.json({ error: "JSON invalide" }, 400);
+    const body = await c.req.json<TemplateBody>().catch(() => null);
+    if (!body) return c.json({ error: "JSON invalide" }, 400);
 
-  const normalized = {
-    name: (body.name ?? "").trim(),
-    ca: body.ca ?? 10,
-    pvMax: body.pvMax ?? 1,
-    initBonus: body.initBonus ?? 0,
-    color: body.color ?? "#C0392B",
-    conditions: body.conditions ?? [],
-    notes: body.notes ?? "",
-  };
-  const error = validateNpcTemplate(normalized);
-  if (error) return c.json({ error }, 400);
+    const normalized = {
+      name: (body.name ?? "").trim(),
+      ca: body.ca ?? 10,
+      pvMax: body.pvMax ?? 1,
+      initBonus: body.initBonus ?? 0,
+      color: body.color ?? "#C0392B",
+      conditions: body.conditions ?? [],
+      notes: body.notes ?? "",
+    };
+    const error = validateNpcTemplate(normalized);
+    if (error) return c.json({ error }, 400);
 
-  const [existing] = await db
-    .select({ n: count() })
-    .from(schema.npcTemplates)
-    .where(eq(schema.npcTemplates.campaignId, campaignId));
-  if ((existing?.n ?? 0) >= MAX_TEMPLATES_PER_CAMPAIGN) {
-    return c.json({ error: "Bibliothèque pleine (200 modèles)" }, 409);
-  }
+    const [existing] = await db
+      .select({ n: count() })
+      .from(schema.npcTemplates)
+      .where(eq(schema.npcTemplates.campaignId, campaignId));
+    if ((existing?.n ?? 0) >= MAX_TEMPLATES_PER_CAMPAIGN) {
+      return c.json({ error: "Bibliothèque pleine (200 modèles)" }, 409);
+    }
 
-  const id = crypto.randomUUID();
-  const now = new Date();
-  await db.insert(schema.npcTemplates).values({
-    id,
-    campaignId,
-    ...normalized,
-    source: null,
-    createdAt: now,
-    updatedAt: now,
-  });
+    const id = crypto.randomUUID();
+    const now = new Date();
+    await db.insert(schema.npcTemplates).values({
+      id,
+      campaignId,
+      ...normalized,
+      source: null,
+      createdAt: now,
+      updatedAt: now,
+    });
 
-  const [row] = await db
-    .select()
-    .from(schema.npcTemplates)
-    .where(eq(schema.npcTemplates.id, id))
-    .limit(1);
-  return c.json(toDto(row!), 201);
-});
+    const [row] = await db
+      .select()
+      .from(schema.npcTemplates)
+      .where(eq(schema.npcTemplates.id, id))
+      .limit(1);
+    return c.json(toDto(row!), 201);
+  },
+);
 
 // ── Modification ───────────────────────────────────────────────
 
-app.put("/:templateId", requireAuth, async (c) => {
+app.put("/:templateId", requireAuth, memberOfTemplate, requireMj, async (c) => {
   const templateId = c.req.param("templateId");
   if (!templateId) return c.json({ error: "Template ID manquant" }, 400);
 
@@ -132,10 +144,6 @@ app.put("/:templateId", requireAuth, async (c) => {
     .where(eq(schema.npcTemplates.id, templateId))
     .limit(1);
   if (!tpl) return c.json({ error: "Modèle introuvable" }, 404);
-
-  const membership = await getMjMembership(db, tpl.campaignId, c.get("user").id);
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
 
   const body = await c.req.json<TemplateBody>().catch(() => null);
   if (!body) return c.json({ error: "JSON invalide" }, 400);
@@ -167,7 +175,7 @@ app.put("/:templateId", requireAuth, async (c) => {
 
 // ── Suppression ────────────────────────────────────────────────
 
-app.delete("/:templateId", requireAuth, async (c) => {
+app.delete("/:templateId", requireAuth, memberOfTemplate, requireMj, async (c) => {
   const templateId = c.req.param("templateId");
   if (!templateId) return c.json({ error: "Template ID manquant" }, 400);
 
@@ -178,10 +186,6 @@ app.delete("/:templateId", requireAuth, async (c) => {
     .where(eq(schema.npcTemplates.id, templateId))
     .limit(1);
   if (!tpl) return c.json({ ok: true });
-
-  const membership = await getMjMembership(db, tpl.campaignId, c.get("user").id);
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
 
   await db.delete(schema.npcTemplates).where(eq(schema.npcTemplates.id, templateId));
   return c.json({ ok: true });

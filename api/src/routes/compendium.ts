@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
 import { eq, and, like, or, sql, count } from "drizzle-orm";
-import { requireAuth, type AuthVariables } from "../middleware";
+import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -22,39 +22,24 @@ const CATEGORIES = [
   "regles",
 ] as const;
 
-/** Accès compendium = être membre de la campagne en contexte. Rôle MJ ⇒ voit `mj`. */
-async function resolveAccess(db: ReturnType<typeof createDb>, campaignId: string, userId: string) {
-  const [membership] = await db
-    .select({ role: schema.members.role })
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-  if (!membership) return null;
-  return { campaignId, isMj: membership.role === "mj" };
-}
+const memberOfCampaign = requireMemberOf((c) => c.req.query("campaign") ?? null);
 
-async function campaignIdFromQuery(c: { req: { query: (k: string) => string | undefined } }) {
-  return c.req.query("campaign");
-}
-
-function visibilityWhere(access: { isMj: boolean; campaignId: string }) {
+function visibilityWhere(isMj: boolean, campaignId: string) {
   // public, ou mj si le demandeur est MJ de cette campagne. Homebrew : restreint
   // à la campagne courante.
-  const vis = access.isMj ? sql`1=1` : sql`${schema.compendiumEntries.visibility} = 'public'`;
-  const origin = sql`(origin = 'drs' OR (origin = 'maison' AND campaign_id = ${access.campaignId}))`;
+  const vis = isMj ? sql`1=1` : sql`${schema.compendiumEntries.visibility} = 'public'`;
+  const origin = sql`(origin = 'drs' OR (origin = 'maison' AND campaign_id = ${campaignId}))`;
   return and(vis, origin);
 }
 
 // ── Catégories + compteurs visibles ────────────────────────────
 
-app.get("/categories", requireAuth, async (c) => {
-  const campaignId = await campaignIdFromQuery(c);
-  if (!campaignId) return c.json({ error: "campaign requise" }, 400);
+app.get("/categories", requireAuth, memberOfCampaign, async (c) => {
+  const isMj = c.get("memberRole") === "mj";
+  const campaignId = c.get("membership")!.campaignId;
   const db = createDb(c.env.DB);
-  const access = await resolveAccess(db, campaignId, c.get("user").id);
-  if (!access) return c.json({ error: "Accès refusé" }, 403);
 
-  const where = visibilityWhere(access);
+  const where = visibilityWhere(isMj, campaignId);
   const rows = await db
     .select({ category: schema.compendiumEntries.category, n: count() })
     .from(schema.compendiumEntries)
@@ -65,16 +50,16 @@ app.get("/categories", requireAuth, async (c) => {
   const categories = CATEGORIES.filter((cat) => (counts[cat] ?? 0) > 0).map((cat) => ({
     category: cat,
     count: counts[cat] ?? 0,
-    locked: !access.isMj && (cat === "bestiaire" || cat === "objets-magiques"),
+    locked: !isMj && (cat === "bestiaire" || cat === "objets-magiques"),
   }));
-  return c.json({ categories, isMj: access.isMj });
+  return c.json({ categories, isMj });
 });
 
 // ── Liste paginée + recherche ──────────────────────────────────
 
-app.get("/entries", requireAuth, async (c) => {
-  const campaignId = await campaignIdFromQuery(c);
-  if (!campaignId) return c.json({ error: "campaign requise" }, 400);
+app.get("/entries", requireAuth, memberOfCampaign, async (c) => {
+  const isMj = c.get("memberRole") === "mj";
+  const campaignId = c.get("membership")!.campaignId;
   const category = c.req.query("category");
   const q = (c.req.query("q") ?? "").trim();
   const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 60));
@@ -84,10 +69,8 @@ app.get("/entries", requireAuth, async (c) => {
   }
 
   const db = createDb(c.env.DB);
-  const access = await resolveAccess(db, campaignId, c.get("user").id);
-  if (!access) return c.json({ error: "Accès refusé" }, 403);
 
-  const conds = [visibilityWhere(access)];
+  const conds = [visibilityWhere(isMj, campaignId)];
   if (category) conds.push(eq(schema.compendiumEntries.category, category));
   if (q) {
     const needle = `%${q
@@ -136,28 +119,26 @@ app.get("/entries", requireAuth, async (c) => {
 
 // ── Fiche complète ─────────────────────────────────────────────
 
-app.get("/entry/:category/:slug", requireAuth, async (c) => {
-  const campaignId = await campaignIdFromQuery(c);
-  if (!campaignId) return c.json({ error: "campaign requise" }, 400);
+app.get("/entry/:category/:slug", requireAuth, memberOfCampaign, async (c) => {
+  const isMj = c.get("memberRole") === "mj";
+  const campaignId = c.get("membership")!.campaignId;
   const category = c.req.param("category");
   const slug = c.req.param("slug");
   if (!category || !slug) return c.json({ error: "paramètres requis" }, 400);
 
   const db = createDb(c.env.DB);
-  const access = await resolveAccess(db, campaignId, c.get("user").id);
-  if (!access) return c.json({ error: "Accès refusé" }, 403);
 
   const [row] = await db
     .select()
     .from(schema.compendiumEntries)
     .where(
       and(
-        access.isMj
+        isMj
           ? sql`1=1`
           : sql`(${schema.compendiumEntries.visibility} = 'public'
             OR exists (
               select 1 from compendium_shares
-              where compendium_shares.campaign_id = ${access.campaignId}
+              where compendium_shares.campaign_id = ${campaignId}
                 and compendium_shares.category = ${schema.compendiumEntries.category}
                 and compendium_shares.slug = ${schema.compendiumEntries.slug}
             ))`,
@@ -185,43 +166,46 @@ app.get("/entry/:category/:slug", requireAuth, async (c) => {
 
 // ── Partager une fiche au journal (MJ) ─────────────────────────
 
-app.post("/share", requireAuth, async (c) => {
-  const body = await c.req
-    .json<{ campaignId?: string; category?: string; slug?: string }>()
-    .catch(() => null);
-  const { campaignId, category, slug } = body ?? {};
-  if (!campaignId || !category || !slug) return c.json({ error: "paramètres requis" }, 400);
+app.post(
+  "/share",
+  requireAuth,
+  requireMemberOf(async (c) => {
+    const body = await c.req.json<{ campaignId?: string }>().catch(() => null);
+    return body?.campaignId ?? null;
+  }),
+  requireMj,
+  async (c) => {
+    const body = await c.req
+      .json<{ campaignId?: string; category?: string; slug?: string }>()
+      .catch(() => null);
+    const { category, slug } = body ?? {};
+    const campaignId = c.get("membership")!.campaignId;
+    if (!category || !slug) return c.json({ error: "paramètres requis" }, 400);
 
-  const db = createDb(c.env.DB);
-  const [membership] = await db
-    .select({ role: schema.members.role })
-    .from(schema.members)
-    .where(
-      and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, c.get("user").id)),
-    )
-    .limit(1);
-  if (!membership || membership.role !== "mj") {
-    return c.json({ error: "Réservé au MJ" }, 403);
-  }
+    const db = createDb(c.env.DB);
 
-  const [entry] = await db
-    .select({ title: schema.compendiumEntries.title })
-    .from(schema.compendiumEntries)
-    .where(
-      and(eq(schema.compendiumEntries.category, category), eq(schema.compendiumEntries.slug, slug)),
-    )
-    .limit(1);
-  if (!entry) return c.json({ error: "Fiche introuvable" }, 404);
+    const [entry] = await db
+      .select({ title: schema.compendiumEntries.title })
+      .from(schema.compendiumEntries)
+      .where(
+        and(
+          eq(schema.compendiumEntries.category, category),
+          eq(schema.compendiumEntries.slug, slug),
+        ),
+      )
+      .limit(1);
+    if (!entry) return c.json({ error: "Fiche introuvable" }, 404);
 
-  const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
-  const stub = ns.get(ns.idFromName(campaignId));
-  await stub.shareCompendium({
-    category,
-    slug,
-    title: entry.title,
-    sharedBy: c.get("user").name,
-  });
-  return c.json({ ok: true });
-});
+    const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+    const stub = ns.get(ns.idFromName(campaignId));
+    await stub.shareCompendium({
+      category,
+      slug,
+      title: entry.title,
+      sharedBy: c.get("user").name,
+    });
+    return c.json({ ok: true });
+  },
+);
 
 export default app;

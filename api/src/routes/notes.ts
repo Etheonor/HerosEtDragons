@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
 import { eq, and } from "drizzle-orm";
-import { requireAuth, requireMember, requireMj, type AuthVariables } from "../middleware";
+import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -15,29 +15,38 @@ function isTargetType(v: string | undefined): v is TargetType {
 
 // ── Lister les notes MJ d'une campagne ────────────────────────
 
-app.get("/campaigns/:campaignId", requireAuth, requireMember, requireMj, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.get(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.req.param("campaignId");
+    if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
 
-  const db = createDb(c.env.DB);
-  const rows = await db.select().from(schema.notes).where(eq(schema.notes.campaignId, campaignId));
+    const db = createDb(c.env.DB);
+    const rows = await db
+      .select()
+      .from(schema.notes)
+      .where(eq(schema.notes.campaignId, campaignId));
 
-  return c.json({
-    notes: rows.map((r) => ({
-      targetType: r.targetType,
-      targetId: r.targetId,
-      content: r.content,
-      updatedAt: r.updatedAt,
-    })),
-  });
-});
+    return c.json({
+      notes: rows.map((r) => ({
+        targetType: r.targetType,
+        targetId: r.targetId,
+        content: r.content,
+        updatedAt: r.updatedAt,
+      })),
+    });
+  },
+);
 
 // ── Créer / mettre à jour une note (upsert par cible) ─────────
 
 app.put(
   "/campaigns/:campaignId/:targetType/:targetId?",
   requireAuth,
-  requireMember,
+  requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
   async (c) => {
     const campaignId = c.req.param("campaignId");

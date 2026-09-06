@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
-import { eq, and } from "drizzle-orm";
-import { requireAuth, type AuthVariables } from "../middleware";
+import { eq } from "drizzle-orm";
+import {
+  requireAuth,
+  requireMemberOf,
+  requireMj,
+  type AppContext,
+  type AuthVariables,
+} from "../middleware";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -11,6 +17,21 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/webp": "webp",
 };
+
+/** Résolveur : campagne d'une carte adressée par /:mapId. */
+async function mapCampaign(c: AppContext): Promise<string | null> {
+  const mapId = c.req.param("mapId");
+  if (!mapId) return null;
+  const db = createDb(c.env.DB);
+  const [map] = await db
+    .select({ campaignId: schema.maps.campaignId })
+    .from(schema.maps)
+    .where(eq(schema.maps.id, mapId))
+    .limit(1);
+  return map?.campaignId ?? null;
+}
+
+const memberOfMap = requireMemberOf(mapCampaign);
 
 /** Vérifie la signature réelle du fichier (magic bytes), pas seulement le
  *  Content-Type déclaré par le client (audit §5.6). Retourne l'extension ou null. */
@@ -25,99 +46,77 @@ async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null
 
 // ── Lister les cartes d'une campagne ──────────────────────────
 
-app.get("/campaigns/:campaignId", requireAuth, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.get(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const db = createDb(c.env.DB);
 
-  const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
+    const maps = await db.select().from(schema.maps).where(eq(schema.maps.campaignId, campaignId));
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-
-  const maps = await db.select().from(schema.maps).where(eq(schema.maps.campaignId, campaignId));
-
-  return c.json({
-    maps: maps.map((m) => ({ id: m.id, name: m.name, hasImage: !!m.r2Key })),
-  });
-});
+    return c.json({
+      maps: maps.map((m) => ({ id: m.id, name: m.name, hasImage: !!m.r2Key })),
+    });
+  },
+);
 
 // ── Créer une carte (MJ, image optionnelle → R2) ──────────────
 
-app.post("/campaigns/:campaignId", requireAuth, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.post(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const db = createDb(c.env.DB);
 
-  const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
+    const form = await c.req.formData();
+    const name = (form.get("name") as string | null)?.trim();
+    if (!name) return c.json({ error: "Nom de carte requis" }, 400);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
+    const id = crypto.randomUUID();
+    let r2Key: string | null = null;
 
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
-
-  const form = await c.req.formData();
-  const name = (form.get("name") as string | null)?.trim();
-  if (!name) return c.json({ error: "Nom de carte requis" }, 400);
-
-  const id = crypto.randomUUID();
-  let r2Key: string | null = null;
-
-  const fileEntry = form.get("image");
-  const isUploadedFile =
-    typeof fileEntry === "object" && fileEntry !== null && "arrayBuffer" in fileEntry;
-  if (isUploadedFile && (fileEntry as File).size > 0) {
-    const file = fileEntry as File;
-    if (file.size > MAX_IMAGE_BYTES) {
-      return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
+    const fileEntry = form.get("image");
+    const isUploadedFile =
+      typeof fileEntry === "object" && fileEntry !== null && "arrayBuffer" in fileEntry;
+    if (isUploadedFile && (fileEntry as File).size > 0) {
+      const file = fileEntry as File;
+      if (file.size > MAX_IMAGE_BYTES) {
+        return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
+      }
+      if (!ALLOWED_TYPES[file.type]) {
+        return c.json({ error: "Format non supporté (png/jpg/webp uniquement)" }, 400);
+      }
+      const sniffed = await sniffImageType(file);
+      if (!sniffed) {
+        return c.json({ error: "Contenu d'image invalide (signature inconnue)" }, 400);
+      }
+      r2Key = `${campaignId}/${id}.${sniffed}`;
+      await c.env.MAPS.put(r2Key, await file.arrayBuffer(), {
+        httpMetadata: { contentType: file.type },
+      });
     }
-    if (!ALLOWED_TYPES[file.type]) {
-      return c.json({ error: "Format non supporté (png/jpg/webp uniquement)" }, 400);
-    }
-    const sniffed = await sniffImageType(file);
-    if (!sniffed) {
-      return c.json({ error: "Contenu d'image invalide (signature inconnue)" }, 400);
-    }
-    r2Key = `${campaignId}/${id}.${sniffed}`;
-    await c.env.MAPS.put(r2Key, await file.arrayBuffer(), {
-      httpMetadata: { contentType: file.type },
-    });
-  }
 
-  await db.insert(schema.maps).values({ id, campaignId, name, r2Key });
+    await db.insert(schema.maps).values({ id, campaignId, name, r2Key });
 
-  return c.json({ id, name, hasImage: !!r2Key }, 201);
-});
+    return c.json({ id, name, hasImage: !!r2Key }, 201);
+  },
+);
 
 // ── Modifier une carte (MJ) : nom et/ou image ─────────────────
 
-app.patch("/:mapId", requireAuth, async (c) => {
+app.patch("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
   const mapId = c.req.param("mapId");
   if (!mapId) return c.json({ error: "Map ID manquant" }, 400);
 
   const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
 
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map) return c.json({ error: "Carte introuvable" }, 404);
-
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, map.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
 
   const form = await c.req.formData();
   const patch: { name?: string; r2Key?: string | null } = {};
@@ -163,24 +162,14 @@ app.patch("/:mapId", requireAuth, async (c) => {
 
 // ── Supprimer une carte (MJ) ───────────────────────────────────
 
-app.delete("/:mapId", requireAuth, async (c) => {
+app.delete("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
   const mapId = c.req.param("mapId");
   if (!mapId) return c.json({ error: "Map ID manquant" }, 400);
 
   const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
 
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map) return c.json({ error: "Carte introuvable" }, 404);
-
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, map.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-  if (membership.role !== "mj") return c.json({ error: "Réservé au MJ" }, 403);
 
   if (map.r2Key) await c.env.MAPS.delete(map.r2Key);
   await db.delete(schema.maps).where(eq(schema.maps.id, mapId));
@@ -190,23 +179,14 @@ app.delete("/:mapId", requireAuth, async (c) => {
 
 // ── Servir l'image d'une carte (authentifié, membre) ──────────
 
-app.get("/:mapId/image", requireAuth, async (c) => {
+app.get("/:mapId/image", requireAuth, memberOfMap, async (c) => {
   const mapId = c.req.param("mapId");
   if (!mapId) return c.json({ error: "Map ID manquant" }, 400);
 
   const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
 
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map || !map.r2Key) return c.json({ error: "Image introuvable" }, 404);
-
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, map.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
 
   const obj = await c.env.MAPS.get(map.r2Key);
   if (!obj) return c.json({ error: "Image introuvable" }, 404);

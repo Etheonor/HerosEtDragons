@@ -3,7 +3,7 @@ import { createDb, schema, type CharacterSheet } from "../db";
 import type { AppContext } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
 import { eq, and } from "drizzle-orm";
-import { requireAuth, requireMember, requireMj, type AuthVariables } from "../middleware";
+import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 import { validateCharacterSheet } from "@rollwith/shared/validation";
 import { createSheet } from "@rollwith/shared/sheet";
 import { kaelithSheet } from "../db/seed";
@@ -21,58 +21,64 @@ async function notifyTable(c: AppContext, campaignId: string, charId: string): P
   }
 }
 
+/** Résolveur : campagne d'un personnage adressé par /:charId. */
+async function charCampaign(c: AppContext): Promise<string | null> {
+  const charId = c.req.param("charId");
+  if (!charId) return null;
+  const db = createDb(c.env.DB);
+  const [char] = await db
+    .select({ campaignId: schema.characters.campaignId })
+    .from(schema.characters)
+    .where(eq(schema.characters.id, charId))
+    .limit(1);
+  return char?.campaignId ?? null;
+}
+
+const memberOfChar = requireMemberOf(charCampaign);
+
 // ── Lister les personnages d'une campagne ─────────────────────
 
-app.get("/campaigns/:campaignId", requireAuth, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.get(
+  "/campaigns/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const db = createDb(c.env.DB);
 
-  const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
+    const chars = await db
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.campaignId, campaignId));
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) {
-    return c.json({ error: "Accès refusé" }, 403);
-  }
-
-  const chars = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.campaignId, campaignId));
-
-  return c.json({
-    characters: chars.map((ch) => ({
-      id: ch.id,
-      name: ch.name,
-      kind: ch.kind,
-      ownerId: ch.ownerId,
-      color: ch.color,
-      active: ch.active,
-      ca: ch.sheet.ca,
-      sub:
-        ch.kind === "pj"
-          ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
-          : "",
-      initiativeBonus: ch.sheet.initiativeBonus,
-      pv: ch.pv,
-      pvMax: ch.pvMax,
-      pvTemp: ch.pvTemp,
-      conditions: ch.conditions,
-    })),
-  });
-});
+    return c.json({
+      characters: chars.map((ch) => ({
+        id: ch.id,
+        name: ch.name,
+        kind: ch.kind,
+        ownerId: ch.ownerId,
+        color: ch.color,
+        active: ch.active,
+        ca: ch.sheet.ca,
+        sub:
+          ch.kind === "pj"
+            ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
+            : "",
+        initiativeBonus: ch.sheet.initiativeBonus,
+        pv: ch.pv,
+        pvMax: ch.pvMax,
+        pvTemp: ch.pvTemp,
+        conditions: ch.conditions,
+      })),
+    });
+  },
+);
 
 // ── Détail d'un personnage ────────────────────────────────────
 
-app.get("/:charId", requireAuth, async (c) => {
+app.get("/:charId", requireAuth, memberOfChar, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
 
@@ -86,18 +92,8 @@ app.get("/:charId", requireAuth, async (c) => {
     return c.json({ error: "Personnage introuvable" }, 404);
   }
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, char.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) {
-    return c.json({ error: "Accès refusé" }, 403);
-  }
-
   const isOwner = char.ownerId === userId;
-  const isMj = membership.role === "mj";
+  const isMj = c.get("memberRole") === "mj";
   const canEdit = isOwner || isMj;
 
   return c.json({
@@ -114,102 +110,99 @@ app.get("/:charId", requireAuth, async (c) => {
     pvTemp: char.pvTemp,
     conditions: char.conditions,
     canEdit,
-    role: membership.role,
+    role: c.get("memberRole"),
   });
 });
 
 // ── Créer un personnage ────────────────────────────────────────
 
-app.post("/", requireAuth, async (c) => {
-  const body = await c.req.json<{
-    campaignId: string;
-    name: string;
-    sheet?: Partial<CharacterSheet>;
-  }>();
+app.post(
+  "/",
+  requireAuth,
+  requireMemberOf(async (c) => {
+    const body = await c.req.json<{ campaignId?: string }>().catch(() => null);
+    return body?.campaignId ?? null;
+  }),
+  async (c) => {
+    const body = await c.req.json<{
+      campaignId: string;
+      name: string;
+      sheet?: Partial<CharacterSheet>;
+    }>();
+    const userId = c.get("user").id;
 
-  if (!body.campaignId?.trim() || !body.name?.trim()) {
-    return c.json({ error: "campaignId et name requis" }, 400);
-  }
-
-  const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
-
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, body.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) {
-    return c.json({ error: "Accès refusé" }, 403);
-  }
-
-  // Règle métier : un seul PJ par joueur dans une campagne (le MJ, lui,
-  // peut préparer plusieurs fiches).
-  if (membership.role !== "mj") {
-    const [existing] = await db
-      .select({ id: schema.characters.id })
-      .from(schema.characters)
-      .where(
-        and(
-          eq(schema.characters.campaignId, body.campaignId),
-          eq(schema.characters.ownerId, userId),
-          eq(schema.characters.kind, "pj"),
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      return c.json({ error: "Vous avez déjà un personnage dans cette campagne." }, 409);
+    if (!body.name?.trim()) {
+      return c.json({ error: "campaignId et name requis" }, 400);
     }
-  }
 
-  const id = crypto.randomUUID();
-  // Builder partagé (shared/sheet) : mêmes defaults que les PNJ du DO.
-  const sheet: CharacterSheet = createSheet({
-    identite: { nom: body.name, ...body.sheet?.identite },
-    caracs: body.sheet?.caracs,
-    saveProficiencies: body.sheet?.saveProficiencies,
-    skillProficiencies: body.sheet?.skillProficiencies,
-    ca: body.sheet?.ca,
-    vitesse: body.sheet?.vitesse,
-    initiativeBonus: body.sheet?.initiativeBonus,
-    pvMax: body.sheet?.pvMax,
-    desDeVie: body.sheet?.desDeVie,
-    attaques: body.sheet?.attaques,
-    armures: body.sheet?.armures,
-    sorts: body.sheet?.sorts,
-    capacites: body.sheet?.capacites,
-    personnalite: body.sheet?.personnalite,
-    languesEtMaitrises: body.sheet?.languesEtMaitrises,
-    racial: body.sheet?.racial,
-    equipement: body.sheet?.equipement,
-    couleurPion: body.sheet?.couleurPion,
-  });
+    const db = createDb(c.env.DB);
 
-  await db.insert(schema.characters).values({
-    id,
-    campaignId: body.campaignId,
-    ownerId: userId,
-    kind: "pj",
-    name: body.name,
-    color: sheet.couleurPion,
-    active: true,
-    sheet,
-    pv: sheet.pvMax,
-    pvMax: sheet.pvMax,
-    pvTemp: 0,
-    conditions: [],
-  });
+    // Règle métier : un seul PJ par joueur dans une campagne (le MJ, lui,
+    // peut préparer plusieurs fiches).
+    if (c.get("memberRole") !== "mj") {
+      const [existing] = await db
+        .select({ id: schema.characters.id })
+        .from(schema.characters)
+        .where(
+          and(
+            eq(schema.characters.campaignId, body.campaignId),
+            eq(schema.characters.ownerId, userId),
+            eq(schema.characters.kind, "pj"),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        return c.json({ error: "Vous avez déjà un personnage dans cette campagne." }, 409);
+      }
+    }
 
-  return c.json({ id, name: body.name }, 201);
-});
+    const id = crypto.randomUUID();
+    // Builder partagé (shared/sheet) : mêmes defaults que les PNJ du DO.
+    const sheet: CharacterSheet = createSheet({
+      identite: { nom: body.name, ...body.sheet?.identite },
+      caracs: body.sheet?.caracs,
+      saveProficiencies: body.sheet?.saveProficiencies,
+      skillProficiencies: body.sheet?.skillProficiencies,
+      ca: body.sheet?.ca,
+      vitesse: body.sheet?.vitesse,
+      initiativeBonus: body.sheet?.initiativeBonus,
+      pvMax: body.sheet?.pvMax,
+      desDeVie: body.sheet?.desDeVie,
+      attaques: body.sheet?.attaques,
+      armures: body.sheet?.armures,
+      sorts: body.sheet?.sorts,
+      capacites: body.sheet?.capacites,
+      personnalite: body.sheet?.personnalite,
+      languesEtMaitrises: body.sheet?.languesEtMaitrises,
+      racial: body.sheet?.racial,
+      equipement: body.sheet?.equipement,
+      couleurPion: body.sheet?.couleurPion,
+    });
+
+    await db.insert(schema.characters).values({
+      id,
+      campaignId: body.campaignId,
+      ownerId: userId,
+      kind: "pj",
+      name: body.name,
+      color: sheet.couleurPion,
+      active: true,
+      sheet,
+      pv: sheet.pvMax,
+      pvMax: sheet.pvMax,
+      pvTemp: 0,
+      conditions: [],
+    });
+
+    return c.json({ id, name: body.name }, 201);
+  },
+);
 
 // ── Modifier PV (±) ────────────────────────────────────────────
 
-app.patch("/:charId/pv", requireAuth, async (c) => {
+app.patch("/:charId/pv", requireAuth, memberOfChar, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-
   const body = await c.req.json<{ delta: number }>();
   if (typeof body.delta !== "number") {
     return c.json({ error: "delta requis (number)" }, 400);
@@ -226,16 +219,8 @@ app.patch("/:charId/pv", requireAuth, async (c) => {
 
   if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, char.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-
   const isOwner = char.ownerId === userId;
-  const isMj = membership.role === "mj";
+  const isMj = c.get("memberRole") === "mj";
   if (!isOwner && !isMj) {
     return c.json({ error: "Vous ne pouvez modifier que vos PV" }, 403);
   }
@@ -255,10 +240,9 @@ app.patch("/:charId/pv", requireAuth, async (c) => {
 
 // ── Modifier PV temporaires ───────────────────────────────────
 
-app.patch("/:charId/pv-temp", requireAuth, async (c) => {
+app.patch("/:charId/pv-temp", requireAuth, memberOfChar, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-
   const body = await c.req.json<{ value: number }>();
   if (typeof body.value !== "number") {
     return c.json({ error: "value requis (number)" }, 400);
@@ -275,16 +259,8 @@ app.patch("/:charId/pv-temp", requireAuth, async (c) => {
 
   if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, char.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-
   const isOwner = char.ownerId === userId;
-  const isMj = membership.role === "mj";
+  const isMj = c.get("memberRole") === "mj";
   if (!isOwner && !isMj) {
     return c.json({ error: "Accès refusé" }, 403);
   }
@@ -301,10 +277,9 @@ app.patch("/:charId/pv-temp", requireAuth, async (c) => {
 
 // ── Toggle inspiration ─────────────────────────────────────────
 
-app.patch("/:charId/inspiration", requireAuth, async (c) => {
+app.patch("/:charId/inspiration", requireAuth, memberOfChar, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
 
@@ -316,16 +291,8 @@ app.patch("/:charId/inspiration", requireAuth, async (c) => {
 
   if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, char.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-
   const isOwner = char.ownerId === userId;
-  const isMj = membership.role === "mj";
+  const isMj = c.get("memberRole") === "mj";
   if (!isOwner && !isMj) return c.json({ error: "Accès refusé" }, 403);
 
   const sheet = char.sheet;
@@ -341,7 +308,7 @@ app.patch("/:charId/inspiration", requireAuth, async (c) => {
 
 // ── Mettre à jour la feuille (édition) ────────────────────────
 
-app.put("/:charId/sheet", requireAuth, async (c) => {
+app.put("/:charId/sheet", requireAuth, memberOfChar, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
 
@@ -367,16 +334,8 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
 
   if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, char.campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
-
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
-
   const isOwner = char.ownerId === userId;
-  const isMj = membership.role === "mj";
+  const isMj = c.get("memberRole") === "mj";
   if (!isOwner && !isMj) return c.json({ error: "Accès refusé" }, 403);
 
   // Verrou MJ (R10.10) : quand sheetsLocked est actif, seuls les MJ éditent.
@@ -412,48 +371,46 @@ app.put("/:charId/sheet", requireAuth, async (c) => {
 
 // ── Seed Kaelith dans une campagne (dev) ──────────────────────
 
-app.post("/seed/:campaignId", requireAuth, requireMember, requireMj, async (c) => {
-  const campaignId = c.req.param("campaignId");
-  if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
+app.post(
+  "/seed/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const db = createDb(c.env.DB);
+    const userId = c.get("user").id;
 
-  const db = createDb(c.env.DB);
-  const userId = c.get("user").id;
+    const existing = await db
+      .select()
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.campaignId, campaignId), eq(schema.characters.name, "Kaelith")),
+      )
+      .limit(1);
 
-  const [membership] = await db
-    .select()
-    .from(schema.members)
-    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
-    .limit(1);
+    if (existing.length > 0) {
+      return c.json({ id: existing[0]!.id, name: "Kaelith", alreadyExists: true });
+    }
 
-  if (!membership) return c.json({ error: "Accès refusé" }, 403);
+    const id = crypto.randomUUID();
+    await db.insert(schema.characters).values({
+      id,
+      campaignId,
+      ownerId: userId,
+      kind: "pj",
+      name: "Kaelith",
+      color: kaelithSheet.couleurPion,
+      active: true,
+      sheet: kaelithSheet,
+      pv: kaelithSheet.pvMax,
+      pvMax: kaelithSheet.pvMax,
+      pvTemp: 0,
+      conditions: [],
+    });
 
-  const existing = await db
-    .select()
-    .from(schema.characters)
-    .where(and(eq(schema.characters.campaignId, campaignId), eq(schema.characters.name, "Kaelith")))
-    .limit(1);
-
-  if (existing.length > 0) {
-    return c.json({ id: existing[0]!.id, name: "Kaelith", alreadyExists: true });
-  }
-
-  const id = crypto.randomUUID();
-  await db.insert(schema.characters).values({
-    id,
-    campaignId,
-    ownerId: userId,
-    kind: "pj",
-    name: "Kaelith",
-    color: kaelithSheet.couleurPion,
-    active: true,
-    sheet: kaelithSheet,
-    pv: kaelithSheet.pvMax,
-    pvMax: kaelithSheet.pvMax,
-    pvTemp: 0,
-    conditions: [],
-  });
-
-  return c.json({ id, name: "Kaelith" }, 201);
-});
+    return c.json({ id, name: "Kaelith" }, 201);
+  },
+);
 
 export default app;
