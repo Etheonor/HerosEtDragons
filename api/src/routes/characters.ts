@@ -6,9 +6,8 @@ import type { GameTableDO } from "../do/game-table";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
+import { requireAuth, requireMemberOf, type AuthVariables } from "../middleware";
 import { createSheet, characterSheetSchema } from "@rollwith/shared/sheet";
-import { kaelithSheet } from "../db/seed";
 
 /** Notifie le DO de la campagne après une mutation REST d'un personnage (§3.4). */
 async function notifyTable(c: AppContext, campaignId: string, charId: string): Promise<void> {
@@ -357,53 +356,5 @@ app.put("/:charId/sheet", requireAuth, memberOfChar, sheetPutBody, async (c) => 
   await notifyTable(c, char.campaignId, charId);
   return c.json<{ ok: true }>({ ok: true });
 });
-
-// ── Seed Kaelith dans une campagne (dev) ──────────────────────
-
-app.post(
-  "/seed/:campaignId",
-  requireAuth,
-  requireMemberOf((c) => c.req.param("campaignId")),
-  requireMj,
-  async (c) => {
-    const campaignId = c.get("membership")!.campaignId;
-    const db = createDb(c.env.DB);
-    const userId = c.get("user").id;
-
-    const existing = await db
-      .select()
-      .from(schema.characters)
-      .where(
-        and(eq(schema.characters.campaignId, campaignId), eq(schema.characters.name, "Kaelith")),
-      )
-      .limit(1);
-
-    if (existing.length > 0) {
-      return c.json<{ id: string; name: string; alreadyExists?: boolean }>({
-        id: existing[0]!.id,
-        name: "Kaelith",
-        alreadyExists: true,
-      });
-    }
-
-    const id = crypto.randomUUID();
-    await db.insert(schema.characters).values({
-      id,
-      campaignId,
-      ownerId: userId,
-      kind: "pj",
-      name: "Kaelith",
-      color: kaelithSheet.couleurPion,
-      active: true,
-      sheet: kaelithSheet,
-      pv: kaelithSheet.pvMax,
-      pvMax: kaelithSheet.pvMax,
-      pvTemp: 0,
-      conditions: [],
-    });
-
-    return c.json<{ id: string; name: string }>({ id, name: "Kaelith" }, 201);
-  },
-);
 
 export default app;

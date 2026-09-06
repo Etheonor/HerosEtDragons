@@ -6,6 +6,7 @@ import {
   getPassivePerception,
   racialBreakdown,
   suggestedCa,
+  suggestedPvMax,
 } from "./char-utils";
 import type { CharacterSheet } from "./api";
 
@@ -206,5 +207,63 @@ describe("suggestedCa (règles DRS : armure + bouclier, pas d'empilement)", () =
       ],
     });
     expect(caBreakdown(c)).toBe("Cuir clouté 12 + Dex +2 = 14 · bouclier +2 = 16");
+  });
+});
+
+describe("suggestedPvMax — minimum 1 PV par niveau", () => {
+  it("classe reconnue : DV max + CON au niveau 1", () => {
+    expect(
+      suggestedPvMax(
+        sheet({
+          identite: {
+            nom: "T",
+            race: "",
+            classe: "Guerrier",
+            niveau: 1,
+            historique: "",
+            alignement: "",
+            xp: 0,
+          },
+        }),
+      ),
+    ).toBe(10 + 0);
+  });
+
+  it("CON très basse (mod -5) : niveau 1 plancher à 1, chaque niveau gagne au moins 1", () => {
+    const s = sheet({
+      identite: {
+        nom: "T",
+        race: "",
+        classe: "Magicien",
+        niveau: 1,
+        historique: "",
+        alignement: "",
+        xp: 0,
+      },
+      caracs: { for: 8, dex: 8, con: 1, int: 14, sag: 8, cha: 8 },
+    });
+    // Niveau 1 : max(1, 6 + (-5)) = 1
+    const lvl1 = suggestedPvMax({ ...s, identite: { ...s.identite, niveau: 1 } });
+    expect(lvl1).toBe(1);
+    // Niveau 5 : 1 + 4 × max(1, 4 + (-5)) = 1 + 4 × 1 = 5
+    const lvl5 = suggestedPvMax({ ...s, identite: { ...s.identite, niveau: 5 } });
+    expect(lvl5).toBe(5);
+  });
+
+  it("CON moyenne : PV classiques (guerrier d10 niv. 3)", () => {
+    const sheet2 = sheet({
+      identite: {
+        nom: "T",
+        race: "",
+        classe: "Guerrier",
+        niveau: 3,
+        historique: "",
+        alignement: "",
+        xp: 0,
+      },
+      caracs: { for: 14, dex: 10, con: 14, int: 10, sag: 10, cha: 10 },
+    });
+    // 10 + 2 + 2 × (6 + 2) = 28
+    expect(suggestedPvMax(sheet2)).toBe(28);
   });
 });

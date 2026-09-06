@@ -47,7 +47,9 @@ export function effectiveCarac(sheet: CharacterSheet, carac: CaracKey): number {
 
 /**
  * PV officiels H&D : niveau 1 = DV max + mod CON ; ensuite moyenne du DV
- * (moitié + 1) + mod CON par niveau. null si la classe n'est pas reconnue.
+ * (moitié + 1) + mod CON par niveau, **minimum 1 PV par niveau** (règle
+ * assumée — une CON très basse ne peut pas retirer des PV). null si la
+ * classe n'est pas reconnue.
  */
 export function suggestedPvMax(sheet: CharacterSheet): number | null {
   const c = findClass(sheet.identite?.classe);
@@ -55,7 +57,8 @@ export function suggestedPvMax(sheet: CharacterSheet): number | null {
   const con = abilityModifier(effectiveCarac(sheet, "con"));
   const level = Math.max(1, Math.min(20, sheet.identite?.niveau || 1));
   const avg = c.hitDie / 2 + 1;
-  return Math.max(1, c.hitDie + con + (level - 1) * (avg + con));
+  const perLevel = Math.max(1, avg + con);
+  return Math.max(1, c.hitDie + con) + (level - 1) * perLevel;
 }
 
 /** Contribution Dex d'une catégorie d'armure (table DRS). */

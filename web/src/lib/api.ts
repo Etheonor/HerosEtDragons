@@ -99,11 +99,6 @@ export const api = {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    seed: (campaignId: string) =>
-      fetchJson<{ id: string; name: string; alreadyExists?: boolean }>(
-        `/api/characters/seed/${campaignId}`,
-        { method: "POST" },
-      ),
     updatePv: (id: string, delta: number) =>
       fetchJson<{ pv: number; pvMax: number }>(`/api/characters/${id}/pv`, {
         method: "PATCH",
