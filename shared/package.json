@@ -46,6 +46,10 @@
       "types": "./dist/dto.d.ts",
       "import": "./dist/dto.js"
     },
+    "./level-up": {
+      "types": "./dist/level-up.d.ts",
+      "import": "./dist/level-up.js"
+    },
     "./ws-validation": {
       "types": "./dist/ws-validation.d.ts",
       "import": "./dist/ws-validation.js"

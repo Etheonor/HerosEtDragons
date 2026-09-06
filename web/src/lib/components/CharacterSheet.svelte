@@ -12,9 +12,9 @@
     freeChoiceCandidates,
     RACES,
     CLASSES,
-    spellSlotsFor,
     type Carac,
   } from '@rollwith/shared/hd';
+  import { applyLevelUp } from '@rollwith/shared/level-up';
   import { xpThreshold } from '$shared/rules';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary, CARAC_LABELS_SHORT } from '$lib/hd-text';
@@ -342,28 +342,13 @@
     sheet.identite.niveau < 20 ? xpThreshold(sheet.identite.niveau + 1) : null,
   );
 
-  /** Applique le niveau suivant : DV +1, emplacements de sorts (table DRS),
-   *  aptitudes du niveau depuis le compendium (si joignable). Les PV suivent
-   *  automatiquement (pvAuto → suggestedPvMax). */
+  /** Applique le niveau suivant (logique pure shared/level-up, testée 1→20) :
+   *  DV +1, emplacements selon la table DRS ; aptitudes du niveau depuis le
+   *  compendium (si joignable). Les PV suivent automatiquement (pvAuto). */
   async function levelUp() {
     if (!canLevelUp || !classInfo) return;
     const newLevel = sheet.identite.niveau + 1;
-    sheet.identite.niveau = newLevel;
-    sheet.desDeVie.total = newLevel;
-    sheet.desDeVie.restants = Math.min(sheet.desDeVie.restants + 1, newLevel);
-
-    // Emplacements : table officielle du nouveau niveau (paliers disparus retirés).
-    const slots = spellSlotsFor(classInfo.key, newLevel);
-    sheet.sorts = {
-      ...sheet.sorts,
-      emplacements: slots
-        .map((max, i) => ({ level: i + 1, max, used: 0 }))
-        .filter((s) => s.max > 0)
-        .map((s) => {
-          const old = sheet.sorts.emplacements.find((e) => e.level === s.level);
-          return old ? { ...s, used: Math.min(old.used, s.max) } : s;
-        }),
-    };
+    sheet = applyLevelUp(sheet, newLevel);
     touch();
 
     // Aptitudes du nouveau niveau (compendium) : ajoutées aux capacités.
