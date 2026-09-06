@@ -7,6 +7,8 @@
     "dev": "wrangler dev",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run -c vitest.config.ts",
+    "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
     "deploy": "wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply rollwith-hd --local",
@@ -21,6 +23,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.0",
     "@cloudflare/workers-types": "^4.20250708.0",
     "drizzle-kit": "^0.31.0",
     "typescript": "^5.9.0",

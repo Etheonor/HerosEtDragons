@@ -489,7 +489,9 @@ export class GameTableDO extends DurableObject<Env> {
       .limit(1);
     if (!ch) return;
 
-    const hidePv = this.hidePnjPvFor("player");
+    // La carte part NON masquée : broadcastRoleAware masque les PV des PNJ
+    // pour les joueurs (filterCharactersForPlayers) — sinon le MJ recevrait
+    // aussi pv:null (double masquage, testé en intégration).
     const card: CharacterCard = {
       id: ch.id,
       kind: ch.kind,
@@ -504,8 +506,8 @@ export class GameTableDO extends DurableObject<Env> {
           ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
           : "",
       initiativeBonus: ch.sheet.initiativeBonus,
-      pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
-      pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
+      pv: ch.pv,
+      pvMax: ch.pvMax,
       pvTemp: ch.pvTemp,
       conditions: ch.conditions,
     };

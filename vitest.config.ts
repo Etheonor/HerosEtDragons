@@ -10,6 +10,13 @@ export default defineConfig({
   },
   test: {
     include: ["**/*.test.ts"],
-    exclude: ["**/node_modules/**", "**/.svelte-kit/**", "**/dist/**", "**/build/**"],
+    // Les tests d'intégration DO tournent dans workerd (voir api/vitest.config.ts).
+    exclude: [
+      "**/node_modules/**",
+      "**/.svelte-kit/**",
+      "**/dist/**",
+      "**/build/**",
+      "api/test/**",
+    ],
   },
 });
