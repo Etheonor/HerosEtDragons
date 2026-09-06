@@ -447,15 +447,25 @@ describe("GameTableDO — intégration", () => {
     await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
     mj.send({ type: "token.put", charId: "pnj-1", x: 40, y: 40 });
     await mj.nextWhere(
-      (m) => (m.patch as { tokens?: Record<string, unknown> } | undefined)?.tokens?.["pnj-1"] !== undefined,
+      (m) =>
+        (m.patch as { tokens?: Record<string, unknown> } | undefined)?.tokens?.["pnj-1"] !==
+        undefined,
     );
     mj.send({ type: "marker.set", x: 10, y: 10, text: "piège" });
-    await mj.nextWhere((m) => (m.patch as { markers?: unknown[] } | undefined)?.markers !== undefined);
+    await mj.nextWhere(
+      (m) => (m.patch as { markers?: unknown[] } | undefined)?.markers !== undefined,
+    );
 
     // Suppression de la carte ACTIVE : le DO purge et repasse sur aucune carte.
     await tableStub().cleanupMap("map-1");
-    const delta = await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
-    const patch = delta.patch as { mapId: string | null; tokens: Record<string, unknown>; markers: unknown[] };
+    const delta = await mj.nextWhere(
+      (m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined,
+    );
+    const patch = delta.patch as {
+      mapId: string | null;
+      tokens: Record<string, unknown>;
+      markers: unknown[];
+    };
     expect(patch.mapId).toBeNull();
     expect(patch.tokens["pnj-1"]).toBeUndefined();
     expect(patch.markers).toEqual([]);
