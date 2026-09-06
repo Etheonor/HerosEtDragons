@@ -498,6 +498,7 @@
       {onRoll}
       {onPvDelta}
       charId={char.id}
+      campaignId={char.campaignId}
       {pv}
       {pvTemp}
       setPvTemp={(v) => (pvTemp = v)}

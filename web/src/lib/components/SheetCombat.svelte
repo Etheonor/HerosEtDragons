@@ -10,6 +10,7 @@
     caBreakdown,
   } from '$lib/char-utils';
   import { ARMOR_KINDS, ARMOR_KIND_LABELS, type ArmorKind, type SheetArmor, type CharacterSheet } from '$lib/api';
+  import { findClass } from '@rollwith/shared/hd';
   import { api } from '$lib/api';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
@@ -21,6 +22,7 @@
     onRoll,
     onPvDelta,
     charId,
+    campaignId,
     pv,
     pvTemp,
     setPvTemp,
@@ -37,6 +39,7 @@
     onRoll?: (mod: number, label: string) => void;
     onPvDelta?: (delta: number) => void;
     charId: string;
+    campaignId: string;
     pv: number;
     pvTemp: number;
     setPvTemp: (v: number) => void;
@@ -193,6 +196,89 @@
   const spellsSorted = $derived([...sheet.sorts.emplacements].sort((a, b) => a.level - b.level));
   function spellLabel(sp: { slug: string; name?: string }): string {
     return sp.name ?? sp.slug.replace(/-/g, ' ');
+  }
+
+  // ── Sorts : quota « connus » depuis la fiche de classe (compendium) ──
+  const classInfo = $derived(findClass(sheet.identite?.classe));
+  let knownLimit = $state<number | null>(null);
+  $effect(() => {
+    if (!campaignId || !classInfo) {
+      knownLimit = null;
+      return;
+    }
+    void api.compendium
+      .entry(campaignId, 'classes', classInfo.key)
+      .then((e) => {
+        const ev = (e.meta as { evolution?: { level: number; extras?: Record<string, string> }[] } | undefined)
+          ?.evolution;
+        const extras = ev?.find((r) => r.level === sheet.identite.niveau)?.extras;
+        const v = extras?.['Sorts connus'];
+        knownLimit = v ? (Number(v) || null) : null;
+      })
+      .catch(() => {
+        knownLimit = null;
+      });
+  });
+
+  // ── Popup « Ajouter un sort » : grimoire filtré par classe et niveau ──
+  let spellPickerOpen = $state(false);
+  let spellLoading = $state(false);
+  let spellCache: { level: number; slug: string; title: string; school: string }[] = [];
+
+  async function openSpellPicker() {
+    spellPickerOpen = true;
+    if (spellCache.length > 0 || spellLoading) return;
+    spellLoading = true;
+    try {
+      const cls = classInfo?.label; // label canonique (meta.classes du grimoire)
+      const maxSpellLevel = Math.max(0, ...sheet.sorts.emplacements.map((e) => e.level));
+      const all: { level: number; slug: string; title: string; school: string }[] = [];
+      let offset = 0;
+      for (;;) {
+        const res = await api.compendium.entries(campaignId, {
+          category: 'grimoire',
+          limit: 200,
+          offset,
+        });
+        for (const e of res.entries) {
+          const m = (e.meta ?? {}) as {
+            classes?: string[];
+            level?: number;
+            school?: string;
+          };
+          if (cls && m.classes?.includes(cls) && (m.level ?? 0) >= 1 && (m.level ?? 0) <= maxSpellLevel) {
+            all.push({ level: m.level ?? 1, slug: e.slug, title: e.title, school: m.school ?? '' });
+          }
+        }
+        if (offset + res.entries.length >= res.total) break;
+        offset += res.entries.length;
+      }
+      spellCache = all.sort((a, b) => a.level - b.level || a.title.localeCompare(b.title));
+    } catch {
+      spellCache = [];
+    }
+    spellLoading = false;
+  }
+
+  const spellGroups = $derived.by(() => {
+    const byLevel = new Map<number, typeof spellCache>();
+    for (const sp of spellCache) {
+      const arr = byLevel.get(sp.level) ?? [];
+      arr.push(sp);
+      byLevel.set(sp.level, arr);
+    }
+    return [...byLevel.entries()].sort((a, b) => a[0] - b[0]);
+  });
+
+  function pickSpell(sp: { level: number; slug: string; title: string }) {
+    const exists = sheet.sorts.connus.some((c) => c.slug === sp.slug);
+    if (exists) return;
+    sheet.sorts = {
+      ...sheet.sorts,
+      connus: [...sheet.sorts.connus, { slug: sp.slug, level: sp.level, name: sp.title }],
+    };
+    spellPickerOpen = false;
+    touch();
   }
 </script>
 
@@ -406,8 +492,8 @@
     <div class="block spells-block">
       <BlockLabel text={`Sorts de ${(sheet.identite.classe || '…').toLowerCase()}`} />
       <div class="spell-stats">
-        <span>DD sauvegarde <strong title="Calculé : 8 + maîtrise + mod">{getSpellSaveDc(sheet)}</strong></span>
-        <span>Att. de sort <strong class="accent" title="Calculé : maîtrise + mod">{formatMod(getSpellAttackBonus(sheet) ?? 0)}</strong></span>
+        <span>DD sauvegarde <strong title="8 + maîtrise + modificateur de la caractéristique d'incantation">{getSpellSaveDc(sheet)}</strong></span>
+        <span>Att. de sort <strong class="accent" title="Maîtrise + modificateur de la caractéristique d'incantation">{formatMod(getSpellAttackBonus(sheet) ?? 0)}</strong></span>
         <span>Carac.
           {#if readonly}
             <strong>{sheet.sorts.caracIncantation?.toUpperCase() ?? '—'}</strong>
@@ -416,6 +502,7 @@
               class="carac-select"
               bind:value={sheet.sorts.caracIncantation}
               onchange={touch}
+              title="Caractéristique d'incantation de la classe"
             >
               <option value={null}>—</option>
               <option value="for">FOR</option>
@@ -428,48 +515,71 @@
           {/if}
         </span>
       </div>
+      {#if knownLimit !== null}
+        <div class="sl-caption known-quota" title="Nombre de sorts connus autorisé par le DRS à ce niveau">
+          sorts connus : <strong>{sheet.sorts.connus.length}</strong> / {knownLimit}
+          {#if sheet.sorts.connus.length > knownLimit}<span class="quota-over">(au-delà du maximum — retirez-en)</span>{/if}
+        </div>
+      {/if}
       {#each spellsSorted as lv (lv.level)}
         <div class="spell-level">
           <div class="sl-header">
             <span class="sl-level">niveau {lv.level}</span>
-            <span class="sl-caption">emplacements :</span>
+            <span class="sl-caption">{lv.max} emplacement{lv.max > 1 ? 's' : ''} :</span>
             {#each Array(lv.max) as _, i (i)}
-              <button class="slot-pip" class:used={i < lv.used} disabled={readonly} title={readonly ? undefined : 'Cocher / libérer'} onclick={() => setUsed(lv, i)}>{i < lv.used ? '⦿' : '○'}</button>
+              <button class="slot-pip" class:used={i < lv.used} disabled={readonly} title={readonly ? undefined : 'Emplacement dépensé : cliquez pour cocher / libérer'} onclick={() => setUsed(lv, i)}>{i < lv.used ? '⦿' : '○'}</button>
             {/each}
-            {#if !readonly}
-              <span class="sl-caption">max</span>
-              <Editable
-                type="number"
-                min={0}
-                max={16}
-                w={34}
-                align="center"
-                value={lv.max}
-                onchange={(v) => (lv.max = Number(v))}
-                oncommit={() => { lv.max = num(lv.max, 0, 16, 0); if (lv.used > lv.max) lv.used = lv.max; touch(); }}
-                ontype={touch}
-              />
-              <button class="row-x" title="Supprimer ce palier" onclick={() => removeLevelRow(lv.level)}>✕</button>
-            {/if}
           </div>
           <div class="sl-spells">
             {#each sheet.sorts.connus.filter((s) => s.level === lv.level) as sp (sp.slug)}
-              <span class="spell-chip">
-                <Editable {readonly} w={Math.max(60, spellLabel(sp).length * 7 + 8)} value={spellLabel(sp)} onchange={(v) => (sp.name = String(v))} oncommit={() => commitSpellName(sp)} ontype={touch} />
+              <span class="spell-chip" title="Sort connu — cliquez pour retirer">
+                <span class="chip-name"><Editable {readonly} w={Math.max(60, spellLabel(sp).length * 7 + 8)} value={spellLabel(sp)} onchange={(v) => (sp.name = String(v))} oncommit={() => commitSpellName(sp)} ontype={touch} /></span>
                 {#if !readonly}
-                  <button class="chip-x" title="Retirer" onclick={() => removeSpell(sp.slug, lv.level)}>✕</button>
+                  <button class="chip-x" title="Retirer ce sort" onclick={() => removeSpell(sp.slug, lv.level)}>✕</button>
                 {/if}
               </span>
             {/each}
             {#if !readonly}
-              <button class="add-spell" onclick={() => addSpell(lv.level)}>+ sort</button>
+              <button class="add-spell" onclick={openSpellPicker}>+ sort du grimoire</button>
             {/if}
           </div>
         </div>
       {/each}
-      {#if !readonly}
-        <button class="add-row" onclick={addLevelRow}>+ palier de sorts</button>
-      {/if}
+    </div>
+  {/if}
+
+  {#if spellPickerOpen}
+    <div class="spell-picker-overlay" role="presentation" onclick={() => (spellPickerOpen = false)}>
+      <div class="spell-picker" role="dialog" aria-modal="true" aria-label="Choisir un sort" onclick={(e) => e.stopPropagation()}>
+        <div class="sp-picker-head">
+          <span class="sp-picker-title">Sorts du grimoire — {sheet.identite.classe}</span>
+          <button class="picker-close" onclick={() => (spellPickerOpen = false)}>✕</button>
+        </div>
+        {#if spellLoading}
+          <p class="sp-picker-empty">Chargement du grimoire…</p>
+        {:else if spellCache.length === 0}
+          <p class="sp-picker-empty">Aucun sort disponible pour cette classe à vos niveaux d'emplacements.</p>
+        {:else}
+          <div class="sp-picker-body">
+            {#each spellGroups as [level, spells] (level)}
+              <div class="sp-group-title">niveau {level}</div>
+              <div class="sp-grid">
+                {#each spells as sp (sp.slug)}
+                  <button
+                    class="sp-card"
+                    class:known={sheet.sorts.connus.some((c) => c.slug === sp.slug)}
+                    disabled={sheet.sorts.connus.some((c) => c.slug === sp.slug)}
+                    onclick={() => pickSpell(sp)}
+                  >
+                    <span class="sp-title">{sp.title}</span>
+                    {#if sp.school}<span class="sp-school">{sp.school}</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -707,4 +817,99 @@
     color: var(--text-2); cursor: pointer; padding: 2px 9px;
   }
   .add-spell:hover { border-color: var(--accent); color: var(--accent-text); }
+
+  .known-quota {
+    margin-top: 6px;
+    padding: 3px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 8px 3px 8px 3px;
+  }
+  .known-quota strong { color: var(--heading); }
+  .quota-over { color: var(--accent-text); }
+
+  .spell-picker-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    padding: 24px;
+  }
+  .spell-picker {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+    width: min(680px, 100%);
+    max-height: min(80vh, 760px);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 50px var(--shadow-2);
+  }
+  .sp-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px 12px;
+    flex: none;
+  }
+  .sp-picker-title {
+    font-family: var(--font-title);
+    font-size: 20px;
+    color: var(--heading);
+  }
+  .picker-close {
+    font-size: 13px;
+    background: none;
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 2px 8px;
+  }
+  .picker-close:hover { border-color: var(--accent-border); color: var(--accent-text); }
+  .sp-picker-empty {
+    color: var(--text-2);
+    font-style: italic;
+    font-size: 13px;
+    padding: 10px 22px 20px;
+  }
+  .sp-picker-body {
+    overflow-y: auto;
+    padding: 0 22px 20px;
+    min-height: 0;
+  }
+  .sp-group-title {
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin: 12px 0 6px;
+  }
+  .sp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 6px;
+  }
+  .sp-card {
+    font-family: var(--font-body);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    text-align: left;
+    padding: 7px 10px;
+    background: var(--bg);
+    border: 2px solid var(--border);
+    border-radius: 10px 3px 12px 4px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .sp-card:hover:not(:disabled) { border-color: var(--accent); }
+  .sp-card:disabled { opacity: 0.45; cursor: default; }
+  .sp-title { font-size: 12.5px; font-weight: 600; }
+  .sp-school { font-size: 10.5px; color: var(--text-3); }
 </style>
