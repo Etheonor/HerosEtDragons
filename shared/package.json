@@ -34,6 +34,14 @@
       "types": "./dist/validation.d.ts",
       "import": "./dist/validation.js"
     },
+    "./sheet": {
+      "types": "./dist/sheet.d.ts",
+      "import": "./dist/sheet.js"
+    },
+    "./ws-validation": {
+      "types": "./dist/ws-validation.d.ts",
+      "import": "./dist/ws-validation.js"
+    },
     "./compendium": {
       "types": "./dist/compendium.d.ts",
       "import": "./dist/compendium.js"
@@ -47,6 +55,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

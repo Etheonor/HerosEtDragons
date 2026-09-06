@@ -53,6 +53,10 @@ importers:
         version: 4.110.0(@cloudflare/workers-types@4.20260702.1)
 
   shared:
+    dependencies:
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -2388,6 +2392,9 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
+  zod@4.5.4:
+    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
+
 snapshots:
 
   '@better-auth/core@1.6.23(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@cloudflare/workers-types@4.20260702.1)(better-call@1.3.7(zod@4.4.3))(jose@6.2.3)(kysely@0.29.3)(nanostores@1.4.0)':
@@ -4145,3 +4152,5 @@ snapshots:
   zimmerframe@1.1.4: {}
 
   zod@4.4.3: {}
+
+  zod@4.5.4: {}

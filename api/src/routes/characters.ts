@@ -5,6 +5,7 @@ import type { GameTableDO } from "../do/game-table";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireMember, requireMj, type AuthVariables } from "../middleware";
 import { validateCharacterSheet } from "@rollwith/shared/validation";
+import { createSheet } from "@rollwith/shared/sheet";
 import { kaelithSheet } from "../db/seed";
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -163,45 +164,27 @@ app.post("/", requireAuth, async (c) => {
   }
 
   const id = crypto.randomUUID();
-  const sheet: CharacterSheet = {
-    identite: {
-      nom: body.name,
-      race: body.sheet?.identite?.race ?? "",
-      classe: body.sheet?.identite?.classe ?? "",
-      niveau: body.sheet?.identite?.niveau ?? 1,
-      historique: body.sheet?.identite?.historique ?? "",
-      alignement: body.sheet?.identite?.alignement ?? "",
-      xp: body.sheet?.identite?.xp ?? 0,
-      citation: body.sheet?.identite?.citation,
-    },
-    caracs: body.sheet?.caracs ?? { for: 10, dex: 10, con: 10, int: 10, sag: 10, cha: 10 },
-    saveProficiencies: body.sheet?.saveProficiencies ?? {
-      for: false,
-      dex: false,
-      con: false,
-      int: false,
-      sag: false,
-      cha: false,
-    },
-    skillProficiencies: body.sheet?.skillProficiencies ?? {},
-    ca: body.sheet?.ca ?? 10,
-    vitesse: body.sheet?.vitesse ?? "9 m",
-    initiativeBonus: body.sheet?.initiativeBonus ?? 0,
-    pvMax: body.sheet?.pvMax ?? 0,
-    desDeVie: body.sheet?.desDeVie ?? { faces: 8, total: 1, restants: 1 },
-    deathSaves: { successes: 0, failures: 0 },
-    inspiration: false,
-    attaques: body.sheet?.attaques ?? [],
-    armures: body.sheet?.armures ?? [],
-    sorts: body.sheet?.sorts ?? { caracIncantation: null, connus: [], emplacements: [] },
-    capacites: body.sheet?.capacites ?? [],
-    personnalite: body.sheet?.personnalite ?? {},
-    languesEtMaitrises: body.sheet?.languesEtMaitrises ?? "",
-    portrait: null,
-    racial: body.sheet?.racial ?? null,
-    equipement: body.sheet?.equipement ?? { bourse: { po: 0, pa: 0, pc: 0 }, objets: [] },
-    couleurPion: body.sheet?.couleurPion ?? "#C0392B",
-  };
+  // Builder partagé (shared/sheet) : mêmes defaults que les PNJ du DO.
+  const sheet: CharacterSheet = createSheet({
+    identite: { nom: body.name, ...body.sheet?.identite },
+    caracs: body.sheet?.caracs,
+    saveProficiencies: body.sheet?.saveProficiencies,
+    skillProficiencies: body.sheet?.skillProficiencies,
+    ca: body.sheet?.ca,
+    vitesse: body.sheet?.vitesse,
+    initiativeBonus: body.sheet?.initiativeBonus,
+    pvMax: body.sheet?.pvMax,
+    desDeVie: body.sheet?.desDeVie,
+    attaques: body.sheet?.attaques,
+    armures: body.sheet?.armures,
+    sorts: body.sheet?.sorts,
+    capacites: body.sheet?.capacites,
+    personnalite: body.sheet?.personnalite,
+    languesEtMaitrises: body.sheet?.languesEtMaitrises,
+    racial: body.sheet?.racial,
+    equipement: body.sheet?.equipement,
+    couleurPion: body.sheet?.couleurPion,
+  });
 
   await db.insert(schema.characters).values({
     id,

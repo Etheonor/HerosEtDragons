@@ -11,6 +11,9 @@ import {
   DEFAULT_SETTINGS as SHARED_DEFAULT_SETTINGS,
   type TableSettings,
 } from "@rollwith/shared/protocol";
+import type { CharacterSheet, ArmorKind } from "@rollwith/shared/sheet";
+
+export type { CharacterSheet, ArmorKind };
 
 // ── Better Auth tables (singular names as expected by the library) ───────────
 
@@ -295,61 +298,6 @@ export const notes = sqliteTable(
 );
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-/** Catégories d'armure — pilotent le calcul de CA (table DRS). */
-export type ArmorKind = "legere" | "intermediaire" | "lourde" | "bouclier";
-
-export interface CharacterSheet {
-  identite: {
-    nom: string;
-    race: string;
-    classe: string;
-    niveau: number;
-    historique: string;
-    alignement: string;
-    xp: number;
-    citation?: string;
-  };
-  caracs: { for: number; dex: number; con: number; int: number; sag: number; cha: number };
-  saveProficiencies: {
-    for: boolean;
-    dex: boolean;
-    con: boolean;
-    int: boolean;
-    sag: boolean;
-    cha: boolean;
-  };
-  skillProficiencies: Record<string, boolean>;
-  ca: number;
-  vitesse: string;
-  initiativeBonus: number;
-  pvMax: number;
-  desDeVie: { faces: number; total: number; restants: number };
-  deathSaves: { successes: number; failures: number };
-  inspiration: boolean;
-  attaques: { id: string; name: string; bonus: number; damage: string }[];
-  armures: { id: string; name: string; ca: number; kind: ArmorKind; equipee: boolean }[];
-  sorts: {
-    caracIncantation: "for" | "dex" | "con" | "int" | "sag" | "cha" | null;
-    connus: { slug: string; level: number; name?: string }[];
-    emplacements: { level: number; max: number; used: number }[];
-  };
-  capacites: { id: string; name: string; description: string }[];
-  personnalite: { traits?: string; ideaux?: string; liens?: string; defauts?: string };
-  languesEtMaitrises: string;
-  portrait?: string | null;
-  /** détail des bonus raciaux appliqués (création assistée) — purement informatif */
-  racial?: Partial<Record<"for" | "dex" | "con" | "int" | "sag" | "cha", number>> | null;
-  /** pvMax suivi automatiquement (DV + niveau + CON) tant que le joueur ne l'a pas forcé */
-  pvAuto?: boolean;
-  /** CA suivie automatiquement (armures équipées + bouclier) tant qu'elle n'est pas forcée */
-  caAuto?: boolean;
-  equipement: {
-    bourse: { po: number; pa: number; pc: number };
-    objets: { name: string; qty: number }[];
-  };
-  couleurPion: string;
-}
 
 export type CampaignSettings = TableSettings;
 
