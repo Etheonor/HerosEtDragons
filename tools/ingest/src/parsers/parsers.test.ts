@@ -148,6 +148,24 @@ describe("extraire des tableaux (markdown-tables)", () => {
     ]);
   });
 
+  it("double en-tête « ^^ » (tables d'évolution DRS) : headerTop conservé, lignes intactes", () => {
+    const md = [
+      "|Niveau|Bonus de maîtrise|Aptitudes|Emplacements de sorts par niveau de sort|||||||||",
+      "|^^|^^|^^|1<sup>er</sup>|2<sup>e</sup>|3<sup>e</sup>|4<sup>e</sup>|5<sup>e</sup>|6<sup>e</sup>|7<sup>e</sup>|8<sup>e</sup>|9<sup>e</sup>|",
+      "|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|",
+      "|**1**|+2|[Incantations](#incantations)|2|-|-|-|-|-|-|-|-|",
+      "|**2**|+2|[Touche-à-tout](#touche-a-tout)|3|-|-|-|-|-|-|-|-|",
+      "",
+    ].join("\n");
+    const tables = extractTables(md);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]!.headerTop?.[3]).toBe("1<sup>er</sup>");
+    expect(tables[0]!.rows).toHaveLength(2);
+    expect(tables[0]!.rows[0]!.cells[0]).toBe("1");
+    expect(tables[0]!.rows[0]!.cells[1]).toBe("+2");
+    expect(tables[0]!.rows[0]!.cells[3]).toBe("2");
+  });
+
   it("armures : liens d'ancre pour le slug", () => {
     const tables = extractTables(fx("tableaux-armures.md"));
     const first = tables[0]!.rows.find((r) => (r.cells[0] ?? "").includes("Matelassée"));

@@ -30,6 +30,29 @@ interface WranglerJson {
   result?: { results?: ExistingRow[] };
 }
 
+/** Lit l'état actuel de la table (local ou remote) pour un vrai diff.
+ *  Sans lui, tout est en INSERT ... ON CONFLICT DO NOTHING → jamais de mise
+ *  à jour des lignes existantes. */
+function readExisting(remote: boolean): ExistingRow[] {
+  const out = execFileSync(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      "rollwith-hd",
+      "--command",
+      "SELECT category, slug, hash, version FROM compendium_entries",
+      "--json",
+      remote ? "--remote" : "--local",
+    ],
+    { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  const parsed = JSON.parse(out.slice(out.indexOf("["))) as WranglerJson[] | WranglerJson;
+  const first = Array.isArray(parsed) ? parsed[0] : parsed;
+  return first?.results ?? first?.result?.results ?? [];
+}
+
 function main() {
   const drsPath = opt("drs") ?? defaultDrsPath();
   const outDir = opt("out") ?? path.join(__dirname, "../out");
@@ -41,6 +64,10 @@ function main() {
     const raw = JSON.parse(readFileSync(existingPath, "utf8")) as WranglerJson[] | WranglerJson;
     const first = Array.isArray(raw) ? raw[0] : raw;
     existing = first?.results ?? first?.result?.results ?? [];
+  } else if (flag("apply")) {
+    // Re-run : le diff vient de la base elle-même (sinon tout est « insert »
+    // et les lignes existantes ne sont JAMAIS mises à jour — ON CONFLICT DO NOTHING).
+    existing = readExisting(flag("remote"));
   }
 
   const plan = planDiff(entries, existing);

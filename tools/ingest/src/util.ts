@@ -72,7 +72,10 @@ export function makeEntry(input: {
     origin: input.origin ?? "drs",
     searchText: buildSearchText([input.title, ...input.keywords]),
     version: 1,
-    hash: hashRaw(input.raw),
+    // Le hash couvre la SORTIE générée (pas seulement la source) : un
+    // changement de parser doit être détecté par le diff au même titre
+    // qu'une modification du DRS.
+    hash: hashRaw(JSON.stringify({ title: input.title, meta: input.meta, body: input.body })),
   };
 }
 

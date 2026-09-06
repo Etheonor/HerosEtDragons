@@ -4,6 +4,8 @@
 
 export interface Table {
   headers: string[];
+  /** ligne d'en-tête secondaire (« ^^ » + niveaux de sort) — informative */
+  headerTop?: string[];
   rows: TableRow[];
 }
 
@@ -29,11 +31,20 @@ export function extractTables(md: string): Table[] {
   while (i < lines.length) {
     if (lines[i]!.trim().startsWith("|")) {
       const headerLine = lines[i]!;
-      const sepLine = lines[i + 1] ?? "";
+      // En-tête à deux niveaux du DRS : une ligne « ^^ » (parfois avec les
+      // niveaux de sort « 1<sup>er</sup> ») suit le header principal — elle
+      // est conservée telle quelle, le séparateur vient juste après.
+      let headerTop: string[] | undefined;
+      let sepIdx = i + 1;
+      if (lines[sepIdx]?.includes("^^")) {
+        headerTop = splitPipes(lines[sepIdx]!).map((c) => c.replace(/\^\^/g, "").trim());
+        sepIdx = i + 2;
+      }
+      const sepLine = lines[sepIdx] ?? "";
       if (sepLine.trim().startsWith("|") && /^[\s|:-]+$/.test(sepLine)) {
         const headers = splitPipes(headerLine);
         const rows: TableRow[] = [];
-        let j = i + 2;
+        let j = sepIdx + 1;
         let currentGroup: string | null = null;
         while (j < lines.length && lines[j]!.trim().startsWith("|")) {
           const cells = splitPipes(lines[j]!);
@@ -52,7 +63,7 @@ export function extractTables(md: string): Table[] {
           }
           j++;
         }
-        tables.push({ headers, rows });
+        tables.push({ headers, headerTop, rows });
         i = j;
         continue;
       }
