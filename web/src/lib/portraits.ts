@@ -27,7 +27,11 @@ export function loadPortraits(): Promise<PortraitEntry[]> {
   if (cached) return Promise.resolve(cached);
   if (!inflight) {
     inflight = fetch("/portraits/manifest.json")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("manifest"))))
+      .then((r) =>
+        r.ok
+          ? (r.json() as Promise<{ portraits: PortraitEntry[] }>)
+          : Promise.reject(new Error("manifest")),
+      )
       .then((data: { portraits: PortraitEntry[] }) => {
         cached = data.portraits ?? [];
         return cached;

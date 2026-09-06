@@ -1,14 +1,14 @@
 import { Hono } from "hono";
+import type { CharacterDetail, CharacterSummary } from "@rollwith/shared/dto";
 import { createDb, schema, type CharacterSheet } from "../db";
 import type { AppContext } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
 import { eq, and } from "drizzle-orm";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
-import { validateCharacterSheet } from "@rollwith/shared/validation";
-import { createSheet } from "@rollwith/shared/sheet";
+import { createSheet, characterSheetSchema } from "@rollwith/shared/sheet";
 import { kaelithSheet } from "../db/seed";
-
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 /** Notifie le DO de la campagne après une mutation REST d'un personnage (§3.4). */
 async function notifyTable(c: AppContext, campaignId: string, charId: string): Promise<void> {
@@ -36,7 +36,22 @@ async function charCampaign(c: AppContext): Promise<string | null> {
 
 const memberOfChar = requireMemberOf(charCampaign);
 
+const createBody = zValidator(
+  "json",
+  z.object({
+    campaignId: z.string().min(1).max(64),
+    name: z.string().trim().min(1).max(100),
+    sheet: characterSheetSchema.partial().optional(),
+  }),
+);
+
+const pvPatchBody = zValidator("json", z.object({ delta: z.number().int().min(-100).max(100) }));
+const pvTempBody = zValidator("json", z.object({ value: z.number().int().min(0).max(1000) }));
+const sheetPutBody = zValidator("json", characterSheetSchema);
+
 // ── Lister les personnages d'une campagne ─────────────────────
+
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 app.get(
   "/campaigns/:campaignId",
@@ -51,7 +66,7 @@ app.get(
       .from(schema.characters)
       .where(eq(schema.characters.campaignId, campaignId));
 
-    return c.json({
+    return c.json<{ characters: CharacterSummary[] }>({
       characters: chars.map((ch) => ({
         id: ch.id,
         name: ch.name,
@@ -96,7 +111,7 @@ app.get("/:charId", requireAuth, memberOfChar, async (c) => {
   const isMj = c.get("memberRole") === "mj";
   const canEdit = isOwner || isMj;
 
-  return c.json({
+  return c.json<CharacterDetail>({
     id: char.id,
     campaignId: char.campaignId,
     ownerId: char.ownerId,
@@ -123,17 +138,10 @@ app.post(
     const body = await c.req.json<{ campaignId?: string }>().catch(() => null);
     return body?.campaignId ?? null;
   }),
+  createBody,
   async (c) => {
-    const body = await c.req.json<{
-      campaignId: string;
-      name: string;
-      sheet?: Partial<CharacterSheet>;
-    }>();
+    const body = c.req.valid("json");
     const userId = c.get("user").id;
-
-    if (!body.name?.trim()) {
-      return c.json({ error: "campaignId et name requis" }, 400);
-    }
 
     const db = createDb(c.env.DB);
 
@@ -194,19 +202,16 @@ app.post(
       conditions: [],
     });
 
-    return c.json({ id, name: body.name }, 201);
+    return c.json<{ id: string; name: string }>({ id, name: body.name }, 201);
   },
 );
 
 // ── Modifier PV (±) ────────────────────────────────────────────
 
-app.patch("/:charId/pv", requireAuth, memberOfChar, async (c) => {
+app.patch("/:charId/pv", requireAuth, memberOfChar, pvPatchBody, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-  const body = await c.req.json<{ delta: number }>();
-  if (typeof body.delta !== "number") {
-    return c.json({ error: "delta requis (number)" }, 400);
-  }
+  const body = c.req.valid("json");
 
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
@@ -235,18 +240,15 @@ app.patch("/:charId/pv", requireAuth, memberOfChar, async (c) => {
     .where(eq(schema.characters.id, charId));
 
   await notifyTable(c, char.campaignId, charId);
-  return c.json({ pv: newPv, pvMax: char.pvMax });
+  return c.json<{ pv: number; pvMax: number }>({ pv: newPv, pvMax: char.pvMax });
 });
 
 // ── Modifier PV temporaires ───────────────────────────────────
 
-app.patch("/:charId/pv-temp", requireAuth, memberOfChar, async (c) => {
+app.patch("/:charId/pv-temp", requireAuth, memberOfChar, pvTempBody, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-  const body = await c.req.json<{ value: number }>();
-  if (typeof body.value !== "number") {
-    return c.json({ error: "value requis (number)" }, 400);
-  }
+  const body = c.req.valid("json");
 
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
@@ -272,7 +274,7 @@ app.patch("/:charId/pv-temp", requireAuth, memberOfChar, async (c) => {
     .where(eq(schema.characters.id, charId));
 
   await notifyTable(c, char.campaignId, charId);
-  return c.json({ pvTemp });
+  return c.json<{ pvTemp: number }>({ pvTemp });
 });
 
 // ── Toggle inspiration ─────────────────────────────────────────
@@ -303,26 +305,18 @@ app.patch("/:charId/inspiration", requireAuth, memberOfChar, async (c) => {
     .where(eq(schema.characters.id, charId));
 
   await notifyTable(c, char.campaignId, charId);
-  return c.json({ inspiration: sheet.inspiration });
+  return c.json<{ inspiration: boolean }>({ inspiration: sheet.inspiration });
 });
 
 // ── Mettre à jour la feuille (édition) ────────────────────────
 
-app.put("/:charId/sheet", requireAuth, memberOfChar, async (c) => {
+app.put("/:charId/sheet", requireAuth, memberOfChar, sheetPutBody, async (c) => {
   const charId = c.req.param("charId");
   if (!charId) return c.json({ error: "Char ID manquant" }, 400);
 
-  // Garde-fous taille + parsing (audit §5.2) : pas de JSON arbitraire.
-  const raw = await c.req.text();
-  if (raw.length > 200_000) {
-    return c.json({ error: "Feuille trop volumineuse (max 200 ko)" }, 413);
-  }
-  let body: CharacterSheet;
-  try {
-    body = JSON.parse(raw) as CharacterSheet;
-  } catch {
-    return c.json({ error: "JSON invalide" }, 400);
-  }
+  // Corps validé + borné par le schéma canonique (characterSheetSchema) :
+  // remplace l'ancien garde-fou 200 ko + validation manuelle.
+  const body = c.req.valid("json");
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
 
@@ -350,11 +344,6 @@ app.put("/:charId/sheet", requireAuth, memberOfChar, async (c) => {
     }
   }
 
-  const sheetError = validateCharacterSheet(body);
-  if (sheetError) {
-    return c.json({ error: `Feuille invalide : ${sheetError}` }, 400);
-  }
-
   await db
     .update(schema.characters)
     .set({
@@ -366,7 +355,7 @@ app.put("/:charId/sheet", requireAuth, memberOfChar, async (c) => {
     .where(eq(schema.characters.id, charId));
 
   await notifyTable(c, char.campaignId, charId);
-  return c.json({ ok: true });
+  return c.json<{ ok: true }>({ ok: true });
 });
 
 // ── Seed Kaelith dans une campagne (dev) ──────────────────────
@@ -390,7 +379,11 @@ app.post(
       .limit(1);
 
     if (existing.length > 0) {
-      return c.json({ id: existing[0]!.id, name: "Kaelith", alreadyExists: true });
+      return c.json<{ id: string; name: string; alreadyExists?: boolean }>({
+        id: existing[0]!.id,
+        name: "Kaelith",
+        alreadyExists: true,
+      });
     }
 
     const id = crypto.randomUUID();
@@ -409,7 +402,7 @@ app.post(
       conditions: [],
     });
 
-    return c.json({ id, name: "Kaelith" }, 201);
+    return c.json<{ id: string; name: string }>({ id, name: "Kaelith" }, 201);
   },
 );
 

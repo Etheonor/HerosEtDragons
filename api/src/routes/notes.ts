@@ -1,19 +1,21 @@
 import { Hono } from "hono";
+
 import { createDb, schema } from "../db";
 import { eq, and } from "drizzle-orm";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
-
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 const TARGET_TYPES = ["map", "campaign"] as const;
 type TargetType = (typeof TARGET_TYPES)[number];
-const MAX_NOTE = 20000;
 
 function isTargetType(v: string | undefined): v is TargetType {
   return !!v && (TARGET_TYPES as readonly string[]).includes(v);
 }
 
 // ── Lister les notes MJ d'une campagne ────────────────────────
+
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 app.get(
   "/campaigns/:campaignId",
@@ -48,6 +50,7 @@ app.put(
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
+  zValidator("json", z.object({ content: z.string().max(20000) })),
   async (c) => {
     const campaignId = c.req.param("campaignId");
     const targetType = c.req.param("targetType");
@@ -56,11 +59,7 @@ app.put(
       return c.json({ error: "Paramètres invalides" }, 400);
     }
 
-    const body = await c.req.json<{ content: string }>().catch(() => ({ content: "" }));
-    if (typeof body.content !== "string" || body.content.length > MAX_NOTE) {
-      return c.json({ error: `Note trop longue (max ${MAX_NOTE})` }, 400);
-    }
-    const content = body.content;
+    const content = c.req.valid("json").content;
 
     const db = createDb(c.env.DB);
     const nowDate = new Date();
@@ -83,7 +82,7 @@ app.put(
       if (existing) {
         await db.delete(schema.notes).where(eq(schema.notes.id, existing.id));
       }
-      return c.json({ ok: true, removed: !!existing });
+      return c.json<{ ok: true; removed?: boolean }>({ ok: true, removed: !!existing });
     }
 
     if (existing) {
@@ -91,7 +90,11 @@ app.put(
         .update(schema.notes)
         .set({ content, updatedAt: nowDate })
         .where(eq(schema.notes.id, existing.id));
-      return c.json({ ok: true, id: existing.id, updatedAt: now });
+      return c.json<{ ok: true; id: string; updatedAt: number }>({
+        ok: true,
+        id: existing.id,
+        updatedAt: now,
+      });
     }
 
     const id = crypto.randomUUID();
@@ -103,7 +106,10 @@ app.put(
       content,
       updatedAt: nowDate,
     });
-    return c.json({ ok: true, id, updatedAt: now }, 201);
+    return c.json<{ ok: true; id: string; updatedAt: number }>(
+      { ok: true, id, updatedAt: now },
+      201,
+    );
   },
 );
 

@@ -1,6 +1,9 @@
 import { Hono } from "hono";
+import type { MapSummary } from "@rollwith/shared/dto";
 import { createDb, schema } from "../db";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import {
   requireAuth,
   requireMemberOf,
@@ -8,8 +11,6 @@ import {
   type AppContext,
   type AuthVariables,
 } from "../middleware";
-
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES: Record<string, string> = {
@@ -33,6 +34,22 @@ async function mapCampaign(c: AppContext): Promise<string | null> {
 
 const memberOfMap = requireMemberOf(mapCampaign);
 
+const createMapForm = zValidator(
+  "form",
+  z.object({
+    name: z.string().trim().min(1).max(80),
+    image: z.instanceof(File).optional(),
+  }),
+);
+
+const updateMapForm = zValidator(
+  "form",
+  z.object({
+    name: z.string().trim().min(1).max(80).optional(),
+    image: z.instanceof(File).optional(),
+  }),
+);
+
 /** Vérifie la signature réelle du fichier (magic bytes), pas seulement le
  *  Content-Type déclaré par le client (audit §5.6). Retourne l'extension ou null. */
 async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null> {
@@ -46,6 +63,8 @@ async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null
 
 // ── Lister les cartes d'une campagne ──────────────────────────
 
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
 app.get(
   "/campaigns/:campaignId",
   requireAuth,
@@ -56,7 +75,7 @@ app.get(
 
     const maps = await db.select().from(schema.maps).where(eq(schema.maps.campaignId, campaignId));
 
-    return c.json({
+    return c.json<{ maps: MapSummary[] }>({
       maps: maps.map((m) => ({ id: m.id, name: m.name, hasImage: !!m.r2Key })),
     });
   },
@@ -69,22 +88,18 @@ app.post(
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
+  createMapForm,
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
+    const form = c.req.valid("form");
     const db = createDb(c.env.DB);
 
-    const form = await c.req.formData();
-    const name = (form.get("name") as string | null)?.trim();
-    if (!name) return c.json({ error: "Nom de carte requis" }, 400);
-
+    const name = form.name;
     const id = crypto.randomUUID();
     let r2Key: string | null = null;
 
-    const fileEntry = form.get("image");
-    const isUploadedFile =
-      typeof fileEntry === "object" && fileEntry !== null && "arrayBuffer" in fileEntry;
-    if (isUploadedFile && (fileEntry as File).size > 0) {
-      const file = fileEntry as File;
+    const file = form.image;
+    if (file && file.size > 0) {
       if (file.size > MAX_IMAGE_BYTES) {
         return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
       }
@@ -103,36 +118,27 @@ app.post(
 
     await db.insert(schema.maps).values({ id, campaignId, name, r2Key });
 
-    return c.json({ id, name, hasImage: !!r2Key }, 201);
+    return c.json<MapSummary>({ id, name, hasImage: !!r2Key }, 201);
   },
 );
 
 // ── Modifier une carte (MJ) : nom et/ou image ─────────────────
 
-app.patch("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
+app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (c) => {
   const mapId = c.req.param("mapId");
   if (!mapId) return c.json({ error: "Map ID manquant" }, 400);
 
+  const form = c.req.valid("form");
   const db = createDb(c.env.DB);
 
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map) return c.json({ error: "Carte introuvable" }, 404);
 
-  const form = await c.req.formData();
   const patch: { name?: string; r2Key?: string | null } = {};
+  if (form.name !== undefined) patch.name = form.name;
 
-  const rawName = form.get("name");
-  if (typeof rawName === "string") {
-    const name = rawName.trim();
-    if (!name) return c.json({ error: "Nom requis" }, 400);
-    patch.name = name;
-  }
-
-  const fileEntry = form.get("image");
-  const isUploadedFile =
-    typeof fileEntry === "object" && fileEntry !== null && "arrayBuffer" in fileEntry;
-  if (isUploadedFile && (fileEntry as File).size > 0) {
-    const file = fileEntry as File;
+  const file = form.image;
+  if (file && file.size > 0) {
     if (file.size > MAX_IMAGE_BYTES) {
       return c.json({ error: "Image trop lourde (max 8 Mo)" }, 400);
     }
@@ -157,7 +163,7 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
 
   await db.update(schema.maps).set(patch).where(eq(schema.maps.id, mapId));
 
-  return c.json({ id: mapId, name: patch.name ?? map.name, hasImage: !!patch.r2Key });
+  return c.json<MapSummary>({ id: mapId, name: patch.name ?? map.name, hasImage: !!patch.r2Key });
 });
 
 // ── Supprimer une carte (MJ) ───────────────────────────────────
@@ -174,7 +180,7 @@ app.delete("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
   if (map.r2Key) await c.env.MAPS.delete(map.r2Key);
   await db.delete(schema.maps).where(eq(schema.maps.id, mapId));
 
-  return c.json({ ok: true });
+  return c.json<{ ok: true }>({ ok: true });
 });
 
 // ── Servir l'image d'une carte (authentifié, membre) ──────────

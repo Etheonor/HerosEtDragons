@@ -3,11 +3,9 @@ import { and, eq, gt, or, sql } from "drizzle-orm";
 
 type DB = ReturnType<typeof createDb>;
 
-export interface ConsumeResult {
-  ok: boolean;
-  reason?: "invalid" | "exhausted";
-  campaignId?: string;
-}
+export type ConsumeResult =
+  | { ok: true; campaignId: string }
+  | { ok: false; reason: "invalid" | "exhausted" };
 
 function inviteTokenFromCookie(request: Request): string | null {
   const cookies = request.headers.get("cookie") ?? "";

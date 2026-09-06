@@ -7,6 +7,10 @@
 
 import { z } from "zod";
 import { CARACS } from "./rules";
+import { ARMOR_KINDS } from "./armor";
+
+export { ARMOR_KINDS, ARMOR_KIND_LABELS } from "./armor";
+export type { ArmorKind, Armor } from "./armor";
 
 // ── Helpers de messages (messages lisibles, style DRS) ─────────
 
@@ -38,16 +42,6 @@ function strArray(
 
 // ── Armures ────────────────────────────────────────────────────
 
-export const ARMOR_KINDS = ["legere", "intermediaire", "lourde", "bouclier"] as const;
-export type ArmorKind = (typeof ARMOR_KINDS)[number];
-
-export const ARMOR_KIND_LABELS: Record<ArmorKind, string> = {
-  legere: "légère",
-  intermediaire: "intermédiaire",
-  lourde: "lourde",
-  bouclier: "bouclier",
-};
-
 export const armorSchema = z.object({
   id: strField(60, "armure id"),
   name: strField(100, "armure nom"),
@@ -55,7 +49,7 @@ export const armorSchema = z.object({
   kind: z.enum(ARMOR_KINDS, { error: "armure catégorie" }),
   equipee: z.boolean({ error: "armure équipée" }),
 });
-export type Armor = z.infer<typeof armorSchema>;
+export type SheetArmor = z.infer<typeof armorSchema>;
 
 // ── Feuille complète ───────────────────────────────────────────
 

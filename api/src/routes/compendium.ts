@@ -2,12 +2,13 @@
 // Règle absolue (design §7 / audit) : une fiche `visibility:"mj"` n'est JAMAIS
 // retournée à un joueur ; l'UI n'a donc pas à filtrer, l'API ne fuit rien.
 import { Hono } from "hono";
+import type { CompendiumEntryDto, CompendiumListPage } from "@rollwith/shared/dto";
 import { createDb, schema } from "../db";
 import { eq, and, like, or, sql, count } from "drizzle-orm";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
-
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 const CATEGORIES = [
   "bestiaire",
@@ -24,6 +25,28 @@ const CATEGORIES = [
 
 const memberOfCampaign = requireMemberOf((c) => c.req.query("campaign") ?? null);
 
+const campaignQuery = zValidator("query", z.object({ campaign: z.string().min(1).max(64) }));
+
+const entriesQuery = zValidator(
+  "query",
+  z.object({
+    campaign: z.string().min(1).max(64),
+    category: z.enum(CATEGORIES).optional(),
+    q: z.string().max(100).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    offset: z.coerce.number().int().min(0).max(100000).optional(),
+  }),
+);
+
+const shareBody = zValidator(
+  "json",
+  z.object({
+    campaignId: z.string().min(1).max(64),
+    category: z.enum(CATEGORIES),
+    slug: z.string().min(1).max(200),
+  }),
+);
+
 function visibilityWhere(isMj: boolean, campaignId: string) {
   // public, ou mj si le demandeur est MJ de cette campagne. Homebrew : restreint
   // à la campagne courante.
@@ -34,7 +57,9 @@ function visibilityWhere(isMj: boolean, campaignId: string) {
 
 // ── Catégories + compteurs visibles ────────────────────────────
 
-app.get("/categories", requireAuth, memberOfCampaign, async (c) => {
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+app.get("/categories", requireAuth, memberOfCampaign, campaignQuery, async (c) => {
   const isMj = c.get("memberRole") === "mj";
   const campaignId = c.get("membership")!.campaignId;
   const db = createDb(c.env.DB);
@@ -52,22 +77,19 @@ app.get("/categories", requireAuth, memberOfCampaign, async (c) => {
     count: counts[cat] ?? 0,
     locked: !isMj && (cat === "bestiaire" || cat === "objets-magiques"),
   }));
-  return c.json({ categories, isMj });
+  return c.json<{
+    categories: { category: string; count: number; locked: boolean }[];
+    isMj: boolean;
+  }>({ categories, isMj });
 });
 
 // ── Liste paginée + recherche ──────────────────────────────────
 
-app.get("/entries", requireAuth, memberOfCampaign, async (c) => {
+app.get("/entries", requireAuth, memberOfCampaign, entriesQuery, async (c) => {
   const isMj = c.get("memberRole") === "mj";
   const campaignId = c.get("membership")!.campaignId;
-  const category = c.req.query("category");
-  const q = (c.req.query("q") ?? "").trim();
-  const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 60));
-  const offset = Math.max(0, Number(c.req.query("offset")) || 0);
-  if (category && !CATEGORIES.includes(category as (typeof CATEGORIES)[number])) {
-    return c.json({ error: "catégorie inconnue" }, 400);
-  }
-
+  const { category, q: qRaw, limit, offset } = c.req.valid("query");
+  const q = (qRaw ?? "").trim();
   const db = createDb(c.env.DB);
 
   const conds = [visibilityWhere(isMj, campaignId)];
@@ -100,26 +122,26 @@ app.get("/entries", requireAuth, memberOfCampaign, async (c) => {
     .from(schema.compendiumEntries)
     .where(where)
     .orderBy(schema.compendiumEntries.title)
-    .limit(limit)
-    .offset(offset);
+    .limit(limit ?? 60)
+    .offset(offset ?? 0);
 
-  return c.json({
+  return c.json<CompendiumListPage>({
     entries: rows.map((r) => ({
       category: r.category,
       slug: r.slug,
       title: r.title,
       origin: r.origin,
-      meta: r.meta,
+      meta: r.meta as Record<string, unknown> | null,
     })),
     total: totalRow ?? 0,
-    offset,
-    limit,
+    offset: offset ?? 0,
+    limit: limit ?? 60,
   });
 });
 
 // ── Fiche complète ─────────────────────────────────────────────
 
-app.get("/entry/:category/:slug", requireAuth, memberOfCampaign, async (c) => {
+app.get("/entry/:category/:slug", requireAuth, memberOfCampaign, campaignQuery, async (c) => {
   const isMj = c.get("memberRole") === "mj";
   const campaignId = c.get("membership")!.campaignId;
   const category = c.req.param("category");
@@ -151,14 +173,14 @@ app.get("/entry/:category/:slug", requireAuth, memberOfCampaign, async (c) => {
   // Une fiche `mj` non partagée demandée par un joueur → 404 (existence non confirmée).
   if (!row) return c.json({ error: "Introuvable" }, 404);
 
-  return c.json({
+  return c.json<CompendiumEntryDto>({
     category: row.category,
     slug: row.slug,
     title: row.title,
     source: row.source,
     sourcePage: row.sourcePage,
-    meta: row.meta,
-    body: row.body,
+    meta: row.meta as CompendiumEntryDto["meta"],
+    body: row.body as CompendiumEntryDto["body"],
     visibility: row.visibility,
     origin: row.origin,
   });
@@ -174,14 +196,10 @@ app.post(
     return body?.campaignId ?? null;
   }),
   requireMj,
+  shareBody,
   async (c) => {
-    const body = await c.req
-      .json<{ campaignId?: string; category?: string; slug?: string }>()
-      .catch(() => null);
-    const { category, slug } = body ?? {};
+    const { category, slug } = c.req.valid("json");
     const campaignId = c.get("membership")!.campaignId;
-    if (!category || !slug) return c.json({ error: "paramètres requis" }, 400);
-
     const db = createDb(c.env.DB);
 
     const [entry] = await db
@@ -204,7 +222,7 @@ app.post(
       title: entry.title,
       sharedBy: c.get("user").name,
     });
-    return c.json({ ok: true });
+    return c.json<{ ok: true }>({ ok: true });
   },
 );
 

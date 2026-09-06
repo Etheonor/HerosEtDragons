@@ -13,10 +13,12 @@
     "db:migrate:remote": "wrangler d1 migrations apply rollwith-hd --remote"
   },
   "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
     "@rollwith/shared": "workspace:*",
     "better-auth": "^1.6.23",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.9.0"
+    "hono": "^4.9.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250708.0",

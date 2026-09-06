@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { api, type CompendiumEntryDto } from '$lib/api';
+  import { api, type CompendiumEntryDto, type CompendiumListEntry } from '$lib/api';
   import { renderEntryBody, inlineHtml, diceCol, superHeaders } from '$lib/markdown-lite';
   import { monsterAveragePv, monsterCa, type MonsterMeta, type SpellMeta } from '@rollwith/shared/compendium';
   import { caracMod } from '@rollwith/shared/hd';
@@ -12,7 +12,7 @@
   let isMj = $state(false);
   let activeCategory = $state('bestiaire');
   let search = $state('');
-  let entries = $state<CompendiumEntryDto[]>([]);
+  let entries = $state<CompendiumListEntry[]>([]);
   let total = $state(0);
   let selected = $state<CompendiumEntryDto | null>(null);
   let listError = $state('');
@@ -105,7 +105,7 @@
     addedToLibrary = false;
   }
 
-  async function openEntry(e: CompendiumEntryDto) {
+  async function openEntry(e: CompendiumListEntry) {
     if (!campaign) return;
     loadingEntry = true;
     addedToLibrary = false;
@@ -119,7 +119,7 @@
     loadingEntry = false;
   }
 
-  function summary(e: CompendiumEntryDto): string {
+  function summary(e: CompendiumListEntry): string {
     const m = (e.meta ?? {}) as Record<string, any>;
     switch (e.category) {
       case 'bestiaire':

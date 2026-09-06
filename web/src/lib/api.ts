@@ -1,44 +1,42 @@
-// ── Types canoniques (source unique : @rollwith/shared/sheet) ──
-import type { CharacterSheet, ArmorKind } from "@rollwith/shared/sheet";
-export { ARMOR_KINDS, ARMOR_KIND_LABELS } from "@rollwith/shared/sheet";
-export type { CharacterSheet, ArmorKind };
+// ── Client REST typé ───────────────────────────────────────────
+// Les types viennent de @rollwith/shared/dto (source unique avec l'API).
+import type {
+  CampaignDetail,
+  CampaignSummary,
+  CharacterDetail,
+  CharacterSummary,
+  CompendiumEntryDto,
+  CompendiumListPage,
+  InvitationResult,
+  JoinResult,
+  JournalPage,
+  MapSummary,
+  NoteDto,
+  NpcTemplate,
+} from "@rollwith/shared/dto";
+import type { CharacterSheet } from "@rollwith/shared/sheet";
+import type { TableSettings } from "@rollwith/shared/protocol";
+import type { NpcTemplateInput } from "@rollwith/shared/sheet";
+
+export { ARMOR_KINDS, ARMOR_KIND_LABELS } from "@rollwith/shared/armor";
+export type { ArmorKind } from "@rollwith/shared/armor";
 /** Armure de la feuille — alias du type canonique. */
-export type SheetArmor = import("@rollwith/shared/sheet").Armor;
+export type SheetArmor = import("@rollwith/shared/sheet").SheetArmor;
+export type { CharacterSheet };
 
-export interface CampaignSummary {
-  id: string;
-  name: string;
-  role: "mj" | "player";
-  isOwner: boolean;
-  settings: {
-    pnjPvVisible: boolean;
-    sheetsLocked: boolean;
-    diceDuration: number;
-    tokenSize: number;
-  };
-  createdAt: string;
-}
-
-export interface CampaignDetail extends CampaignSummary {
-  members: {
-    userId: string;
-    role: "mj" | "player";
-    name: string;
-    image: string | null;
-  }[];
-}
-
-export interface JoinResult {
-  campaignId: string;
-  role: "mj" | "player";
-  alreadyMember?: boolean;
-}
-
-export interface InvitationResult {
-  token: string;
-  usesLeft: number;
-  expiresAt: string;
-}
+/** Ré-exports des DTO partagés (composants) — source : shared/dto. */
+export type {
+  CampaignSummary,
+  CampaignDetail,
+  CharacterSummary,
+  CharacterDetail,
+  CompendiumEntryDto,
+  CompendiumListEntry,
+  MapSummary,
+  NpcTemplate,
+  NpcTemplateInput,
+  NoteDto,
+} from "@rollwith/shared/dto";
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -50,8 +48,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error ?? "Erreur");
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Erreur");
   }
   return res.json() as Promise<T>;
 }
@@ -59,49 +57,10 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 async function fetchForm<T>(url: string, form: FormData, method = "POST"): Promise<T> {
   const res = await fetch(url, { method, body: form, credentials: "same-origin" });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error ?? "Erreur");
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Erreur");
   }
   return res.json() as Promise<T>;
-}
-
-export interface MapSummary {
-  id: string;
-  name: string;
-  hasImage: boolean;
-}
-
-export interface CharacterSummary {
-  id: string;
-  name: string;
-  kind: "pj" | "pnj";
-  ownerId: string | null;
-  color: string;
-  active: boolean;
-  ca: number;
-  sub: string;
-  initiativeBonus: number;
-  pv: number;
-  pvMax: number;
-  pvTemp: number;
-  conditions: string[];
-}
-
-export interface CharacterDetail {
-  id: string;
-  campaignId: string;
-  ownerId: string | null;
-  kind: "pj" | "pnj";
-  name: string;
-  color: string;
-  active: boolean;
-  sheet: CharacterSheet;
-  pv: number;
-  pvMax: number;
-  pvTemp: number;
-  conditions: string[];
-  canEdit: boolean;
-  role: "mj" | "player";
 }
 
 export const api = {
@@ -113,8 +72,8 @@ export const api = {
         body: JSON.stringify({ name }),
       }),
     detail: (id: string) => fetchJson<CampaignDetail>(`/api/campaigns/${id}`),
-    updateSettings: (id: string, settings: Partial<CampaignSummary["settings"]>) =>
-      fetchJson<{ settings: CampaignSummary["settings"] }>(`/api/campaigns/${id}/settings`, {
+    updateSettings: (id: string, settings: Partial<TableSettings>) =>
+      fetchJson<{ settings: TableSettings }>(`/api/campaigns/${id}/settings`, {
         method: "PATCH",
         body: JSON.stringify(settings),
       }),
@@ -128,10 +87,7 @@ export const api = {
     journalPage: (campaignId: string, before?: number, limit = 50) => {
       const qs = new URLSearchParams({ limit: String(limit) });
       if (before !== undefined) qs.set("before", String(before));
-      return fetchJson<{
-        entries: import("@rollwith/shared/protocol").JournalEntry[];
-        hasMore: boolean;
-      }>(`/api/campaigns/${campaignId}/journal?${qs.toString()}`);
+      return fetchJson<JournalPage>(`/api/campaigns/${campaignId}/journal?${qs.toString()}`);
     },
   },
   characters: {
@@ -176,19 +132,19 @@ export const api = {
       }>(`/api/compendium/categories?campaign=${encodeURIComponent(campaignId)}`),
     entries: (
       campaignId: string,
-      opts: { category?: string; q?: string; offset?: number; limit?: number } = {},
+      opts: {
+        category?: string;
+        q?: string;
+        offset?: number;
+        limit?: number;
+      } = {},
     ) => {
       const qs = new URLSearchParams({ campaign: campaignId });
       if (opts.category) qs.set("category", opts.category);
       if (opts.q) qs.set("q", opts.q);
-      if (opts.offset) qs.set("offset", String(opts.offset));
-      if (opts.limit) qs.set("limit", String(opts.limit));
-      return fetchJson<{
-        entries: CompendiumEntryDto[];
-        total: number;
-        offset: number;
-        limit: number;
-      }>(`/api/compendium/entries?${qs.toString()}`);
+      if (opts.offset !== undefined) qs.set("offset", String(opts.offset));
+      if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+      return fetchJson<CompendiumListPage>(`/api/compendium/entries?${qs.toString()}`);
     },
     share: (campaignId: string, category: string, slug: string) =>
       fetchJson<{ ok: true }>("/api/compendium/share", {
@@ -236,14 +192,7 @@ export const api = {
   },
   notes: {
     list: (campaignId: string) =>
-      fetchJson<{
-        notes: {
-          targetType: "map" | "campaign";
-          targetId: string;
-          content: string;
-          updatedAt: number;
-        }[];
-      }>(`/api/notes/campaigns/${campaignId}`),
+      fetchJson<{ notes: NoteDto[] }>(`/api/notes/campaigns/${campaignId}`),
     set: (campaignId: string, targetType: "map" | "campaign", targetId: string, content: string) =>
       fetchJson<{ ok: true }>(
         `/api/notes/campaigns/${campaignId}/${targetType}/${encodeURIComponent(targetId)}`,
@@ -251,31 +200,3 @@ export const api = {
       ),
   },
 };
-
-export interface NpcTemplateInput {
-  name: string;
-  ca: number;
-  pvMax: number;
-  initBonus: number;
-  color: string;
-  conditions: string[];
-  notes: string;
-}
-
-export interface NpcTemplate extends NpcTemplateInput {
-  id: string;
-  source: { category: string; slug: string } | null;
-  updatedAt: number;
-}
-
-export interface CompendiumEntryDto {
-  category: string;
-  slug: string;
-  title: string;
-  source: string;
-  sourcePage: number | null;
-  meta: Record<string, unknown> | null;
-  body: { heading: string | null; markdown: string }[] | null;
-  visibility: "public" | "mj";
-  origin: "drs" | "maison";
-}

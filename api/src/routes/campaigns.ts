@@ -1,10 +1,30 @@
 import { Hono } from "hono";
+import type {
+  CampaignSummary,
+  InvitationResult,
+  JoinResult,
+  JournalPage,
+  TableSettings,
+} from "@rollwith/shared/dto";
+import type { JournalEntry } from "@rollwith/shared/protocol";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
 import { eq, and, lt, desc } from "drizzle-orm";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 import { consumeInvitation } from "../invitations";
 
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+const settingsPatchSchema = z.object({
+  pnjPvVisible: z.boolean().optional(),
+  sheetsLocked: z.boolean().optional(),
+  diceDuration: z.number().int().min(200).max(10000).optional(),
+  tokenSize: z.number().int().min(16).max(96).optional(),
+});
+
+const journalQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  before: z.coerce.number().int().positive().optional(),
+});
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -17,6 +37,8 @@ function generateToken(): string {
 }
 
 // ── Lister mes campagnes ──────────────────────────────────────
+
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 app.get("/", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -35,14 +57,14 @@ app.get("/", requireAuth, async (c) => {
     .innerJoin(schema.campaigns, eq(schema.members.campaignId, schema.campaigns.id))
     .where(eq(schema.members.userId, userId));
 
-  return c.json({
+  return c.json<{ campaigns: CampaignSummary[] }>({
     campaigns: myMemberships.map((m) => ({
       id: m.campaignId,
       name: m.name,
       role: m.role,
       isOwner: m.ownerId === userId,
       settings: m.settings,
-      createdAt: m.createdAt,
+      createdAt: m.createdAt.toISOString(),
     })),
   });
 });
@@ -72,7 +94,10 @@ app.post("/", requireAuth, async (c) => {
     role: "mj",
   });
 
-  return c.json({ id, name: body.name.trim(), role: "mj" }, 201);
+  return c.json<{ id: string; name: string; role: "mj" }>(
+    { id, name: body.name.trim(), role: "mj" },
+    201,
+  );
 });
 
 // ── Détail d'une campagne ─────────────────────────────────────
@@ -113,7 +138,7 @@ app.get(
       role: c.get("memberRole"),
       isOwner: campaign.ownerId === userId,
       settings: campaign.settings,
-      createdAt: campaign.createdAt,
+      createdAt: campaign.createdAt.toISOString(),
       members: allMembers,
     });
   },
@@ -126,11 +151,11 @@ app.patch(
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
+  zValidator("json", settingsPatchSchema),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
+    const body = c.req.valid("json");
     const db = createDb(c.env.DB);
-
-    const body = await c.req.json<Partial<CampaignSettings>>();
     const [campaign] = await db
       .select()
       .from(schema.campaigns)
@@ -153,7 +178,7 @@ app.patch(
       .set({ settings: newSettings })
       .where(eq(schema.campaigns.id, campaignId));
 
-    return c.json({ settings: newSettings });
+    return c.json<{ settings: TableSettings }>({ settings: newSettings });
   },
 );
 
@@ -164,29 +189,27 @@ app.post(
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
+  zValidator(
+    "json",
+    z.object({
+      usesLeft: z.union([z.literal(-1), z.number().int().min(1).max(100)]).optional(),
+      expiresInSeconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(366 * 24 * 60 * 60)
+        .optional(),
+    }),
+  ),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
+    const body = c.req.valid("json");
     const db = createDb(c.env.DB);
 
-    const body = await c.req.json<{ usesLeft?: number; expiresInSeconds?: number }>().catch(
-      () =>
-        ({ usesLeft: -1, expiresInSeconds: 30 * 24 * 60 * 60 }) as {
-          usesLeft: number;
-          expiresInSeconds: number;
-        },
-    );
     // -1 = illimité. Une table privée a besoin d'un lien qui couvre tous les
     // joueurs ; la sécurité vient du secret du token, pas d'un quota.
-    const usesRaw = body.usesLeft ?? -1;
-    if (usesRaw !== -1 && (!Number.isInteger(usesRaw) || usesRaw < 1 || usesRaw > 100)) {
-      return c.json({ error: "usesLeft : -1 (illimité) ou entier entre 1 et 100" }, 400);
-    }
-    const usesLeft = usesRaw;
-    const expiresRaw = body.expiresInSeconds ?? 30 * 24 * 60 * 60;
-    const expiresInSeconds = Number.isFinite(expiresRaw)
-      ? Math.min(366 * 24 * 60 * 60, Math.max(60, Math.trunc(expiresRaw)))
-      : 30 * 24 * 60 * 60;
-
+    const usesLeft = body.usesLeft ?? -1;
+    const expiresInSeconds = body.expiresInSeconds ?? 30 * 24 * 60 * 60;
     const token = generateToken();
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
@@ -197,7 +220,7 @@ app.post(
       expiresAt,
     });
 
-    return c.json({ token, usesLeft, expiresAt }, 201);
+    return c.json<InvitationResult>({ token, usesLeft, expiresAt: expiresAt.toISOString() }, 201);
   },
 );
 
@@ -207,16 +230,15 @@ app.get(
   "/:campaignId/journal",
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
+  zValidator("query", journalQuerySchema),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
+    const { limit: limitRaw, before: beforeRaw } = c.req.valid("query");
     const db = createDb(c.env.DB);
-
-    const limitRaw = parseInt(c.req.query("limit") ?? "50", 10);
-    const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, limitRaw)) : 50;
-    const beforeRaw = parseInt(c.req.query("before") ?? "", 10);
+    const limit = limitRaw ?? 50;
 
     const conds = [eq(schema.journal.campaignId, campaignId)];
-    if (Number.isFinite(beforeRaw)) conds.push(lt(schema.journal.id, beforeRaw));
+    if (beforeRaw !== undefined) conds.push(lt(schema.journal.id, beforeRaw));
 
     const rows = await db
       .select()
@@ -228,7 +250,7 @@ app.get(
     const hasMore = rows.length > limit;
     const entries = rows.slice(0, limit).reverse();
 
-    return c.json({
+    return c.json<JournalPage>({
       entries: entries.map((r) => ({
         id: r.id,
         ts: r.ts,
@@ -236,8 +258,8 @@ app.get(
         who: r.who,
         whoColor: r.whoColor,
         text: r.text,
-        roll: r.roll,
-        ref: r.ref,
+        roll: r.roll as JournalEntry["roll"],
+        ref: r.ref as JournalEntry["ref"],
       })),
       hasMore,
     });
@@ -261,7 +283,7 @@ app.post("/join/:token", requireAuth, async (c) => {
     );
   }
 
-  return c.json({ campaignId: res.campaignId, role: "player" }, 201);
+  return c.json<JoinResult>({ campaignId: res.campaignId, role: "player" }, 201);
 });
 
 export default app;

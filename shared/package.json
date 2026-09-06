@@ -38,6 +38,14 @@
       "types": "./dist/sheet.d.ts",
       "import": "./dist/sheet.js"
     },
+    "./armor": {
+      "types": "./dist/armor.d.ts",
+      "import": "./dist/armor.js"
+    },
+    "./dto": {
+      "types": "./dist/dto.d.ts",
+      "import": "./dist/dto.js"
+    },
     "./ws-validation": {
       "types": "./dist/ws-validation.d.ts",
       "import": "./dist/ws-validation.js"

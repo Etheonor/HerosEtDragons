@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import type { NpcTemplate } from "@rollwith/shared/dto";
 import { createDb, schema } from "../db";
 import { eq, count } from "drizzle-orm";
+import { zValidator } from "@hono/zod-validator";
 import {
   requireAuth,
   requireMemberOf,
@@ -8,21 +10,9 @@ import {
   type AppContext,
   type AuthVariables,
 } from "../middleware";
-import { validateNpcTemplate } from "@rollwith/shared/validation";
-
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+import { npcTemplateSchema } from "@rollwith/shared/sheet";
 
 const MAX_TEMPLATES_PER_CAMPAIGN = 200;
-
-interface TemplateBody {
-  name?: string;
-  ca?: number;
-  pvMax?: number;
-  initBonus?: number;
-  color?: string;
-  conditions?: string[];
-  notes?: string;
-}
 
 /** Résolveur : campagne d'un modèle adressé par /:templateId. */
 async function templateCampaign(c: AppContext): Promise<string | null> {
@@ -50,11 +40,13 @@ function toDto(t: typeof schema.npcTemplates.$inferSelect) {
     conditions: t.conditions,
     notes: t.notes,
     source: t.source,
-    updatedAt: t.updatedAt,
+    updatedAt: t.updatedAt.toISOString(),
   };
 }
 
 // ── Liste ──────────────────────────────────────────────────────
+
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 app.get(
   "/campaigns/:campaignId",
@@ -72,7 +64,7 @@ app.get(
       .where(eq(schema.npcTemplates.campaignId, campaignId))
       .orderBy(schema.npcTemplates.name);
 
-    return c.json({ templates: rows.map(toDto) });
+    return c.json<{ templates: NpcTemplate[] }>({ templates: rows.map(toDto) });
   },
 );
 
@@ -83,25 +75,14 @@ app.post(
   requireAuth,
   requireMemberOf((c) => c.req.param("campaignId")),
   requireMj,
+  zValidator("json", npcTemplateSchema),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
 
     const db = createDb(c.env.DB);
 
-    const body = await c.req.json<TemplateBody>().catch(() => null);
-    if (!body) return c.json({ error: "JSON invalide" }, 400);
-
-    const normalized = {
-      name: (body.name ?? "").trim(),
-      ca: body.ca ?? 10,
-      pvMax: body.pvMax ?? 1,
-      initBonus: body.initBonus ?? 0,
-      color: body.color ?? "#C0392B",
-      conditions: body.conditions ?? [],
-      notes: body.notes ?? "",
-    };
-    const error = validateNpcTemplate(normalized);
-    if (error) return c.json({ error }, 400);
+    const body = c.req.valid("json");
+    const normalized = { ...body, name: body.name.trim() };
 
     const [existing] = await db
       .select({ n: count() })
@@ -127,51 +108,46 @@ app.post(
       .from(schema.npcTemplates)
       .where(eq(schema.npcTemplates.id, id))
       .limit(1);
-    return c.json(toDto(row!), 201);
+    return c.json<NpcTemplate>(toDto(row!), 201);
   },
 );
 
 // ── Modification ───────────────────────────────────────────────
 
-app.put("/:templateId", requireAuth, memberOfTemplate, requireMj, async (c) => {
-  const templateId = c.req.param("templateId");
-  if (!templateId) return c.json({ error: "Template ID manquant" }, 400);
+app.put(
+  "/:templateId",
+  requireAuth,
+  memberOfTemplate,
+  requireMj,
+  zValidator("json", npcTemplateSchema),
+  async (c) => {
+    const templateId = c.req.param("templateId");
+    if (!templateId) return c.json({ error: "Template ID manquant" }, 400);
 
-  const db = createDb(c.env.DB);
-  const [tpl] = await db
-    .select()
-    .from(schema.npcTemplates)
-    .where(eq(schema.npcTemplates.id, templateId))
-    .limit(1);
-  if (!tpl) return c.json({ error: "Modèle introuvable" }, 404);
+    const db = createDb(c.env.DB);
+    const [tpl] = await db
+      .select()
+      .from(schema.npcTemplates)
+      .where(eq(schema.npcTemplates.id, templateId))
+      .limit(1);
+    if (!tpl) return c.json({ error: "Modèle introuvable" }, 404);
 
-  const body = await c.req.json<TemplateBody>().catch(() => null);
-  if (!body) return c.json({ error: "JSON invalide" }, 400);
+    const body = c.req.valid("json");
+    const normalized = { ...body, name: body.name.trim() };
 
-  const normalized = {
-    name: (body.name ?? tpl.name).trim(),
-    ca: body.ca ?? tpl.ca,
-    pvMax: body.pvMax ?? tpl.pvMax,
-    initBonus: body.initBonus ?? tpl.initBonus,
-    color: body.color ?? tpl.color,
-    conditions: body.conditions ?? tpl.conditions,
-    notes: body.notes ?? tpl.notes,
-  };
-  const error = validateNpcTemplate(normalized);
-  if (error) return c.json({ error }, 400);
+    await db
+      .update(schema.npcTemplates)
+      .set({ ...normalized, updatedAt: new Date() })
+      .where(eq(schema.npcTemplates.id, templateId));
 
-  await db
-    .update(schema.npcTemplates)
-    .set({ ...normalized, updatedAt: new Date() })
-    .where(eq(schema.npcTemplates.id, templateId));
-
-  const [row] = await db
-    .select()
-    .from(schema.npcTemplates)
-    .where(eq(schema.npcTemplates.id, templateId))
-    .limit(1);
-  return c.json(toDto(row!));
-});
+    const [row] = await db
+      .select()
+      .from(schema.npcTemplates)
+      .where(eq(schema.npcTemplates.id, templateId))
+      .limit(1);
+    return c.json<NpcTemplate>(toDto(row!));
+  },
+);
 
 // ── Suppression ────────────────────────────────────────────────
 
