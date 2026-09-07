@@ -136,6 +136,30 @@
   let lastFogPoint: { x: number; y: number } | null = null;
   const FOG_SEND_MIN_DIST = 2.5;
 
+  // P2 (audit) : un pointermove = jusqu'à 60-120 messages/s. On n'émet qu'une
+  // fois par rAF ; la position locale (dragOverride) reste fluide sans réseau.
+  let pendingTokenMove: { id: string; x: number; y: number } | null = null;
+  let tokenMoveRaf = 0;
+
+  function scheduleTokenMove(id: string, x: number, y: number) {
+    pendingTokenMove = { id, x, y };
+    if (tokenMoveRaf) return;
+    tokenMoveRaf = requestAnimationFrame(() => {
+      tokenMoveRaf = 0;
+      const m = pendingTokenMove;
+      pendingTokenMove = null;
+      if (m) sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+    });
+  }
+
+  function flushTokenMove() {
+    if (tokenMoveRaf) cancelAnimationFrame(tokenMoveRaf);
+    tokenMoveRaf = 0;
+    const m = pendingTokenMove;
+    pendingTokenMove = null;
+    if (m) sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+  }
+
   function sendFogReveal(p: { x: number; y: number }) {
     if (lastFogPoint && Math.hypot(p.x - lastFogPoint.x, p.y - lastFogPoint.y) < FOG_SEND_MIN_DIST) {
       return;
@@ -352,7 +376,7 @@
     const { x, y } = mapXY(e);
     if (drag.kind === 'token') {
       dragOverride = { ...dragOverride, [drag.id]: { x, y } };
-      sendWs({ type: 'token.move', tokenId: drag.id, x, y });
+      scheduleTokenMove(drag.id, x, y);
     } else {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
       sendWs({ type: 'marker.move', id: drag.id, x, y });
@@ -365,6 +389,7 @@
     if (drag) {
       const { id, kind } = drag;
       drag = null;
+      flushTokenMove();
       setTimeout(() => {
         if (kind === 'token') {
           const { [id]: _drop, ...rest } = dragOverride;

@@ -186,7 +186,7 @@ function pnjCards(snapshot: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe("GameTableDO — intégration", () => {
-  it("snapshot initial : personnages + présence, PV des PNJ masqués au joueur", async () => {
+  it("snapshot initial : le MJ voit tous les personnages, un joueur ne reçoit pas les PNJ non révélés (B5)", async () => {
     await setupWorld();
     const mj = await connect(MJ);
     const mjSnap = await mj.next("snapshot");
@@ -195,11 +195,11 @@ describe("GameTableDO — intégration", () => {
     await mj.next("presence");
 
     expect((mjSnap!.characters as unknown[]).length).toBe(3);
-    expect((plSnap!.characters as unknown[]).length).toBe(3);
-    // pnjPvVisible=false (défaut) : le joueur reçoit pv:null pour les PNJ.
-    const pnj = pnjCards(plSnap!);
-    expect((pnj["pnj-1"] as { pv: number | null }).pv).toBeNull();
-    expect((pnj["pnj-1"] as { pvMax: number | null }).pvMax).toBeNull();
+    // B5 : sans pion révélé, un joueur ne reçoit pas la carte des PNJ —
+    // ni leur nom, ni leurs PV. Un simple rechargement ne rend rien visible.
+    const plChars = plSnap!.characters as { id: string; kind: string }[];
+    expect(plChars.length).toBe(1);
+    expect(plChars.map((c) => c.id)).toEqual(["pj-1"]);
     const mjPnj = pnjCards(mjSnap!);
     expect((mjPnj["pnj-1"] as { pv: number | null }).pv).toBe(7);
   });
@@ -242,7 +242,7 @@ describe("GameTableDO — intégration", () => {
     expect((err as { code: string }).code).toBe("INVALID");
   });
 
-  it("char.hp : le MJ inflige des dégâts (delta diffusé), un joueur ne touche pas aux PV d'autrui, 0 PV → journal", async () => {
+  it("char.hp : le MJ inflige des dégâts (delta diffusé), un joueur ne touche pas aux PV d'autrui, 0 PV → journal réservé au MJ (B5)", async () => {
     await setupWorld();
     const mj = await connect(MJ);
     await mj.ready();
@@ -260,11 +260,20 @@ describe("GameTableDO — intégration", () => {
     const patch = delta.patch as { characters: Record<string, { pv: number }> };
     expect(patch.characters["pnj-1"]!.pv).toBe(0);
 
-    const journal = await player.next("journal");
-    expect((journal.entry as { text: string }).text).toContain("tombe à 0 PV");
+    // Le journal « tombe à 0 PV » part vers le MJ…
+    const mjJournal = await mj.next("journal");
+    expect((mjJournal.entry as { text: string }).text).toContain("tombe à 0 PV");
+
+    // …mais pas vers le joueur (PNJ non révélé, B5), et le delta du joueur omet la carte.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(player.messages.some((m) => m.type === "journal")).toBe(false);
+    for (const d of player.messages.filter((m) => m.type === "delta")) {
+      const chars = (d.patch as { characters?: Record<string, unknown> }).characters ?? {};
+      expect(chars["pnj-1"]).toBeNull();
+    }
   });
 
-  it("char.condition : le MJ pose et retire un état (delta + journal)", async () => {
+  it("char.condition : le MJ pose un état (delta au MJ), carte et journal réservés au MJ (B5)", async () => {
     await setupWorld();
     const mj = await connect(MJ);
     await mj.ready();
@@ -272,12 +281,22 @@ describe("GameTableDO — intégration", () => {
     await player.ready();
 
     mj.send({ type: "char.condition", charId: "pnj-1", cond: "Terrorisé", on: true });
-    const delta = await player.next("delta");
-    const conds = (delta.patch as { characters: Record<string, { conditions: string[] }> })
-      .characters["pnj-1"]!.conditions;
-    expect(conds).toContain("Terrorisé");
-    const journal = await mj.next("journal");
-    expect((journal.entry as { text: string }).text).toContain("gagne l'état Terrorisé");
+    const mjDelta = await mj.next("delta");
+    const mjConds = (mjDelta.patch as { characters: Record<string, { conditions: string[] }> })
+      .characters["pnj-1"]!;
+    expect(mjConds.conditions).toContain("Terrorisé");
+
+    // Le journal qui nomme le PNJ ne part que vers le MJ…
+    const mjJournal = await mj.next("journal");
+    expect((mjJournal.entry as { text: string }).text).toContain("gagne l'état Terrorisé");
+
+    // …le joueur ne reçoit ni la carte, ni le journal (B5).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(player.messages.some((m) => m.type === "journal")).toBe(false);
+    for (const d of player.messages.filter((m) => m.type === "delta")) {
+      const chars = (d.patch as { characters?: Record<string, unknown> }).characters ?? {};
+      expect(chars["pnj-1"]).toBeNull();
+    }
   });
 
   it("combat : lancement avec initiative PNJ automatique, jet du PJ, tours qui avancent", async () => {
@@ -508,7 +527,7 @@ describe("GameTableDO — intégration", () => {
     expect(row.length).toBe(1);
   });
 
-  it("notifyCharacterUpdated (RPC) : le MJ modifie les PV en REST, la table diffuse la carte (PV masqués au joueur)", async () => {
+  it("notifyCharacterUpdated (RPC) : le MJ modifie les PV en REST, la table diffuse la carte (PNJ non révélé omis au joueur — B5)", async () => {
     await setupWorld();
     const mj = await connect(MJ);
     await mj.ready();
@@ -526,9 +545,13 @@ describe("GameTableDO — intégration", () => {
       .characters["pnj-1"]!;
     expect(mjPnj.pv).toBe(3);
 
+    // Le joueur ne reçoit pas la carte du PNJ non révélé (B5).
     const plDelta = await player.next("delta");
-    const plPnj = (plDelta.patch as { characters: Record<string, { pv: number | null }> })
-      .characters["pnj-1"]!;
-    expect(plPnj.pv).toBeNull();
+    const plChars = (
+      plDelta.patch as {
+        characters: Record<string, { pv: number | null } | null>;
+      }
+    ).characters;
+    expect(plChars["pnj-1"]).toBeNull();
   });
 });

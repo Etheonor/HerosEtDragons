@@ -8,59 +8,73 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
       "import": "./dist/index.js"
     },
     "./dice": {
       "types": "./dist/dice.d.ts",
+      "require": "./dist/dice.js",
       "import": "./dist/dice.js"
     },
     "./initiative": {
       "types": "./dist/initiative.d.ts",
+      "require": "./dist/initiative.js",
       "import": "./dist/initiative.js"
     },
     "./inventory": {
       "types": "./dist/inventory.d.ts",
+      "require": "./dist/inventory.js",
       "import": "./dist/inventory.js"
     },
     "./rules": {
       "types": "./dist/rules.d.ts",
+      "require": "./dist/rules.js",
       "import": "./dist/rules.js"
     },
     "./protocol": {
       "types": "./dist/protocol.d.ts",
+      "require": "./dist/protocol.js",
       "import": "./dist/protocol.js"
-    },
-    "./validation": {
-      "types": "./dist/validation.d.ts",
-      "import": "./dist/validation.js"
     },
     "./sheet": {
       "types": "./dist/sheet.d.ts",
+      "require": "./dist/sheet.js",
       "import": "./dist/sheet.js"
     },
     "./armor": {
       "types": "./dist/armor.d.ts",
+      "require": "./dist/armor.js",
       "import": "./dist/armor.js"
     },
     "./dto": {
       "types": "./dist/dto.d.ts",
+      "require": "./dist/dto.js",
       "import": "./dist/dto.js"
     },
     "./level-up": {
       "types": "./dist/level-up.d.ts",
+      "require": "./dist/level-up.js",
       "import": "./dist/level-up.js"
     },
     "./ws-validation": {
       "types": "./dist/ws-validation.d.ts",
+      "require": "./dist/ws-validation.js",
       "import": "./dist/ws-validation.js"
     },
     "./compendium": {
       "types": "./dist/compendium.d.ts",
+      "require": "./dist/compendium.js",
       "import": "./dist/compendium.js"
     },
     "./hd": {
       "types": "./dist/hd.d.ts",
+      "require": "./dist/hd.js",
       "import": "./dist/hd.js"
+    },
+    "./damage": {
+      "types": "./dist/damage.d.ts",
+      "require": "./dist/damage.js",
+      "import": "./dist/damage.js"
     }
   },
   "scripts": {

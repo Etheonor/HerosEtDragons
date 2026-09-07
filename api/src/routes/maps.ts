@@ -207,10 +207,24 @@ app.get("/:mapId/image", requireAuth, memberOfMap, async (c) => {
   const obj = await c.env.MAPS.get(map.r2Key);
   if (!obj) return c.json({ error: "Image introuvable" }, 404);
 
+  // S3 (audit) : servir le type SNIFFÉ (l'extension du r2Key = la signature
+  // validée à l'upload), pas le Content-Type déclaré par le client — et le
+  // nosniff global protège contre tout détournement de type MIME.
+  const ext = map.r2Key.split(".").pop();
+  const contentType =
+    ext === "png"
+      ? "image/png"
+      : ext === "jpg"
+        ? "image/jpeg"
+        : ext === "webp"
+          ? "image/webp"
+          : "application/octet-stream";
+
   return new Response(obj.body, {
     headers: {
-      "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      "Content-Type": contentType,
       "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 });

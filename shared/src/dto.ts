@@ -83,6 +83,7 @@ export interface CharacterDetail {
   conditions: string[];
   canEdit: boolean;
   role: "mj" | "player";
+  updatedAt: string;
 }
 
 // ── Cartes ─────────────────────────────────────────────────────

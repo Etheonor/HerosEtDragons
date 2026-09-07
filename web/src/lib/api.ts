@@ -113,10 +113,11 @@ export const api = {
       fetchJson<{ inspiration: boolean }>(`/api/characters/${id}/inspiration`, {
         method: "PATCH",
       }),
-    updateSheet: (id: string, sheet: CharacterSheet) =>
-      fetchJson<{ ok: true }>(`/api/characters/${id}/sheet`, {
+    updateSheet: (id: string, sheet: CharacterSheet, ifMatch?: string) =>
+      fetchJson<{ ok: true; updatedAt: string }>(`/api/characters/${id}/sheet`, {
         method: "PUT",
         body: JSON.stringify(sheet),
+        headers: ifMatch ? { "If-Match": ifMatch } : undefined,
       }),
   },
   compendium: {

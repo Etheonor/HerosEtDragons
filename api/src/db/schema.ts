@@ -105,17 +105,21 @@ export const allowedUsers = sqliteTable("allowed_users", {
     .notNull(),
 });
 
-export const invitations = sqliteTable("invitations", {
-  token: text("token").primaryKey(),
-  campaignId: text("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  usesLeft: integer("uses_left").notNull().default(1),
-  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-});
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    token: text("token").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    usesLeft: integer("uses_left").notNull().default(1),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("invitations_campaign_id_idx").on(table.campaignId)],
+);
 
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
@@ -146,40 +150,51 @@ export const members = sqliteTable(
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
-  (table) => [primaryKey({ columns: [table.campaignId, table.userId] })],
+  (table) => [
+    primaryKey({ columns: [table.campaignId, table.userId] }),
+    index("members_user_id_idx").on(table.userId),
+  ],
 );
 
-export const characters = sqliteTable("characters", {
-  id: text("id").primaryKey(),
-  campaignId: text("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
-  kind: text("kind", { enum: ["pj", "pnj"] }).notNull(),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#C0392B"),
-  active: integer("active", { mode: "boolean" }).default(true).notNull(),
-  sheet: text("sheet", { mode: "json" }).$type<CharacterSheet>().notNull(),
-  pv: integer("pv").notNull().default(0),
-  pvMax: integer("pv_max").notNull().default(0),
-  pvTemp: integer("pv_temp").notNull().default(0),
-  conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-});
+export const characters = sqliteTable(
+  "characters",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    kind: text("kind", { enum: ["pj", "pnj"] }).notNull(),
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#C0392B"),
+    active: integer("active", { mode: "boolean" }).default(true).notNull(),
+    sheet: text("sheet", { mode: "json" }).$type<CharacterSheet>().notNull(),
+    pv: integer("pv").notNull().default(0),
+    pvMax: integer("pv_max").notNull().default(0),
+    pvTemp: integer("pv_temp").notNull().default(0),
+    conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("characters_campaign_id_idx").on(table.campaignId)],
+);
 
-export const maps = sqliteTable("maps", {
-  id: text("id").primaryKey(),
-  campaignId: text("campaign_id")
-    .notNull()
-    .references(() => campaigns.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  r2Key: text("r2_key"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-});
+export const maps = sqliteTable(
+  "maps",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    r2Key: text("r2_key"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("maps_campaign_id_idx").on(table.campaignId)],
+);
 
 export const compendiumEntries = sqliteTable(
   "compendium_entries",

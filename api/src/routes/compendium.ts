@@ -47,12 +47,15 @@ const shareBody = zValidator(
   }),
 );
 
+function originWhere(campaignId: string) {
+  // Homebrew : restreint à la campagne courante ; le DRS reste partagé.
+  return sql`(origin = 'drs' OR (origin = 'maison' AND campaign_id = ${campaignId}))`;
+}
+
 function visibilityWhere(isMj: boolean, campaignId: string) {
-  // public, ou mj si le demandeur est MJ de cette campagne. Homebrew : restreint
-  // à la campagne courante.
+  // public, ou mj si le demandeur est MJ de cette campagne.
   const vis = isMj ? sql`1=1` : sql`${schema.compendiumEntries.visibility} = 'public'`;
-  const origin = sql`(origin = 'drs' OR (origin = 'maison' AND campaign_id = ${campaignId}))`;
-  return and(vis, origin);
+  return and(vis, originWhere(campaignId));
 }
 
 // ── Catégories + compteurs visibles ────────────────────────────
@@ -150,20 +153,26 @@ app.get("/entry/:category/:slug", requireAuth, memberOfCampaign, campaignQuery, 
 
   const db = createDb(c.env.DB);
 
+  // B4 (audit) : composer au lieu de dupliquer — le filtre d'ORIGINE (partagé
+  // avec /entries et /categories) est réutilisé ici, pour que la clé globale
+  // <category>/<slug> ne permette pas de lire le homebrew d'une AUTRE campagne.
+  const publicOrShared = isMj
+    ? sql`1=1`
+    : sql`(${schema.compendiumEntries.visibility} = 'public'
+      OR exists (
+        select 1 from compendium_shares
+        where compendium_shares.campaign_id = ${campaignId}
+          and compendium_shares.category = ${schema.compendiumEntries.category}
+          and compendium_shares.slug = ${schema.compendiumEntries.slug}
+      ))`;
+
   const [row] = await db
     .select()
     .from(schema.compendiumEntries)
     .where(
       and(
-        isMj
-          ? sql`1=1`
-          : sql`(${schema.compendiumEntries.visibility} = 'public'
-            OR exists (
-              select 1 from compendium_shares
-              where compendium_shares.campaign_id = ${campaignId}
-                and compendium_shares.category = ${schema.compendiumEntries.category}
-                and compendium_shares.slug = ${schema.compendiumEntries.slug}
-            ))`,
+        originWhere(campaignId),
+        publicOrShared,
         eq(schema.compendiumEntries.category, category),
         eq(schema.compendiumEntries.slug, slug),
       ),

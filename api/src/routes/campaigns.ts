@@ -6,13 +6,24 @@ import type {
   JournalPage,
   TableSettings,
 } from "@rollwith/shared/dto";
-import type { JournalEntry } from "@rollwith/shared/protocol";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
-import { eq, and, lt, desc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
 import { consumeInvitation } from "../invitations";
+import type { GameTableDO } from "../do/game-table";
+
+/** Stub RPC du DO d'une campagne — le journal (audit P3) et les notifications
+ *  de settings (B1) transitent par lui plutôt que par une lecture D1 directe. */
+function tableStub(c: AppContextLike, campaignId: string): DurableObjectStub<GameTableDO> {
+  const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+  return ns.get(ns.idFromName(campaignId));
+}
+
+interface AppContextLike {
+  env: Env;
+}
 
 const settingsPatchSchema = z.object({
   pnjPvVisible: z.boolean().optional(),
@@ -71,11 +82,13 @@ app.get("/", requireAuth, async (c) => {
 
 // ── Créer une campagne (→ MJ) ─────────────────────────────────
 
-app.post("/", requireAuth, async (c) => {
-  const body = await c.req.json<{ name?: string }>();
-  if (!body.name?.trim()) {
-    return c.json({ error: "Nom de campagne requis" }, 400);
-  }
+const createCampaignBody = zValidator(
+  "json",
+  z.object({ name: z.string().trim().min(1).max(100) }),
+);
+
+app.post("/", requireAuth, createCampaignBody, async (c) => {
+  const body = c.req.valid("json");
 
   const db = createDb(c.env.DB);
   const userId = c.get("user").id;
@@ -83,7 +96,7 @@ app.post("/", requireAuth, async (c) => {
 
   await db.insert(schema.campaigns).values({
     id,
-    name: body.name.trim(),
+    name: body.name,
     ownerId: userId,
     settings: DEFAULT_SETTINGS,
   });
@@ -94,10 +107,7 @@ app.post("/", requireAuth, async (c) => {
     role: "mj",
   });
 
-  return c.json<{ id: string; name: string; role: "mj" }>(
-    { id, name: body.name.trim(), role: "mj" },
-    201,
-  );
+  return c.json<{ id: string; name: string; role: "mj" }>({ id, name: body.name, role: "mj" }, 201);
 });
 
 // ── Détail d'une campagne ─────────────────────────────────────
@@ -178,6 +188,14 @@ app.patch(
       .set({ settings: newSettings })
       .where(eq(schema.campaigns.id, campaignId));
 
+    // Invalide le cache du DO (audit B1) : sans ça, les joueurs déjà connectés
+    // gardaient l'ancien réglage jusqu'à reconnexion.
+    try {
+      await tableStub(c, campaignId).notifySettingsUpdated();
+    } catch {
+      /* table fermée : le prochain snapshot verra le nouveau réglage */
+    }
+
     return c.json<{ settings: TableSettings }>({ settings: newSettings });
   },
 );
@@ -225,6 +243,9 @@ app.post(
 );
 
 // ── Journal paginé (R7.3) : avant = id de la plus ancienne entrée vue ──
+// Le journal vit dans le SQLite du Durable Object (audit P3) : la route
+// devient une RPC au lieu d'une lecture D1 directe (retire aussi les entrées
+// visibility:"mj" pour un joueur — B5).
 
 app.get(
   "/:campaignId/journal",
@@ -233,36 +254,11 @@ app.get(
   zValidator("query", journalQuerySchema),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
-    const { limit: limitRaw, before: beforeRaw } = c.req.valid("query");
-    const db = createDb(c.env.DB);
-    const limit = limitRaw ?? 50;
+    const { limit, before } = c.req.valid("query");
+    const role = c.get("memberRole");
 
-    const conds = [eq(schema.journal.campaignId, campaignId)];
-    if (beforeRaw !== undefined) conds.push(lt(schema.journal.id, beforeRaw));
-
-    const rows = await db
-      .select()
-      .from(schema.journal)
-      .where(and(...conds))
-      .orderBy(desc(schema.journal.id))
-      .limit(limit + 1);
-
-    const hasMore = rows.length > limit;
-    const entries = rows.slice(0, limit).reverse();
-
-    return c.json<JournalPage>({
-      entries: entries.map((r) => ({
-        id: r.id,
-        ts: r.ts,
-        kind: r.kind,
-        who: r.who,
-        whoColor: r.whoColor,
-        text: r.text,
-        roll: r.roll as JournalEntry["roll"],
-        ref: r.ref as JournalEntry["ref"],
-      })),
-      hasMore,
-    });
+    const page = await tableStub(c, campaignId).getJournalPage({ role, limit, before });
+    return c.json<JournalPage>(page);
   },
 );
 
@@ -273,7 +269,16 @@ app.post("/join/:token", requireAuth, async (c) => {
   if (!token) return c.json({ error: "Token manquant" }, 400);
 
   const db = createDb(c.env.DB);
-  const res = await consumeInvitation(db, token, c.get("user").id, c.get("discordId"));
+  const userId = c.get("user").id;
+  // discordId ne sert qu'ici (audit N2) : plus de SELECT account sur chaque
+  // requête authentifiée dans requireAuth, on le charge à la demande.
+  const [acct] = await db
+    .select({ accountId: schema.account.accountId })
+    .from(schema.account)
+    .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, "discord")))
+    .limit(1);
+
+  const res = await consumeInvitation(db, token, userId, acct?.accountId ?? null);
   if (!res.ok) {
     return c.json(
       {
@@ -285,5 +290,72 @@ app.post("/join/:token", requireAuth, async (c) => {
 
   return c.json<JoinResult>({ campaignId: res.campaignId, role: "player" }, 201);
 });
+
+// ── Révoquer une invitation (MJ) — audit S5 ────────────────────
+
+app.delete(
+  "/:campaignId/invitations/:token",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const token = c.req.param("token");
+    if (!token) return c.json({ error: "Token manquant" }, 400);
+
+    const db = createDb(c.env.DB);
+    await db
+      .delete(schema.invitations)
+      .where(
+        and(eq(schema.invitations.token, token), eq(schema.invitations.campaignId, campaignId)),
+      );
+
+    return c.json<{ ok: true }>({ ok: true });
+  },
+);
+
+// ── Supprimer une campagne (MJ) — audit S5 ─────────────────────
+// Les ON DELETE CASCADE purgent les lignes D1 (personnages, cartes, membres,
+// invitations…) ; il reste à purger les images R2 des cartes (jamais fait
+// jusqu'ici) et l'état vivant du Durable Object.
+
+app.delete(
+  "/:campaignId",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    const db = createDb(c.env.DB);
+
+    const [campaign] = await db
+      .select({ ownerId: schema.campaigns.ownerId })
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, campaignId))
+      .limit(1);
+    if (!campaign) return c.json({ error: "Campagne introuvable" }, 404);
+    if (campaign.ownerId !== c.get("user").id) {
+      return c.json({ error: "Seul le propriétaire peut supprimer la campagne" }, 403);
+    }
+
+    const maps = await db
+      .select({ r2Key: schema.maps.r2Key })
+      .from(schema.maps)
+      .where(eq(schema.maps.campaignId, campaignId));
+    for (const m of maps) {
+      if (m.r2Key) await c.env.MAPS.delete(m.r2Key);
+    }
+
+    await db.delete(schema.campaigns).where(eq(schema.campaigns.id, campaignId));
+
+    try {
+      await tableStub(c, campaignId).purgeAll();
+    } catch {
+      /* DO absent : rien à purger côté état vivant */
+    }
+
+    return c.json<{ ok: true }>({ ok: true });
+  },
+);
 
 export default app;

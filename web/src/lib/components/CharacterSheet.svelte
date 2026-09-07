@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { getNextXpThreshold, type CaracKey } from '$lib/char-utils';
-  import { ARMOR_KINDS, type ArmorKind, type CharacterDetail, type CharacterSheet } from '$lib/api';
+  import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
@@ -15,6 +15,7 @@
     type Carac,
   } from '@rollwith/shared/hd';
   import { applyLevelUp } from '@rollwith/shared/level-up';
+  import { normalizeSheet } from '@rollwith/shared/sheet';
   import { xpThreshold } from '$shared/rules';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary, CARAC_LABELS_SHORT } from '$lib/hd-text';
@@ -40,10 +41,6 @@
     const x = Math.round(Number(v));
     return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : fb;
   }
-  function txt(v: unknown, max: number, fb = ''): string {
-    return v === undefined || v === null ? fb : String(v).slice(0, max);
-  }
-
   let sheet = $state<CharacterSheet>(char.sheet);
 
   // ── Portraits ────────────────────────────────────────────────
@@ -194,6 +191,9 @@
   let saveState = $state<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   let saveError = $state('');
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // If-Match (audit S6) : évite que deux onglets/deux personnes s'écrasent
+  // silencieusement en dernier-écrivain-gagne.
+  let sheetUpdatedAt = $state(char.updatedAt);
 
   function touch() {
     if (readonly) return;
@@ -211,7 +211,8 @@
     if (readonly || saveState !== 'dirty') return;
     saveState = 'saving';
     try {
-      await api.characters.updateSheet(char.id, normalized());
+      const res = await api.characters.updateSheet(char.id, normalized(), sheetUpdatedAt);
+      sheetUpdatedAt = res.updatedAt;
       saveState = 'saved';
       setTimeout(() => {
         if (saveState === 'saved') saveState = 'idle';
@@ -226,100 +227,11 @@
     if (saveState === 'dirty') void flush();
   });
 
-  /** Copie normalisée (bornes, types) de la feuille pour l'envoi serveur. */
+  /** Copie normalisée (bornes, types) de la feuille pour l'envoi serveur.
+   *  Le clamp vit dans shared/sheet.ts (SHEET_BOUNDS) — audit N1 : plus de
+   *  bornes réencodées à la main ici, une seule source avec le schéma Zod. */
   function normalized(): CharacterSheet {
-    const s = sheet;
-    return {
-      identite: {
-        nom: txt(s.identite.nom, 100) || 'Sans nom',
-        race: txt(s.identite.race, 100),
-        classe: txt(s.identite.classe, 100),
-        niveau: num(s.identite.niveau, 1, 20, 1),
-        historique: txt(s.identite.historique, 100),
-        alignement: txt(s.identite.alignement, 60),
-        xp: num(s.identite.xp, 0, 5_000_000, 0),
-        citation: s.identite.citation === undefined ? undefined : txt(s.identite.citation, 4000),
-      },
-      caracs: {
-        for: num(s.caracs.for, 1, 30, 10),
-        dex: num(s.caracs.dex, 1, 30, 10),
-        con: num(s.caracs.con, 1, 30, 10),
-        int: num(s.caracs.int, 1, 30, 10),
-        sag: num(s.caracs.sag, 1, 30, 10),
-        cha: num(s.caracs.cha, 1, 30, 10),
-      },
-      saveProficiencies: { ...s.saveProficiencies },
-      skillProficiencies: { ...s.skillProficiencies },
-      ca: num(s.ca, 0, 40, 10),
-      vitesse: txt(s.vitesse, 40),
-      initiativeBonus: num(s.initiativeBonus, -5, 20, 0),
-      pvMax: num(s.pvMax, 0, 1000, 0),
-      desDeVie: {
-        faces: num(s.desDeVie.faces, 4, 12, 8),
-        total: num(s.desDeVie.total, 0, 21, 1),
-        restants: num(s.desDeVie.restants, 0, 21, 1),
-      },
-      deathSaves: {
-        successes: num(s.deathSaves.successes, 0, 3, 0),
-        failures: num(s.deathSaves.failures, 0, 3, 0),
-      },
-      inspiration: !!s.inspiration,
-      attaques: s.attaques.slice(0, 30).map((a) => ({
-        id: a.id,
-        name: txt(a.name, 100) || 'Attaque',
-        bonus: num(a.bonus, -5, 30, 0),
-        damage: txt(a.damage, 40),
-      })),
-      armures: (s.armures ?? []).slice(0, 30).map((a) => ({
-        id: a.id,
-        name: txt(a.name, 100) || 'Armure',
-        ca: num(a.ca, 0, 40, 10),
-        kind: ARMOR_KINDS.includes(a.kind as ArmorKind) ? (a.kind as ArmorKind) : 'legere',
-        equipee: !!a.equipee,
-      })),
-      caAuto: s.caAuto,
-      sorts: {
-        caracIncantation: s.sorts.caracIncantation,
-        connus: s.sorts.connus.slice(0, 200).map((sp) => ({
-          slug: txt(sp.slug, 100).replace(/\s+/g, '-').toLowerCase() || 'sort',
-          level: num(sp.level, 0, 9, 0),
-          name: sp.name === undefined ? undefined : txt(sp.name, 100),
-        })),
-        emplacements: s.sorts.emplacements
-          .slice(0, 10)
-          .map((e) => ({
-            level: num(e.level, 0, 9, 1),
-            max: num(e.max, 0, 16, 0),
-            used: num(e.used, 0, 16, 0),
-          }))
-          .sort((a, b) => a.level - b.level),
-      },
-      capacites: s.capacites.slice(0, 60).map((c) => ({
-        id: c.id,
-        name: txt(c.name, 100) || 'Capacité',
-        description: txt(c.description, 4000),
-      })),
-      personnalite: {
-        traits: s.personnalite.traits ? txt(s.personnalite.traits, 4000) : undefined,
-        ideaux: s.personnalite.ideaux ? txt(s.personnalite.ideaux, 4000) : undefined,
-        liens: s.personnalite.liens ? txt(s.personnalite.liens, 4000) : undefined,
-        defauts: s.personnalite.defauts ? txt(s.personnalite.defauts, 4000) : undefined,
-      },
-      languesEtMaitrises: txt(s.languesEtMaitrises, 4000),
-      portrait: s.portrait ?? null,
-      equipement: {
-        bourse: {
-          po: num(s.equipement.bourse.po, 0, 1_000_000, 0),
-          pa: num(s.equipement.bourse.pa, 0, 1_000_000, 0),
-          pc: num(s.equipement.bourse.pc, 0, 1_000_000, 0),
-        },
-        objets: s.equipement.objets.slice(0, 200).map((o) => ({
-          name: txt(o.name, 200) || 'Objet',
-          qty: num(o.qty, 0, 9999, 1),
-        })),
-      },
-      couleurPion: txt(s.couleurPion, 20) || '#C0392B',
-    };
+    return normalizeSheet(sheet);
   }
 
   function commitNiveau() {

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { createDb, schema } from "../db";
 import { createSheet } from "@rollwith/shared/sheet";
+import { applyDamage } from "@rollwith/shared/damage";
 import type {
   JournalEntry,
   Marker,
@@ -21,9 +22,10 @@ import {
   formatExpression,
 } from "@rollwith/shared/dice";
 import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
+import type { JournalPage } from "@rollwith/shared/dto";
 import { sortInitiative, type InitiativeEntry } from "@rollwith/shared/initiative";
 import { clientMessageSchema, type ClientMessageInput } from "@rollwith/shared/ws-validation";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, asc } from "drizzle-orm";
 
 interface WsAttachment {
   userId: string;
@@ -54,6 +56,20 @@ const MAX_CHAT_LENGTH = 2000;
 const FOG_REVEAL_RADIUS_PCT = 9;
 const FOG_REVEAL_MIN_SPACING_PCT = 3;
 const FOG_MAX_REVEALS = 600;
+
+// Sécurité (audit S1/S2) : un membre authentifié reste borné.
+const MAX_RAW_MESSAGE_BYTES = 32_000;
+const MAX_SOCKETS_PER_USER = 4;
+const RATE_LIMIT_WINDOW_MS = 10_000;
+const RATE_LIMIT_MAX_MESSAGES = 60;
+
+// Perf (audit P2) : la persistance des déplacements de pion est débounced,
+// seule la diffusion reste immédiate.
+const TOKEN_PERSIST_DEBOUNCE_MS = 500;
+
+// Perf (audit P3) : le journal vit dans le SQLite du DO (voir plus bas) ;
+// fenêtre glissante en attendant une politique d'archivage R2 dédiée.
+const JOURNAL_RETENTION_MAX = 5000;
 
 /** Messages validés (ws-validation) — chaque handler reçoit son payload typé. */
 type DiceRollMsg = Extract<ClientMessageInput, { type: "dice.roll" }>;
@@ -94,6 +110,13 @@ export class GameTableDO extends DurableObject<Env> {
   private npcIds: Set<string> = new Set();
   private npcIdsLoaded = false;
   private cachedSettings: TableSettings | null = null;
+  private journalReady = false;
+  private journalImported = false;
+  private tokenPersistDirty = false;
+  private tokenPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Fenêtre glissante par utilisateur (audit S1) — remise à zéro naturelle :
+   *  les timestamps hors fenêtre sont purgés à chaque appel. */
+  private rateLimitHits: Map<string, number[]> = new Map();
 
   private getDb(): ReturnType<typeof createDb> {
     if (!this.db) {
@@ -171,15 +194,50 @@ export class GameTableDO extends DurableObject<Env> {
     return this.cachedSettings;
   }
 
+  /**
+   * RPC appelé par PATCH /api/campaigns/:id/settings (audit B1) : le cache
+   * `cachedSettings` n'était jamais invalidé, les joueurs déjà connectés
+   * gardaient l'ancien réglage (ex : PV des PNJ) jusqu'à reconnexion.
+   */
+  async notifySettingsUpdated(): Promise<void> {
+    this.cachedSettings = null;
+    if (this.ctx.getWebSockets().length === 0) return;
+    await this.ensureCampaignId();
+    const settings = await this.ensureSettings();
+    this.broadcastAll({ type: "delta", patch: { settings: settings ?? DEFAULT_SETTINGS } });
+  }
+
   /** Les PV des PNJ ne quittent JAMAIS le serveur quand pnjPvVisible=false (§5.3). */
   private hidePnjPvFor(role: "mj" | "player"): boolean {
     return role === "player" && !(this.cachedSettings?.pnjPvVisible ?? false);
   }
 
+  /**
+   * B5 : un PNJ est visible par les joueurs s'il a un pion sur la carte
+   * active ET que ce pion est révélé (hors brouillard, ou brouillard éteint).
+   * Un PJ est toujours visible. Synchrone (liveState + npcIds préchargés).
+   */
+  private isCharVisibleToPlayers(charId: string, state: LiveState): boolean {
+    if (!this.npcIds.has(charId)) return true;
+    const token = this.tokensOf(state)[charId];
+    if (!token) return false;
+    const fog = state.mapId ? state.fog[state.mapId] : undefined;
+    return this.isRevealed(token.x, token.y, fog);
+  }
+
+  /** Visibilité à donner à une entrée de journal qui nomme charId (B5) :
+   *  « mj » si c'est un PNJ actuellement non révélé, « all » sinon. */
+  private journalVisibilityFor(charId: string): "all" | "mj" {
+    const state = this.liveState;
+    if (!state) return "all";
+    return this.isCharVisibleToPlayers(charId, state) ? "all" : "mj";
+  }
+
   private filterCharactersForPlayers(
     characters: Record<string, Partial<CharacterCard> | null>,
   ): Record<string, Partial<CharacterCard> | null> {
-    if (!this.hidePnjPvFor("player")) return characters;
+    const hidePv = this.hidePnjPvFor("player");
+    const state = this.liveState;
     const out: Record<string, Partial<CharacterCard> | null> = {};
     for (const [id, val] of Object.entries(characters)) {
       if (!val) {
@@ -187,9 +245,82 @@ export class GameTableDO extends DurableObject<Env> {
         continue;
       }
       const isPnj = val.kind === "pnj" || (!val.kind && this.npcIds.has(id));
-      out[id] = isPnj ? { ...val, pv: null, pvMax: null } : val;
+      // B5 : un PNJ non révélé est entièrement omis (pas juste ses PV masqués).
+      if (isPnj && state && !this.isCharVisibleToPlayers(id, state)) {
+        out[id] = null;
+        continue;
+      }
+      out[id] = isPnj && hidePv ? { ...val, pv: null, pvMax: null } : val;
     }
     return out;
+  }
+
+  /** B5 : mêmes filtres que filterCharactersForPlayers, appliqués à l'état de
+   *  combat — participants/order/scores/rollIndex ne fuient pas un PNJ caché.
+   *  Le tour actif est reprojeté sur le nouvel ordre filtré (même geste que
+   *  removeParticipant : au pire l'actif caché laisse la mise en avant au
+   *  premier participant visible). */
+  private filterCombatForPlayers(combat: CombatState | null, state: LiveState): CombatState | null {
+    if (!combat) return combat;
+    const visible = (id: string) => this.isCharVisibleToPlayers(id, state);
+    const participants = combat.participants.filter(visible);
+    const scores = Object.fromEntries(Object.entries(combat.scores).filter(([id]) => visible(id)));
+    const rollIndex = Object.fromEntries(
+      Object.entries(combat.rollIndex).filter(([id]) => visible(id)),
+    );
+    if (!combat.order) return { ...combat, participants, scores, rollIndex };
+    const activeId = combat.order[combat.turn];
+    const order = combat.order.filter(visible);
+    const turn = activeId && visible(activeId) ? Math.max(0, order.indexOf(activeId)) : 0;
+    return { ...combat, participants, scores, rollIndex, order, turn };
+  }
+
+  /** Recharge les CharacterCard de la BDD pour les ids donnés. */
+  private async loadCharacterCards(ids: string[]): Promise<Record<string, CharacterCard>> {
+    if (ids.length === 0) return {};
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(schema.characters)
+      .where(
+        and(inArray(schema.characters.id, ids), eq(schema.characters.campaignId, this.campaignId)),
+      );
+    const out: Record<string, CharacterCard> = {};
+    for (const ch of rows) {
+      out[ch.id] = {
+        id: ch.id,
+        kind: ch.kind,
+        ownerId: ch.ownerId,
+        name: ch.name,
+        color: ch.color,
+        active: ch.active,
+        portrait: ch.sheet.portrait ?? null,
+        ca: ch.sheet.ca,
+        sub: "",
+        initiativeBonus: ch.sheet.initiativeBonus,
+        pv: ch.pv,
+        pvMax: ch.pvMax,
+        pvTemp: ch.pvTemp,
+        conditions: ch.conditions,
+      };
+    }
+    return out;
+  }
+
+  /**
+   * B5 : pousse aux joueurs le changement de visibilité d'un ou plusieurs PNJ
+   * (fog, déplacement de pion, changement de carte…) — recalcule et renvoie la
+   * carte complète (arbitrage §7 : coût réseau négligeable à cette échelle,
+   * bien plus simple que des deltas de visibilité). `ids` par défaut = tous
+   * les PNJ connus (fog/carte affectent potentiellement tout le monde).
+   */
+  private async broadcastPnjVisibility(ids?: string[]): Promise<void> {
+    const targets = ids ?? [...this.npcIds];
+    if (targets.length === 0) return;
+    const cards = await this.loadCharacterCards(targets);
+    const patch: Record<string, CharacterCard | null> = {};
+    for (const id of targets) patch[id] = cards[id] ?? null;
+    this.broadcastRoleAware({ characters: patch });
   }
 
   private async ensureNpcIds(): Promise<void> {
@@ -212,6 +343,44 @@ export class GameTableDO extends DurableObject<Env> {
     return this.liveState;
   }
 
+  /** Variante de patchState qui débounce l'écriture storage (audit P2) —
+   *  réservée à token.move : la diffusion reste immédiate, seule la
+   *  persistance est différée (un pion mal persisté après un crash est sans
+   *  gravité ; une écriture DO par frame ne l'est pas). */
+  private patchStateInMemory(patch: Partial<LiveState>): LiveState {
+    const state = this.liveState ?? defaultLiveState();
+    this.liveState = { ...state, ...patch };
+    this.tokenPersistDirty = true;
+    if (!this.tokenPersistTimer) {
+      this.tokenPersistTimer = setTimeout(() => {
+        this.tokenPersistTimer = null;
+        void this.flushTokenPersist();
+      }, TOKEN_PERSIST_DEBOUNCE_MS);
+    }
+    return this.liveState;
+  }
+
+  private async flushTokenPersist(): Promise<void> {
+    if (this.tokenPersistTimer) {
+      clearTimeout(this.tokenPersistTimer);
+      this.tokenPersistTimer = null;
+    }
+    if (!this.tokenPersistDirty || !this.liveState) return;
+    this.tokenPersistDirty = false;
+    await this.ctx.storage.put("liveState", this.liveState);
+  }
+
+  /** Compteur à fenêtre glissante par utilisateur (audit S1). */
+  private isRateLimited(userId: string): boolean {
+    const now = Date.now();
+    const hits = (this.rateLimitHits.get(userId) ?? []).filter(
+      (t) => now - t < RATE_LIMIT_WINDOW_MS,
+    );
+    hits.push(now);
+    this.rateLimitHits.set(userId, hits);
+    return hits.length > RATE_LIMIT_MAX_MESSAGES;
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const upgrade = request.headers.get("Upgrade");
@@ -231,6 +400,18 @@ export class GameTableDO extends DurableObject<Env> {
     const derivedId = this.env.GAME_TABLE.idFromName(campaignId).toString();
     if (derivedId !== this.ctx.id.toString()) {
       return new Response("Forbidden", { status: 403 });
+    }
+
+    // Plafond de sockets par utilisateur (audit S1) : borne le coût d'un
+    // membre qui ouvrirait autant de connexions qu'il veut sur la même table.
+    if (userId) {
+      const existing = this.ctx.getWebSockets().filter((ws) => {
+        const att = ws.deserializeAttachment() as WsAttachment | null;
+        return att?.userId === userId;
+      }).length;
+      if (existing >= MAX_SOCKETS_PER_USER) {
+        return new Response("Trop de connexions simultanées", { status: 429 });
+      }
     }
 
     this.campaignId = campaignId;
@@ -285,6 +466,11 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   private async handleWsMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    // S2 : borne la taille BRUTE avant tout parse — un message de plusieurs
+    // Mo ne doit pas être décodé/parsé en mémoire dans le DO.
+    const rawLength = typeof message === "string" ? message.length : message.byteLength;
+    if (rawLength > MAX_RAW_MESSAGE_BYTES) return;
+
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let msg: Record<string, unknown>;
     try {
@@ -300,6 +486,7 @@ export class GameTableDO extends DurableObject<Env> {
     await this.getState();
     await this.ensureNpcIds();
     await this.ensureSettings();
+    await this.ensureLegacyJournalImport();
 
     // A3 : tout payload est revalidé par le schéma partagé (bornes, types,
     // defaults) avant traitement — plus aucun cast manuel dans les handlers.
@@ -313,6 +500,15 @@ export class GameTableDO extends DurableObject<Env> {
           code: "INVALID",
           msg: `${path ? `${path} : ` : ""}${issue?.message ?? "Message invalide"}`,
         }),
+      );
+      return;
+    }
+
+    // S1 : compteur à fenêtre glissante par utilisateur — un membre qui boucle
+    // sur chat.say/token.move ne doit pas pouvoir saturer D1/le broadcast.
+    if (this.isRateLimited(attachment.userId)) {
+      ws.send(
+        JSON.stringify({ type: "error", code: "RATE_LIMITED", msg: "Trop de messages, ralentis" }),
       );
       return;
     }
@@ -424,6 +620,9 @@ export class GameTableDO extends DurableObject<Env> {
   ): Promise<void> {
     // Le socket est déjà fermé ici : rappeler close() avec un code réservé
     // (1005/1006, fermetures navigateur) lève une InvalidAccessError.
+    // Flush immédiat de la persistance débouncée (audit P2) : ne pas perdre
+    // la dernière position d'un pion si plus personne ne bouge après ça.
+    await this.flushTokenPersist();
     this.broadcastPresence();
   }
 
@@ -667,24 +866,27 @@ export class GameTableDO extends DurableObject<Env> {
 
     if (att.role !== "mj" && char.ownerId !== att.userId) return;
 
-    let newPv = char.pv + delta;
-    if (newPv < 0) newPv = 0;
-    if (newPv > char.pvMax) newPv = char.pvMax;
+    // Les PV temporaires absorbent les dégâts avant les PV réels (audit B3).
+    const { pv: newPv, pvTemp: newPvTemp } = applyDamage(char.pv, char.pvTemp, char.pvMax, delta);
 
     await db
       .update(schema.characters)
-      .set({ pv: newPv, updatedAt: new Date() })
+      .set({ pv: newPv, pvTemp: newPvTemp, updatedAt: new Date() })
       .where(
         and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
       );
 
     if (newPv === 0 && char.pv > 0) {
+      // B5 : ne pas nommer un PNJ non révélé dans le journal des joueurs.
+      const visibility = this.journalVisibilityFor(charId);
       const entry = this.makeJournalEntry("system", null, null, `✦ ${char.name} tombe à 0 PV !`);
-      await this.appendJournal(entry);
-      this.broadcastAll({ type: "journal", entry });
+      this.appendJournal(entry, visibility);
+      this.broadcastJournal(entry, visibility);
     }
 
-    this.broadcastRoleAware({ characters: { [charId]: { pv: newPv, pvMax: char.pvMax } } });
+    this.broadcastRoleAware({
+      characters: { [charId]: { pv: newPv, pvMax: char.pvMax, pvTemp: newPvTemp } },
+    });
   }
 
   private async handleCharCondition(ws: WebSocket, att: WsAttachment, msg: CharConditionMsg) {
@@ -712,15 +914,16 @@ export class GameTableDO extends DurableObject<Env> {
         and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
       );
 
+    const visibility = this.journalVisibilityFor(charId);
     const entry = this.makeJournalEntry(
       "system",
       att.name ?? null,
       att.color,
       `✦ ${char.name} ${on ? "gagne" : "perd"} l'état ${cond}.`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
-    this.broadcastAll({ type: "delta", patch: { characters: { [charId]: { conditions } } } });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
+    this.broadcastRoleAware({ characters: { [charId]: { conditions } } });
   }
 
   private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: NpcAddMsg) {
@@ -784,15 +987,6 @@ export class GameTableDO extends DurableObject<Env> {
       conditions: [],
     };
 
-    const entry = this.makeJournalEntry(
-      "system",
-      att.name ?? null,
-      att.color,
-      `✦ Le MJ ajoute ${name} sur la carte.`,
-    );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
-
     const patch: Record<string, unknown> = { characters: { [id]: card } };
     if (x !== null && y !== null) {
       const state = await this.getState();
@@ -808,6 +1002,17 @@ export class GameTableDO extends DurableObject<Env> {
         await this.addLateParticipant(id, init);
       }
     }
+
+    // B5 : le journal ne nomme le PNJ que s'il est (ou devient) visible.
+    const visibility = this.journalVisibilityFor(id);
+    const entry = this.makeJournalEntry(
+      "system",
+      att.name ?? null,
+      att.color,
+      `✦ Le MJ ajoute ${name} sur la carte.`,
+    );
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
     this.broadcastRoleAware(patch);
   }
 
@@ -888,6 +1093,8 @@ export class GameTableDO extends DurableObject<Env> {
 
     await this.patchState(this.patchTokens(state, tokens));
 
+    // B5 : « all » si au moins une des instances posées est visible, sinon « mj ».
+    const visibility = ids.some((id) => this.journalVisibilityFor(id) === "all") ? "all" : "mj";
     const label = count > 1 ? `${tpl.name} ×${count}` : tpl.name;
     const entry = this.makeJournalEntry(
       "system",
@@ -895,8 +1102,8 @@ export class GameTableDO extends DurableObject<Env> {
       att.color,
       `\u2726 Le MJ pose ${label}.`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
     this.broadcastRoleAware({ characters: charactersPatch, tokens });
 
     for (const id of ids) {
@@ -1000,7 +1207,7 @@ export class GameTableDO extends DurableObject<Env> {
     }
 
     await this.patchState({ combat });
-    this.broadcastAll({ type: "delta", patch: { combat } });
+    this.broadcastRoleAware({ combat });
   }
 
   /** Index de jet suivant : 1 + max (jamais de collision après un retrait). */
@@ -1046,6 +1253,10 @@ export class GameTableDO extends DurableObject<Env> {
       .limit(1);
     if (!char) return;
 
+    // B5 : visibilité calculée AVANT suppression (npcIds/tokens encore intacts).
+    await this.getState();
+    const visibility = this.journalVisibilityFor(charId);
+
     await db
       .delete(schema.characters)
       .where(
@@ -1079,15 +1290,12 @@ export class GameTableDO extends DurableObject<Env> {
       att.color,
       `✦ Le MJ retire ${char.name}.`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
-    this.broadcastAll({
-      type: "delta",
-      patch: {
-        characters: { [charId]: null },
-        tokens: { [charId]: null },
-        ...(combatPatch !== undefined ? { combat: combatPatch } : {}),
-      },
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
+    this.broadcastRoleAware({
+      characters: { [charId]: null },
+      tokens: { [charId]: null },
+      ...(combatPatch !== undefined ? { combat: combatPatch } : {}),
     });
   }
 
@@ -1109,8 +1317,11 @@ export class GameTableDO extends DurableObject<Env> {
     const current = this.tokensOf(state);
     if (!current[tokenId]) return;
     const tokens = { ...current, [tokenId]: { charId: tokenId, x: cx, y: cy } };
-    await this.patchState(this.patchTokens(state, tokens));
+    // P2 : la diffusion reste immédiate, la persistance est débouncée (60-120
+    // messages/s en drag ne doivent pas écrire le storage à chaque frame).
+    this.patchStateInMemory(this.patchTokens(state, tokens));
     this.broadcastRoleAware({ tokens: { [tokenId]: tokens[tokenId]! } });
+    if (this.npcIds.has(tokenId)) await this.broadcastPnjVisibility([tokenId]);
   }
 
   /** Le MJ place un personnage (PJ ou PNJ) sur la carte active. */
@@ -1138,6 +1349,7 @@ export class GameTableDO extends DurableObject<Env> {
     };
     await this.patchState(this.patchTokens(state, tokens));
     this.broadcastRoleAware({ tokens: { [charId]: tokens[charId]! } });
+    if (this.npcIds.has(charId)) await this.broadcastPnjVisibility([charId]);
   }
 
   /** Retire le pion de la carte active sans supprimer le personnage. */
@@ -1152,6 +1364,7 @@ export class GameTableDO extends DurableObject<Env> {
     const { [charId]: _drop, ...rest } = current;
     await this.patchState(this.patchTokens(state, rest));
     this.broadcastRoleAware({ tokens: { [charId]: null } });
+    if (this.npcIds.has(charId)) await this.broadcastPnjVisibility([charId]);
   }
 
   /** Nom de la copie suivante : Gobelin → Gobelin B → Gobelin C… */
@@ -1235,14 +1448,16 @@ export class GameTableDO extends DurableObject<Env> {
       }
     }
 
+    // B5 : visibilité de la SOURCE (c'est son nom qui est révélé).
+    const visibility = this.journalVisibilityFor(charId);
     const entry = this.makeJournalEntry(
       "system",
       att.name ?? null,
       att.color,
       `✦ Le MJ duplique ${src.name}.`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
     this.broadcastRoleAware(patch);
   }
 
@@ -1271,6 +1486,8 @@ export class GameTableDO extends DurableObject<Env> {
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
     });
+    // B5 : changer de carte change tout le jeu de PNJ visibles/masqués.
+    await this.broadcastPnjVisibility();
   }
 
   private async handleMarkerSet(ws: WebSocket, att: WsAttachment, msg: MarkerSetMsg) {
@@ -1332,6 +1549,7 @@ export class GameTableDO extends DurableObject<Env> {
     const fog = { ...state.fog, [state.mapId]: { on: true, reveals: [] } };
     await this.patchState({ fog });
     this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : (re)masque les PNJ de la carte active
   }
 
   private async handleFogReveal(ws: WebSocket, att: WsAttachment, msg: FogRevealMsg) {
@@ -1360,6 +1578,7 @@ export class GameTableDO extends DurableObject<Env> {
     };
     await this.patchState({ fog });
     this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : ce point a pu révéler un PNJ
   }
 
   private async handleFogCover(ws: WebSocket, att: WsAttachment) {
@@ -1374,9 +1593,10 @@ export class GameTableDO extends DurableObject<Env> {
       att.color,
       "✦ Le MJ recouvre toute la carte de brouillard.",
     );
-    await this.appendJournal(entry);
+    this.appendJournal(entry);
     this.broadcastAll({ type: "journal", entry });
     this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : recouvrir masque tous les PNJ de la carte
   }
 
   private async handleFogDisable(ws: WebSocket, att: WsAttachment) {
@@ -1391,9 +1611,10 @@ export class GameTableDO extends DurableObject<Env> {
       att.color,
       "✦ Le brouillard se dissipe.",
     );
-    await this.appendJournal(entry);
+    this.appendJournal(entry);
     this.broadcastAll({ type: "journal", entry });
     this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : plus de brouillard = tous les PNJ visibles
   }
 
   private handlePing(att: WsAttachment, msg: PingMsg) {
@@ -1413,9 +1634,10 @@ export class GameTableDO extends DurableObject<Env> {
         .from(schema.characters)
         .where(eq(schema.characters.campaignId, this.campaignId));
 
-      // R8.1 : participants = pion sur la carte active ET pv > 0.
+      // R8.1 : participants = actif, pion sur la carte active ET pv > 0 (audit
+      // B6 : un PJ désactivé qui garde un pion n'entrait pas dans le filtre).
       const participants = charRows
-        .filter((c) => c.pv > 0 && !!this.tokensOf(state)[c.id])
+        .filter((c) => c.active && c.pv > 0 && !!this.tokensOf(state)[c.id])
         .map((c) => c.id);
 
       if (participants.length === 0) {
@@ -1465,7 +1687,7 @@ export class GameTableDO extends DurableObject<Env> {
       }
 
       await this.patchState({ mode: "combat", combat });
-      this.broadcastAll({ type: "delta", patch: { mode: "combat", combat } });
+      this.broadcastRoleAware({ mode: "combat", combat });
     } else {
       await this.patchState({ mode: "exploration", combat: null });
       const entry = this.makeJournalEntry(
@@ -1476,7 +1698,7 @@ export class GameTableDO extends DurableObject<Env> {
       );
       await this.appendJournal(entry);
       this.broadcastAll({ type: "journal", entry });
-      this.broadcastAll({ type: "delta", patch: { mode: "exploration", combat: null } });
+      this.broadcastRoleAware({ mode: "exploration", combat: null });
     }
   }
 
@@ -1504,6 +1726,7 @@ export class GameTableDO extends DurableObject<Env> {
     const roll = rollDice(1, 20, char.sheet.initiativeBonus, this.makeRng());
     const total = roll.total;
 
+    const visibility = this.journalVisibilityFor(charId);
     const entry = this.makeJournalEntry("roll", char.name, char.color, "lance son initiative");
     entry.roll = {
       expression: formatExpression({ n: 1, sides: 20, mod: char.sheet.initiativeBonus }),
@@ -1516,8 +1739,8 @@ export class GameTableDO extends DurableObject<Env> {
       crit: isCritical(roll),
       fumble: isFumble(roll),
     };
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
     ws.send(
       JSON.stringify({
         type: "dice.result",
@@ -1544,7 +1767,7 @@ export class GameTableDO extends DurableObject<Env> {
     }
 
     await this.patchState({ combat: newCombat });
-    this.broadcastAll({ type: "delta", patch: { combat: newCombat } });
+    this.broadcastRoleAware({ combat: newCombat });
   }
 
   /** R8.4 : quand tous les participants ont un score, tri décroissant et bascule en phase `run`. */
@@ -1556,14 +1779,17 @@ export class GameTableDO extends DurableObject<Env> {
     );
     const order = sortInitiative(entries);
     const summary = order.map((e) => `${e.name} (${e.score})`).join(", ");
+    // B5 : si un des participants nommés est un PNJ non révélé, l'annonce
+    // complète (qui donne l'ordre ET les scores de tous) reste réservée au MJ.
+    const visibility = order.every((e) => this.journalVisibilityFor(e.id) === "all") ? "all" : "mj";
     const entry = this.makeJournalEntry(
       "system",
       null,
       null,
       `✦ Initiative complète : ${summary}. C'est à ${order[0]?.name ?? "?"} !`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
     return { ...combat, phase: "run", order: order.map((e) => e.id), turn: 0 };
   }
 
@@ -1618,15 +1844,16 @@ export class GameTableDO extends DurableObject<Env> {
         and(eq(schema.characters.id, activeId), eq(schema.characters.campaignId, this.campaignId)),
       )
       .limit(1);
+    const visibility = this.journalVisibilityFor(activeId);
     const entry = this.makeJournalEntry(
       "system",
       null,
       null,
       `✦ C'est au tour de ${activeChar?.name ?? "?"}${turn === 0 ? ` — round ${round}` : ""}.`,
     );
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
-    this.broadcastAll({ type: "delta", patch: { combat: newCombat } });
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
+    this.broadcastRoleAware({ combat: newCombat });
   }
 
   // ── Helpers ───────────────────────────────────────────────────
@@ -1696,6 +1923,12 @@ export class GameTableDO extends DurableObject<Env> {
             patch.characters as Record<string, Partial<CharacterCard> | null>,
           )
         : undefined;
+    // B5 : combat filtré côté joueurs (participants/order/scores/rollIndex).
+    const hasCombat = patch.combat !== undefined;
+    const playerCombat =
+      hasCombat && this.liveState
+        ? this.filterCombatForPlayers(patch.combat as CombatState | null, this.liveState)
+        : undefined;
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
       const isMj = att?.role === "mj";
@@ -1705,10 +1938,29 @@ export class GameTableDO extends DurableObject<Env> {
           ...patch,
           ...(playerTokens ? { tokens: playerTokens } : {}),
           ...(playerCharacters ? { characters: playerCharacters } : {}),
+          ...(hasCombat ? { combat: playerCombat ?? null } : {}),
         };
       }
       try {
         ws.send(JSON.stringify({ type: "delta", patch: outPatch }));
+      } catch {
+        /* socket might be closed */
+      }
+    }
+  }
+
+  /** Diffuse une entrée de journal — « mj » ne part qu'aux sockets MJ (B5). */
+  private broadcastJournal(entry: JournalEntry, visibility: "all" | "mj" = "all"): void {
+    if (visibility === "all") {
+      this.broadcastAll({ type: "journal", entry });
+      return;
+    }
+    const data = JSON.stringify({ type: "journal", entry });
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | null;
+      if (att?.role !== "mj") continue;
+      try {
+        ws.send(data);
       } catch {
         /* socket might be closed */
       }
@@ -1748,31 +2000,38 @@ export class GameTableDO extends DurableObject<Env> {
     this.cachedSettings = campaign?.settings ?? null;
 
     const hidePv = this.hidePnjPvFor(role);
-    const characters: CharacterCard[] = charRows.map((ch) => ({
-      id: ch.id,
-      kind: ch.kind,
-      ownerId: ch.ownerId,
-      name: ch.name,
-      color: ch.color,
-      active: ch.active,
-      portrait: ch.sheet.portrait ?? null,
-      ca: ch.sheet.ca,
-      sub:
-        ch.kind === "pj"
-          ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
-          : "",
-      initiativeBonus: ch.sheet.initiativeBonus,
-      pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
-      pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
-      pvTemp: ch.pvTemp,
-      conditions: ch.conditions,
-    }));
+    // B5 : un joueur ne reçoit même pas la carte d'un PNJ non révélé, dès le
+    // snapshot initial (sinon un simple rechargement de page rendait tous les
+    // PNJ posés connus, révélés ou non).
+    const characters: CharacterCard[] = charRows
+      .filter((ch) => role === "mj" || this.isCharVisibleToPlayers(ch.id, state))
+      .map((ch) => ({
+        id: ch.id,
+        kind: ch.kind,
+        ownerId: ch.ownerId,
+        name: ch.name,
+        color: ch.color,
+        active: ch.active,
+        portrait: ch.sheet.portrait ?? null,
+        ca: ch.sheet.ca,
+        sub:
+          ch.kind === "pj"
+            ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
+            : "",
+        initiativeBonus: ch.sheet.initiativeBonus,
+        pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
+        pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
+        pvTemp: ch.pvTemp,
+        conditions: ch.conditions,
+      }));
 
     const rawTokens = this.tokensOf(state);
     const tokens =
       role === "mj" ? rawTokens : (this.filterTokensForPlayers(rawTokens) as typeof rawTokens);
+    const combat = role === "mj" ? state.combat : this.filterCombatForPlayers(state.combat, state);
 
-    const journalTail = await this.getJournalTail();
+    await this.ensureLegacyJournalImport();
+    const journalTail = await this.getJournalTail(50, role);
     const presence = this.getPresence();
 
     return {
@@ -1782,7 +2041,7 @@ export class GameTableDO extends DurableObject<Env> {
         tokens,
         markers: this.markersOf(state),
         fog: state.fog,
-        combat: state.combat,
+        combat,
       },
       characters,
       settings: campaign?.settings ?? DEFAULT_SETTINGS,
@@ -1791,47 +2050,182 @@ export class GameTableDO extends DurableObject<Env> {
     };
   }
 
-  private async getJournalTail(limit = 50): Promise<JournalEntry[]> {
-    const db = this.getDb();
-    const rows = await db
-      .select()
-      .from(schema.journal)
-      .where(eq(schema.journal.campaignId, this.campaignId))
-      .orderBy(desc(schema.journal.id))
-      .limit(limit);
+  // ── Journal (audit P3) ────────────────────────────────────────
+  // Le journal vit dans le SQLite LOCAL du Durable Object (ctx.storage.sql) :
+  // le DO est déjà sharding par campagne, donc pas besoin de campaign_id ici.
+  // Latence quasi nulle, pas de facturation par ligne D1, et le filtre de
+  // visibilité (B5) devient une clause WHERE locale au lieu d'un filtre après
+  // lecture D1. L'ancienne table D1 `journal` est importée une fois (lazy,
+  // voir ensureLegacyJournalImport) pour ne pas perdre l'historique existant.
 
-    // Les 50 DERNIÈRES entrées, rendues en ordre chronologique.
-    return rows.reverse().map((r) => ({
-      id: r.id,
-      ts: r.ts,
-      kind: r.kind as JournalEntry["kind"],
-      who: r.who,
-      whoColor: r.whoColor,
-      text: r.text,
-      roll: r.roll as JournalEntry["roll"],
-      ref: r.ref as JournalEntry["ref"],
-    }));
+  private ensureJournalTable(): void {
+    if (this.journalReady) return;
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        who TEXT,
+        who_color TEXT,
+        text TEXT NOT NULL,
+        roll TEXT,
+        ref TEXT,
+        visibility TEXT NOT NULL DEFAULT 'all'
+      )
+    `);
+    this.ctx.storage.sql.exec(`CREATE INDEX IF NOT EXISTS journal_id_idx ON journal (id DESC)`);
+    this.journalReady = true;
   }
 
-  private async appendJournal(entry: JournalEntry): Promise<void> {
-    const db = this.getDb();
-    const inserted = await db
-      .insert(schema.journal)
-      .values({
-        campaignId: this.campaignId,
-        ts: entry.ts,
-        kind: entry.kind,
-        who: entry.who,
-        whoColor: entry.whoColor,
-        text: entry.text,
-        roll: entry.roll as never,
-        ref: entry.ref as never,
-      })
-      .returning({ id: schema.journal.id });
-    // L'id diffusé doit être l'id réel (autoincrement D1) : sinon les clés
-    // live et reload divergent (audit A4).
-    const realId = inserted[0]?.id;
-    if (typeof realId === "number") entry.id = realId;
+  /** Importe une seule fois les lignes D1 existantes de cette campagne (si
+   *  la table venait de l'ancienne version) — idempotent via un flag posé
+   *  dans le storage du DO, persistant entre réveils. */
+  private async ensureLegacyJournalImport(): Promise<void> {
+    this.ensureJournalTable();
+    if (this.journalImported) return;
+    const imported = await this.ctx.storage.get<boolean>("journalImported");
+    if (imported) {
+      this.journalImported = true;
+      return;
+    }
+    if (this.campaignId) {
+      const db = this.getDb();
+      const legacyRows = await db
+        .select()
+        .from(schema.journal)
+        .where(eq(schema.journal.campaignId, this.campaignId))
+        .orderBy(asc(schema.journal.id));
+      for (const r of legacyRows) {
+        this.ctx.storage.sql.exec(
+          `INSERT INTO journal (ts, kind, who, who_color, text, roll, ref, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, 'all')`,
+          r.ts,
+          r.kind,
+          r.who,
+          r.whoColor,
+          r.text,
+          r.roll ? JSON.stringify(r.roll) : null,
+          r.ref ? JSON.stringify(r.ref) : null,
+        );
+      }
+    }
+    await this.ctx.storage.put("journalImported", true);
+    this.journalImported = true;
+  }
+
+  private rowToJournalEntry(r: Record<string, unknown>): JournalEntry {
+    return {
+      id: r.id as number,
+      ts: r.ts as number,
+      kind: r.kind as JournalEntry["kind"],
+      who: r.who as string | null,
+      whoColor: r.who_color as string | null,
+      text: r.text as string,
+      roll: r.roll ? (JSON.parse(r.roll as string) as JournalEntry["roll"]) : undefined,
+      ref: r.ref ? (JSON.parse(r.ref as string) as JournalEntry["ref"]) : undefined,
+    };
+  }
+
+  /** Fenêtre glissante (audit P3) : au-delà de JOURNAL_RETENTION_MAX lignes,
+   *  les plus anciennes sont purgées. Vérifié à chaque écriture — table locale
+   *  bornée, coût négligeable (scan d'index sur la clé primaire). */
+  private trimJournal(): void {
+    const row = this.ctx.storage.sql
+      .exec<{ n: number }>(`SELECT COUNT(*) as n FROM journal`)
+      .toArray()[0];
+    const n = row?.n ?? 0;
+    if (n > JOURNAL_RETENTION_MAX) {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM journal WHERE id <= (SELECT id FROM journal ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+        JOURNAL_RETENTION_MAX - 1,
+      );
+    }
+  }
+
+  private getJournalTail(limit = 50, role: "mj" | "player" = "mj"): JournalEntry[] {
+    this.ensureJournalTable();
+    const rows =
+      role === "mj"
+        ? this.ctx.storage.sql
+            .exec(`SELECT * FROM journal ORDER BY id DESC LIMIT ?`, limit)
+            .toArray()
+        : this.ctx.storage.sql
+            .exec(`SELECT * FROM journal WHERE visibility != 'mj' ORDER BY id DESC LIMIT ?`, limit)
+            .toArray();
+    // Les N DERNIÈRES entrées, rendues en ordre chronologique.
+    return rows.reverse().map((r) => this.rowToJournalEntry(r));
+  }
+
+  /** RPC : journal paginé pour GET /api/campaigns/:id/journal (B5 : visibility
+   *  filtrée pour un joueur, des deux côtés — live ET reload). */
+  async getJournalPage(opts: {
+    role: "mj" | "player";
+    limit?: number;
+    before?: number;
+  }): Promise<JournalPage> {
+    await this.ensureCampaignId();
+    await this.ensureLegacyJournalImport();
+    const limit = opts.limit ?? 50;
+    const visClause = opts.role === "mj" ? "" : "AND visibility != 'mj'";
+    const rows =
+      opts.before !== undefined
+        ? this.ctx.storage.sql
+            .exec(
+              `SELECT * FROM journal WHERE id < ? ${visClause} ORDER BY id DESC LIMIT ?`,
+              opts.before,
+              limit + 1,
+            )
+            .toArray()
+        : this.ctx.storage.sql
+            .exec(
+              `SELECT * FROM journal WHERE 1=1 ${visClause} ORDER BY id DESC LIMIT ?`,
+              limit + 1,
+            )
+            .toArray();
+    const hasMore = rows.length > limit;
+    const entries = rows
+      .slice(0, limit)
+      .reverse()
+      .map((r) => this.rowToJournalEntry(r));
+    return { entries, hasMore };
+  }
+
+  /** RPC : purge complète (audit S5, suppression de campagne) — vide le
+   *  storage du DO (liveState ET journal SQLite) et ferme les sockets. */
+  async purgeAll(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+    this.liveState = null;
+    this.npcIds = new Set();
+    this.npcIdsLoaded = false;
+    this.cachedSettings = null;
+    this.journalReady = false;
+    this.journalImported = false;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1000, "Campagne supprimée");
+      } catch {
+        /* déjà fermée */
+      }
+    }
+  }
+
+  private appendJournal(entry: JournalEntry, visibility: "all" | "mj" = "all"): void {
+    this.ensureJournalTable();
+    const row = this.ctx.storage.sql
+      .exec<{ id: number }>(
+        `INSERT INTO journal (ts, kind, who, who_color, text, roll, ref, visibility)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        entry.ts,
+        entry.kind,
+        entry.who,
+        entry.whoColor,
+        entry.text,
+        entry.roll ? JSON.stringify(entry.roll) : null,
+        entry.ref ? JSON.stringify(entry.ref) : null,
+        visibility,
+      )
+      .one();
+    entry.id = row.id;
+    if (entry.id % 25 === 0) this.trimJournal();
   }
 
   private getPresence(): {

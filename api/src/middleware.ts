@@ -10,9 +10,14 @@ export interface AuthVariables {
     email: string;
     image: string | null;
   };
-  discordId: string;
   memberRole: "mj" | "player";
   membership: { campaignId: string; role: "mj" | "player" } | null;
+  /** Posée par les résolveurs de requireMemberOf (charCampaign, mapCampaign,
+   *  templateCampaign…) quand ils ont déjà chargé la ligne complète — le
+   *  handler la relit au lieu de refaire le SELECT (audit N2). */
+  character?: typeof schema.characters.$inferSelect;
+  map?: typeof schema.maps.$inferSelect;
+  npcTemplate?: typeof schema.npcTemplates.$inferSelect;
 }
 
 export type AppContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
@@ -25,24 +30,14 @@ export async function requireAuth(c: AppContext, next: Next) {
     return c.json({ error: "Non authentifié" }, 401);
   }
 
-  const db = createDb(c.env.DB);
-  const acct = await db
-    .select()
-    .from(schema.account)
-    .where(
-      and(eq(schema.account.userId, session.user.id), eq(schema.account.providerId, "discord")),
-    )
-    .limit(1);
-
-  const discordId = acct[0]?.accountId ?? "";
-
+  // discordId n'est utile qu'à POST /campaigns/join/:token (audit N2) : plus
+  // de SELECT account sur chaque requête authentifiée, la route le charge elle-même.
   c.set("user", {
     id: session.user.id,
     name: session.user.name,
     email: session.user.email,
     image: session.user.image ?? null,
   });
-  c.set("discordId", discordId);
   c.set("membership", null);
 
   await next();
@@ -88,4 +83,29 @@ export async function requireMj(c: AppContext, next: Next) {
     return c.json({ error: "Réservé au MJ" }, 403);
   }
   await next();
+}
+
+/**
+ * S3 (audit) : en-têtes de sécurité appliqués à toutes les réponses de l'API.
+ * CSP « filet » volontairement permissif pour ne pas casser la SPA SvelteKit
+ * (scripts/styles inline de bootstrap) ni les avatars Discord (https:) ni le
+ * WebSocket (wss:) — l'objectif est un garde-fou de base, pas une politique dure.
+ */
+export async function securityHeaders(c: Context, next: Next) {
+  await next();
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.header("X-Frame-Options", "DENY");
+  c.header(
+    "Content-Security-Policy",
+    "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline'; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: https:; " +
+      "connect-src 'self' wss: https:; " +
+      "object-src 'none'; " +
+      "frame-ancestors 'none'; " +
+      "base-uri 'self'; " +
+      "form-action 'self'",
+  );
 }

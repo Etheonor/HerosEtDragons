@@ -9,10 +9,15 @@ import maps from "./routes/maps";
 import notes from "./routes/notes";
 import npcTemplates from "./routes/npc-templates";
 import compendium from "./routes/compendium";
+import { securityHeaders } from "./middleware";
 
 export { GameTableDO } from "./do/game-table";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// S3 (audit) : CSP, nosniff, Referrer-Policy, X-Frame-Options sur toutes les
+// réponses — y compris les 404 de l'API (la SPA statique est servie par ASSETS).
+app.use("*", securityHeaders);
 
 app.get("/api/health", (c) => c.json({ ok: true, name: "rollwith-hd", time: Date.now() }));
 

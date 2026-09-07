@@ -3,6 +3,7 @@ import type { CharacterDetail, CharacterSummary } from "@rollwith/shared/dto";
 import { createDb, schema, type CharacterSheet } from "../db";
 import type { AppContext } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
+import { applyDamage } from "@rollwith/shared/damage";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
@@ -20,17 +21,21 @@ async function notifyTable(c: AppContext, campaignId: string, charId: string): P
   }
 }
 
-/** Résolveur : campagne d'un personnage adressé par /:charId. */
+/** Résolveur : campagne d'un personnage adressé par /:charId — charge la ligne
+ *  complète et la pose en contexte (audit N2) : les handlers qui suivent la
+ *  relisent au lieu de refaire le SELECT. */
 async function charCampaign(c: AppContext): Promise<string | null> {
   const charId = c.req.param("charId");
   if (!charId) return null;
   const db = createDb(c.env.DB);
   const [char] = await db
-    .select({ campaignId: schema.characters.campaignId })
+    .select()
     .from(schema.characters)
     .where(eq(schema.characters.id, charId))
     .limit(1);
-  return char?.campaignId ?? null;
+  if (!char) return null;
+  c.set("character", char);
+  return char.campaignId;
 }
 
 const memberOfChar = requireMemberOf(charCampaign);
@@ -91,20 +96,8 @@ app.get(
 // ── Détail d'un personnage ────────────────────────────────────
 
 app.get("/:charId", requireAuth, memberOfChar, async (c) => {
-  const charId = c.req.param("charId");
-  if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-  const db = createDb(c.env.DB);
+  const char = c.get("character")!;
   const userId = c.get("user").id;
-
-  const [char] = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.id, charId))
-    .limit(1);
-
-  if (!char) {
-    return c.json({ error: "Personnage introuvable" }, 404);
-  }
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
@@ -125,6 +118,7 @@ app.get("/:charId", requireAuth, memberOfChar, async (c) => {
     conditions: char.conditions,
     canEdit,
     role: c.get("memberRole"),
+    updatedAt: char.updatedAt.toISOString(),
   });
 });
 
@@ -164,26 +158,13 @@ app.post(
     }
 
     const id = crypto.randomUUID();
-    // Builder partagé (shared/sheet) : mêmes defaults que les PNJ du DO.
+    // Builder partagé (shared/sheet) : mêmes defaults que les PNJ du DO. Le seul
+    // override nécessaire est identite.nom — createSheet applique déjà tous les
+    // defaults et Zod a déjà borné l'entrée (audit B2 : évite d'oublier un champ
+    // du mapping, comme pvAuto/caAuto/portrait/inspiration/deathSaves).
     const sheet: CharacterSheet = createSheet({
-      identite: { nom: body.name, ...body.sheet?.identite },
-      caracs: body.sheet?.caracs,
-      saveProficiencies: body.sheet?.saveProficiencies,
-      skillProficiencies: body.sheet?.skillProficiencies,
-      ca: body.sheet?.ca,
-      vitesse: body.sheet?.vitesse,
-      initiativeBonus: body.sheet?.initiativeBonus,
-      pvMax: body.sheet?.pvMax,
-      desDeVie: body.sheet?.desDeVie,
-      attaques: body.sheet?.attaques,
-      armures: body.sheet?.armures,
-      sorts: body.sheet?.sorts,
-      capacites: body.sheet?.capacites,
-      personnalite: body.sheet?.personnalite,
-      languesEtMaitrises: body.sheet?.languesEtMaitrises,
-      racial: body.sheet?.racial,
-      equipement: body.sheet?.equipement,
-      couleurPion: body.sheet?.couleurPion,
+      ...body.sheet,
+      identite: { ...body.sheet?.identite, nom: body.name },
     });
 
     await db.insert(schema.characters).values({
@@ -208,20 +189,9 @@ app.post(
 // ── Modifier PV (±) ────────────────────────────────────────────
 
 app.patch("/:charId/pv", requireAuth, memberOfChar, pvPatchBody, async (c) => {
-  const charId = c.req.param("charId");
-  if (!charId) return c.json({ error: "Char ID manquant" }, 400);
+  const char = c.get("character")!;
   const body = c.req.valid("json");
-
-  const db = createDb(c.env.DB);
   const userId = c.get("user").id;
-
-  const [char] = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.id, charId))
-    .limit(1);
-
-  if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
@@ -229,36 +199,34 @@ app.patch("/:charId/pv", requireAuth, memberOfChar, pvPatchBody, async (c) => {
     return c.json({ error: "Vous ne pouvez modifier que vos PV" }, 403);
   }
 
-  let newPv = char.pv + body.delta;
-  if (newPv < 0) newPv = 0;
-  if (newPv > char.pvMax) newPv = char.pvMax;
+  // Les PV temporaires absorbent les dégâts avant les PV réels (audit B3).
+  const { pv: newPv, pvTemp: newPvTemp } = applyDamage(
+    char.pv,
+    char.pvTemp,
+    char.pvMax,
+    body.delta,
+  );
 
+  const db = createDb(c.env.DB);
   await db
     .update(schema.characters)
-    .set({ pv: newPv, updatedAt: new Date() })
-    .where(eq(schema.characters.id, charId));
+    .set({ pv: newPv, pvTemp: newPvTemp, updatedAt: new Date() })
+    .where(eq(schema.characters.id, char.id));
 
-  await notifyTable(c, char.campaignId, charId);
-  return c.json<{ pv: number; pvMax: number }>({ pv: newPv, pvMax: char.pvMax });
+  await notifyTable(c, char.campaignId, char.id);
+  return c.json<{ pv: number; pvMax: number; pvTemp: number }>({
+    pv: newPv,
+    pvMax: char.pvMax,
+    pvTemp: newPvTemp,
+  });
 });
 
 // ── Modifier PV temporaires ───────────────────────────────────
 
 app.patch("/:charId/pv-temp", requireAuth, memberOfChar, pvTempBody, async (c) => {
-  const charId = c.req.param("charId");
-  if (!charId) return c.json({ error: "Char ID manquant" }, 400);
+  const char = c.get("character")!;
   const body = c.req.valid("json");
-
-  const db = createDb(c.env.DB);
   const userId = c.get("user").id;
-
-  const [char] = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.id, charId))
-    .limit(1);
-
-  if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
@@ -267,30 +235,21 @@ app.patch("/:charId/pv-temp", requireAuth, memberOfChar, pvTempBody, async (c) =
   }
 
   const pvTemp = Math.max(0, body.value);
+  const db = createDb(c.env.DB);
   await db
     .update(schema.characters)
     .set({ pvTemp, updatedAt: new Date() })
-    .where(eq(schema.characters.id, charId));
+    .where(eq(schema.characters.id, char.id));
 
-  await notifyTable(c, char.campaignId, charId);
+  await notifyTable(c, char.campaignId, char.id);
   return c.json<{ pvTemp: number }>({ pvTemp });
 });
 
 // ── Toggle inspiration ─────────────────────────────────────────
 
 app.patch("/:charId/inspiration", requireAuth, memberOfChar, async (c) => {
-  const charId = c.req.param("charId");
-  if (!charId) return c.json({ error: "Char ID manquant" }, 400);
-  const db = createDb(c.env.DB);
+  const char = c.get("character")!;
   const userId = c.get("user").id;
-
-  const [char] = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.id, charId))
-    .limit(1);
-
-  if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
@@ -298,38 +257,39 @@ app.patch("/:charId/inspiration", requireAuth, memberOfChar, async (c) => {
 
   const sheet = char.sheet;
   sheet.inspiration = !sheet.inspiration;
+  const db = createDb(c.env.DB);
   await db
     .update(schema.characters)
     .set({ sheet, updatedAt: new Date() })
-    .where(eq(schema.characters.id, charId));
+    .where(eq(schema.characters.id, char.id));
 
-  await notifyTable(c, char.campaignId, charId);
+  await notifyTable(c, char.campaignId, char.id);
   return c.json<{ inspiration: boolean }>({ inspiration: sheet.inspiration });
 });
 
 // ── Mettre à jour la feuille (édition) ────────────────────────
 
 app.put("/:charId/sheet", requireAuth, memberOfChar, sheetPutBody, async (c) => {
-  const charId = c.req.param("charId");
-  if (!charId) return c.json({ error: "Char ID manquant" }, 400);
+  const char = c.get("character")!;
 
   // Corps validé + borné par le schéma canonique (characterSheetSchema) :
   // remplace l'ancien garde-fou 200 ko + validation manuelle.
   const body = c.req.valid("json");
-  const db = createDb(c.env.DB);
   const userId = c.get("user").id;
-
-  const [char] = await db
-    .select()
-    .from(schema.characters)
-    .where(eq(schema.characters.id, charId))
-    .limit(1);
-
-  if (!char) return c.json({ error: "Personnage introuvable" }, 404);
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
   if (!isOwner && !isMj) return c.json({ error: "Accès refusé" }, 403);
+
+  // Concurrence (audit S6) : deux onglets/deux personnes qui éditent la même
+  // feuille en même temps s'écrasent silencieusement en dernier-écrivain-gagne.
+  // If-Match optionnel (rétro-compatible avec un client qui ne l'envoie pas).
+  const ifMatch = c.req.header("If-Match");
+  if (ifMatch && ifMatch !== char.updatedAt.toISOString()) {
+    return c.json({ error: "Modifié entre-temps ailleurs — rechargez la feuille." }, 409);
+  }
+
+  const db = createDb(c.env.DB);
 
   // Verrou MJ (R10.10) : quand sheetsLocked est actif, seuls les MJ éditent.
   if (!isMj) {
@@ -343,18 +303,19 @@ app.put("/:charId/sheet", requireAuth, memberOfChar, sheetPutBody, async (c) => 
     }
   }
 
+  const updatedAt = new Date();
   await db
     .update(schema.characters)
     .set({
       sheet: body,
       pvMax: body.pvMax,
       name: body.identite?.nom?.trim() || char.name,
-      updatedAt: new Date(),
+      updatedAt,
     })
-    .where(eq(schema.characters.id, charId));
+    .where(eq(schema.characters.id, char.id));
 
-  await notifyTable(c, char.campaignId, charId);
-  return c.json<{ ok: true }>({ ok: true });
+  await notifyTable(c, char.campaignId, char.id);
+  return c.json<{ ok: true; updatedAt: string }>({ ok: true, updatedAt: updatedAt.toISOString() });
 });
 
 export default app;

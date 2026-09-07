@@ -357,6 +357,7 @@ export interface TableDeltaPatch {
   tokens?: Record<string, TokenState | null>;
   fog?: Record<string, FogState>;
   characters?: Record<string, Partial<CharacterCard> | null>;
+  settings?: TableSettings;
 }
 
 export interface DeltaMsg {

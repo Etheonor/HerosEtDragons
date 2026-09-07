@@ -60,6 +60,10 @@ export interface TableStore {
 
 let pingSeq = 0;
 
+/** P2 (audit) : ids d'entrées déjà dans le journal du store — anti-doublon O(1)
+ *  au lieu du parcours `.some()` O(n) à chaque message reçu. */
+let journalIds = new Set<number>();
+
 /** État partagé de la table — les mutations ci-dessous sont réactives partout. */
 export const tableStore = $state<TableStore>({
   connected: false,
@@ -156,6 +160,7 @@ function handleMessage(msg: Record<string, unknown>) {
       tableStore.characters = (msg.characters as CharacterCard[]) ?? [];
       tableStore.settings = (msg.settings as TableSettings) ?? DEFAULT_SETTINGS;
       tableStore.journal = (msg.journalTail as JournalEntry[]) ?? [];
+      journalIds = new Set(tableStore.journal.map((e) => e.id));
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
       break;
 
@@ -184,6 +189,7 @@ function handleMessage(msg: Record<string, unknown>) {
           ...(patch.fog as Record<string, FogState>),
         };
       if (patch.mapId !== undefined) tableStore.state.mapId = patch.mapId as string | null;
+      if (patch.settings) tableStore.settings = patch.settings as TableSettings;
       if (patch.characters) {
         const byId = new Map(tableStore.characters.map((c) => [c.id, c]));
         for (const [id, val] of Object.entries(
@@ -203,13 +209,10 @@ function handleMessage(msg: Record<string, unknown>) {
 
     case "journal": {
       const entry = msg.entry as JournalEntry;
-      // garde anti-doublon (reconnexion / broadcast dupliqué)
-      const dup = tableStore.journal.some(
-        (e) => e.id === entry.id && e.ts === entry.ts && e.text === entry.text,
-      );
-      if (!dup) {
-        tableStore.journal = [...tableStore.journal, entry];
-      }
+      // garde anti-doublon O(1) (reconnexion / broadcast dupliqué)
+      if (entry.id !== undefined && journalIds.has(entry.id)) break;
+      if (entry.id !== undefined) journalIds.add(entry.id);
+      tableStore.journal = [...tableStore.journal, entry];
       break;
     }
 
