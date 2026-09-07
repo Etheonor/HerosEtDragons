@@ -109,3 +109,25 @@ export async function securityHeaders(c: Context, next: Next) {
       "form-action 'self'",
   );
 }
+
+/** Borne supérieure d'un corps JSON (audit N3). Le garde-fou de taille sur
+ *  PUT /sheet avait sauté : zod parse le corps avant toute vérification, donc
+ *  le JSON.parse d'un corps de plusieurs Mo a quand même lieu. On le coupe en
+ *  amont via Content-Length. */
+export const MAX_JSON_BODY_BYTES = 200_000;
+
+export async function limitJsonBody(c: Context, next: Next) {
+  const ct = c.req.header("content-type") ?? "";
+  // On ne borne QUE les corps JSON : les uploads multipart (images de carte,
+  // jusqu'à 8 Mo) ne doivent pas être rejetés ici.
+  if (ct.includes("application/json")) {
+    const len = c.req.header("content-length");
+    if (len) {
+      const bytes = Number(len);
+      if (Number.isFinite(bytes) && bytes > MAX_JSON_BODY_BYTES) {
+        return c.json({ error: "Corps de requête trop volumineux" }, 413);
+      }
+    }
+  }
+  await next();
+}

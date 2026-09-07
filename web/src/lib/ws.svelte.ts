@@ -84,8 +84,32 @@ let disposed = true;
 let wasConnected = false;
 let attempts = 0;
 
+/** N4 (audit) : remet le store singleton à zéro — passé d'une campagne à
+ *  l'autre, l'écran affichait brièvement les personnages/journal de la
+ *  précédente jusqu'à l'arrivée du snapshot. */
+export function resetTableStore() {
+  tableStore.connected = false;
+  tableStore.state = {
+    mode: "exploration",
+    mapId: null,
+    tokens: {},
+    markers: [],
+    fog: {},
+    combat: null,
+  };
+  tableStore.characters = [];
+  tableStore.settings = DEFAULT_SETTINGS;
+  tableStore.journal = [];
+  journalIds = new Set();
+  tableStore.presence = [];
+  tableStore.pings = [];
+  tableStore.diceAnim = null;
+  tableStore.error = null;
+}
+
 export function connectWs(campaignId: string) {
   disposed = false;
+  resetTableStore();
   url = `${window.location.origin.replace("http", "ws")}/api/tables/${campaignId}/ws`;
   doConnect();
 }

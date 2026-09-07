@@ -26,7 +26,9 @@
   let stateOptions = $state<string[]>(CONDITIONS);
 
   // Store runes partagé (ws.svelte.ts) : l'objet mute en place, tout est réactif.
-  let store = $state(tableStore);
+  // NB : PAS de $state() ici — tableStore est déjà un proxy $state (N4 audit),
+  // envelopper une seconde fois crée une double proxification inutile.
+  const store = tableStore;
 
   let chatText = $state('');
   let journalEl = $state<HTMLDivElement | null>(null);
