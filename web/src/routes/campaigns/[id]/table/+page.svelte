@@ -174,6 +174,59 @@
   const activeFog = $derived(store.state.mapId ? store.state.fog[store.state.mapId] : undefined);
   const fogOn = $derived(!!activeFog?.on);
 
+  // Ratio largeur/hauteur de l'image active — on dimensionne la surface à ce
+  // ratio pour TOUJOURS voir l'image à 100% (aucun crop), quel que soit son
+  // format (large ou haut). Les pions/repères/brouillard restent alignés car
+  // leurs coordonnées sont des % de la surface, qui épouse alors l'image.
+  let mapAspect = $state<number | null>(null);
+  $effect(() => {
+    // Re-déclenché à chaque changement de carte active → on oublie le ratio de
+    // la carte précédente (l'image suivante le re-mesurera à son onload).
+    void activeMap?.id;
+    mapAspect = null;
+  });
+
+  function onMapImageLoad(e: Event) {
+    const img = e.currentTarget as HTMLImageElement;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      mapAspect = img.naturalWidth / img.naturalHeight;
+    }
+  }
+
+  // Taille du cadre (`.map-frame`) pour calculer la surface la plus grande qui
+  // tient tout en gardant le ratio de l'image (aucun crop, quelle que soit la
+  // résolution, large ou haute).
+  let frameRef = $state<HTMLDivElement | null>(null);
+  let frameW = $state(0);
+  let frameH = $state(0);
+  $effect(() => {
+    const el = frameRef;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) {
+        frameW = r.width;
+        frameH = r.height;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
+  const fittedSize = $derived(
+    mapAspect && frameW > 0 && frameH > 0
+      ? (() => {
+          let w = frameW;
+          let h = w / mapAspect;
+          if (h > frameH) {
+            h = frameH;
+            w = h * mapAspect;
+          }
+          return { w, h };
+        })()
+      : null,
+  );
+
   const displayTokens = $derived.by(() => {
     const out: Record<string, { charId: string; x: number; y: number }> = {
       ...store.state.tokens,
@@ -937,7 +990,7 @@
         </div>
       {/if}
 
-      <div class="map-frame">
+      <div class="map-frame" bind:this={frameRef}>
         {#if !activeMap}
           <div class="map-placeholder">
             {#if isMj}Créez ou sélectionnez une carte ci-dessus.{:else}Le MJ n'a pas encore choisi de carte.{/if}
@@ -946,6 +999,9 @@
           <div
             bind:this={mapContainer}
             class="map-surface"
+            class:map-surface--fitted={!!fittedSize}
+            class:map-surface--fill={!fittedSize}
+            style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
             class:cursor-fog={isMj && tool === 'fog'}
             class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
             onpointerdown={onMapPointerDown}
@@ -956,7 +1012,7 @@
             ondblclick={onMapDblClick}
           >
             {#if activeMap.hasImage}
-              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" />
+              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
             {:else}
               <div class="map-grid"></div>
             {/if}
@@ -1427,9 +1483,8 @@
 
   .map-frame {
     flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: grid;
+    place-items: center;
     margin: 14px;
     min-height: 0;
     position: relative;
@@ -1437,13 +1492,28 @@
   .map-placeholder { color: var(--text-2); font-style: italic; }
 
   .map-surface {
-    position: absolute; inset: 0;
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
     border: 2px solid var(--border);
     border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
     overflow: hidden;
     background: var(--map-bg);
     cursor: default;
     touch-action: none;
+  }
+  /* Surface dimensionnée en JS (fit du ratio de l'image) : on la voit
+     TOUJOURS en entier — aucun crop haut/bas ni gauche/droite. */
+  .map-surface--fitted {
+    justify-self: center;
+    align-self: center;
+  }
+  /* Sans image : la surface remplit tout le cadre, comme avant. */
+  .map-surface--fill {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
   .map-surface.cursor-fog { cursor: crosshair; }
   .map-surface.cursor-place { cursor: copy; }
