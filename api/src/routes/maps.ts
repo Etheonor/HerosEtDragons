@@ -14,6 +14,7 @@ import {
 } from "../middleware";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_GRID_SIZE = 32;
 const ALLOWED_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -35,11 +36,21 @@ async function mapCampaign(c: AppContext): Promise<string | null> {
 
 const memberOfMap = requireMemberOf(mapCampaign);
 
+/** FormData n'a que des chaînes : "" / absent signifient deux choses distinctes —
+ *  "" = retirer le quadrillage, absent = ne pas y toucher. */
+const gridSizeField = z.preprocess((v) => {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? v : n;
+}, z.number().int().min(8).max(200).nullable().optional());
+
 const createMapForm = zValidator(
   "form",
   z.object({
     name: z.string().trim().min(1).max(80),
     image: z.instanceof(File).optional(),
+    gridSize: gridSizeField,
   }),
 );
 
@@ -48,6 +59,7 @@ const updateMapForm = zValidator(
   z.object({
     name: z.string().trim().min(1).max(80).optional(),
     image: z.instanceof(File).optional(),
+    gridSize: gridSizeField,
   }),
 );
 
@@ -77,7 +89,12 @@ app.get(
     const maps = await db.select().from(schema.maps).where(eq(schema.maps.campaignId, campaignId));
 
     return c.json<{ maps: MapSummary[] }>({
-      maps: maps.map((m) => ({ id: m.id, name: m.name, hasImage: !!m.r2Key })),
+      maps: maps.map((m) => ({
+        id: m.id,
+        name: m.name,
+        hasImage: !!m.r2Key,
+        gridSize: m.gridSize,
+      })),
     });
   },
 );
@@ -117,9 +134,13 @@ app.post(
       });
     }
 
-    await db.insert(schema.maps).values({ id, campaignId, name, r2Key });
+    // Sans image, la carte est quadrillée par défaut ; importée, elle ne l'est pas.
+    const gridSize =
+      form.gridSize === undefined ? (r2Key ? null : DEFAULT_GRID_SIZE) : form.gridSize;
 
-    return c.json<MapSummary>({ id, name, hasImage: !!r2Key }, 201);
+    await db.insert(schema.maps).values({ id, campaignId, name, r2Key, gridSize });
+
+    return c.json<MapSummary>({ id, name, hasImage: !!r2Key, gridSize }, 201);
   },
 );
 
@@ -135,8 +156,9 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map) return c.json({ error: "Carte introuvable" }, 404);
 
-  const patch: { name?: string; r2Key?: string | null } = {};
+  const patch: { name?: string; r2Key?: string | null; gridSize?: number | null } = {};
   if (form.name !== undefined) patch.name = form.name;
+  if (form.gridSize !== undefined) patch.gridSize = form.gridSize;
 
   const file = form.image;
   if (file && file.size > 0) {
@@ -158,13 +180,18 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
     patch.r2Key = newKey;
   }
 
-  if (patch.name === undefined && patch.r2Key === undefined) {
+  if (patch.name === undefined && patch.r2Key === undefined && patch.gridSize === undefined) {
     return c.json({ error: "Rien à modifier" }, 400);
   }
 
   await db.update(schema.maps).set(patch).where(eq(schema.maps.id, mapId));
 
-  return c.json<MapSummary>({ id: mapId, name: patch.name ?? map.name, hasImage: !!patch.r2Key });
+  return c.json<MapSummary>({
+    id: mapId,
+    name: patch.name ?? map.name,
+    hasImage: !!patch.r2Key,
+    gridSize: patch.gridSize === undefined ? map.gridSize : patch.gridSize,
+  });
 });
 
 // ── Supprimer une carte (MJ) ───────────────────────────────────

@@ -174,6 +174,15 @@
   const activeFog = $derived(store.state.mapId ? store.state.fog[store.state.mapId] : undefined);
   const fogOn = $derived(!!activeFog?.on);
 
+  /** Taille de la case affichée sur la carte active ; null = pas de quadrillage.
+   *  Une carte sans image reste quadrillée par défaut (32 px) même si la
+   *  colonne est null : c'est le comportement historique du « + Quadrillée ». */
+  const activeGridSize = $derived.by(() => {
+    if (!activeMap) return null;
+    if (activeMap.gridSize != null) return activeMap.gridSize;
+    return activeMap.hasImage ? null : 32;
+  });
+
   // Ratio largeur/hauteur de l'image active — on dimensionne la surface à ce
   // ratio pour TOUJOURS voir l'image à 100% (aucun crop), quel que soit son
   // format (large ou haut). Les pions/repères/brouillard restent alignés car
@@ -1013,8 +1022,14 @@
           >
             {#if activeMap.hasImage}
               <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
-            {:else}
-              <div class="map-grid"></div>
+            {/if}
+
+            {#if activeGridSize}
+              <div
+                class="map-grid"
+                class:map-grid--overlay={activeMap.hasImage}
+                style="--map-grid-size: {activeGridSize}px"
+              ></div>
             {/if}
 
             {#if fogOn}
@@ -1495,6 +1510,9 @@
     position: relative;
     max-width: 100%;
     max-height: 100%;
+    /* Contain the mix-blend-mode of the grid overlay to the map (and keep the
+       z-index layers of tokens/fog from interleaving with the rest of the page). */
+    isolation: isolate;
     border: 2px solid var(--border);
     border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
     overflow: hidden;
@@ -1523,6 +1541,18 @@
     background-image: linear-gradient(var(--map-line) 1px, transparent 1px), linear-gradient(90deg, var(--map-line) 1px, transparent 1px);
     background-size: var(--map-grid-size) var(--map-grid-size);
     background-color: var(--map-bg);
+  }
+  /* Quadrillage posé SUR l'image : --map-line (#e4dec9) est invisible sur une
+     photo, on inverse donc la couleur du dessous (blend) pour garantir le
+     contraste, et pointer-events:none pour ne rien gêner (pions, brouillard). */
+  .map-grid--overlay {
+    background-color: transparent;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.45) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.45) 1px, transparent 1px);
+    mix-blend-mode: difference;
+    pointer-events: none;
+    z-index: 1;
   }
   .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; }
 

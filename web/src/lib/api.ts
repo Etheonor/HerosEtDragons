@@ -155,16 +155,18 @@ export const api = {
   maps: {
     list: (campaignId: string) =>
       fetchJson<{ maps: MapSummary[] }>(`/api/maps/campaigns/${campaignId}`),
-    create: (campaignId: string, name: string, image?: File) => {
+    create: (campaignId: string, name: string, image?: File, gridSize?: number | null) => {
       const form = new FormData();
       form.set("name", name);
       if (image) form.set("image", image);
+      if (gridSize !== undefined) form.set("gridSize", String(gridSize));
       return fetchForm<MapSummary>(`/api/maps/campaigns/${campaignId}`, form);
     },
-    update: (mapId: string, fields: { name?: string; image?: File }) => {
+    update: (mapId: string, fields: { name?: string; image?: File; gridSize?: number | null }) => {
       const form = new FormData();
       if (fields.name !== undefined) form.set("name", fields.name);
       if (fields.image) form.set("image", fields.image);
+      if (fields.gridSize !== undefined) form.set("gridSize", String(fields.gridSize));
       return fetchForm<MapSummary>(`/api/maps/${mapId}`, form, "PATCH");
     },
     remove: (mapId: string) => fetchJson<{ ok: true }>(`/api/maps/${mapId}`, { method: "DELETE" }),

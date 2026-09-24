@@ -189,6 +189,8 @@ export const maps = sqliteTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     r2Key: text("r2_key"),
+    /** Taille d'une case en px (null = pas de quadrillage sur cette carte). */
+    gridSize: integer("grid_size"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),

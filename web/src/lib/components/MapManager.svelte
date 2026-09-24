@@ -32,6 +32,32 @@
   let noteDraft = $state('');
   let noteSaving = $state(false);
 
+  let gridFor = $state<string | null>(null);
+  let gridDraft = $state(32);
+  let gridSaving = $state(false);
+
+  function toggleGrid(m: MapSummary) {
+    if (gridFor === m.id) {
+      gridFor = null;
+      return;
+    }
+    gridFor = m.id;
+    gridDraft = m.gridSize ?? 32;
+  }
+
+  async function saveGrid(m: MapSummary, remove = false) {
+    if (gridSaving) return;
+    gridSaving = true;
+    try {
+      await api.maps.update(m.id, { gridSize: remove ? null : gridDraft });
+      await onChanged();
+      if (remove) gridFor = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Grille impossible';
+    }
+    gridSaving = false;
+  }
+
   async function loadNotes() {
     try {
       const res = await api.notes.list(campaignId);
@@ -92,6 +118,8 @@
     renamingId = null;
     pendingDeleteId = null;
     dragOver = false;
+    noteFor = null;
+    gridFor = null;
   }
 
   function pick(id: string) {
@@ -254,9 +282,27 @@
               {#if renamingId !== m.id}
                 <span class="row-actions">
                   <button class="mini" title="Renommer" onclick={() => startRename(m)}>✎</button>
-                  <button class="mini" class:has-note={!!notes[m.id]} title="Note du MJ" onclick={() => toggleNote(m.id)}>✒</button>
-                  <button class="mini" title="Remplacer l'image" onclick={() => triggerReplace(m.id)}>↺</button>
-                  <button class="mini del" class:armed={pendingDeleteId === m.id} title="Supprimer" onclick={() => armDelete(m.id)}>✕</button>
+                  <button
+                    class="mini"
+                    class:has-note={!!notes[m.id]}
+                    title="Note du MJ"
+                    onclick={() => toggleNote(m.id)}>✒</button
+                  >
+                  <button
+                    class="mini"
+                    class:armed={gridFor === m.id}
+                    title={m.gridSize ? `Grille : case de ${m.gridSize} px` : 'Ajouter une grille'}
+                    onclick={() => toggleGrid(m)}>▦</button
+                  >
+                  <button class="mini" title="Remplacer l'image" onclick={() => triggerReplace(m.id)}
+                    >↺</button
+                  >
+                  <button
+                    class="mini del"
+                    class:armed={pendingDeleteId === m.id}
+                    title="Supprimer"
+                    onclick={() => armDelete(m.id)}>✕</button
+                  >
                 </span>
               {/if}
               {#if pendingDeleteId === m.id}
@@ -267,6 +313,34 @@
                 </span>
               {/if}
             </div>
+            {#if gridFor === m.id}
+              <div class="grid-editor">
+                <label class="grid-label" for="grid-{m.id}">Case</label>
+                <input
+                  id="grid-{m.id}"
+                  class="grid-input"
+                  type="number"
+                  min="8"
+                  max="200"
+                  step="1"
+                  bind:value={gridDraft}
+                />
+                <span class="grid-unit">px</span>
+                <div class="note-actions">
+                  <button
+                    class="foot-btn small"
+                    disabled={gridSaving}
+                    onclick={() => saveGrid(m)}>{gridSaving ? '…' : 'Appliquer'}</button
+                  >
+                  {#if m.gridSize}
+                    <button class="foot-btn small" onclick={() => saveGrid(m, true)}
+                      >Retirer</button
+                    >
+                  {/if}
+                  <button class="foot-btn small" onclick={() => (gridFor = null)}>Fermer</button>
+                </div>
+              </div>
+            {/if}
             {#if noteFor === m.id}
               <div class="note-editor">
                 <textarea
@@ -465,6 +539,34 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+  .grid-editor {
+    padding: 4px 7px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .grid-label {
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .grid-input {
+    width: 70px;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    padding: 3px 7px;
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+  }
+  .grid-unit {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: -22px;
+    margin-left: 46px;
+    pointer-events: none;
   }
   .note-input {
     font-family: var(--font-body);

@@ -92,6 +92,8 @@ export interface MapSummary {
   id: string;
   name: string;
   hasImage: boolean;
+  /** Taille d'une case en px à l'écran ; null = pas de quadrillage. */
+  gridSize: number | null;
 }
 
 // ── Compendium ─────────────────────────────────────────────────
