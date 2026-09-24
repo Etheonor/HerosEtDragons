@@ -122,7 +122,7 @@
   let maps = $state<MapSummary[]>([]);
   let mapContainer = $state<HTMLDivElement | null>(null);
   let fogCanvas = $state<HTMLCanvasElement | null>(null);
-  let tool = $state<'move' | 'pnj' | 'marker' | 'fog'>('move');
+  let tool = $state<'move' | 'hand' | 'pnj' | 'marker' | 'fog'>('move');
   let markerText = $state('repère');
   let npcName = $state('PNJ');
   let npcPv = $state(7);
@@ -188,10 +188,16 @@
   // format (large ou haut). Les pions/repères/brouillard restent alignés car
   // leurs coordonnées sont des % de la surface, qui épouse alors l'image.
   let mapAspect = $state<number | null>(null);
+  // L'effet ci-dessous se redéclenche à CHAQUE refreshMaps() (qui remplace le
+  // tableau `maps` et donc l'objet activeMap). Il ne faut remettre mapAspect à
+  // que sur un vrai changement de carte : sinon la surface repassait en mode
+  // « fill », l'image retombait en object-fit:cover et une carte haute se
+  // retrouvait recadrée alors que l'image ne s'était pas rechargée.
+  let aspectForMapId: string | null = null;
   $effect(() => {
-    // Re-déclenché à chaque changement de carte active → on oublie le ratio de
-    // la carte précédente (l'image suivante le re-mesurera à son onload).
-    void activeMap?.id;
+    const id = activeMap?.id ?? null;
+    if (id === aspectForMapId) return;
+    aspectForMapId = id;
     mapAspect = null;
   });
 
@@ -235,6 +241,104 @@
         })()
       : null,
   );
+
+  // ── Vue : zoom + panoramique, STRICTEMENT locaux ─────────────
+  // Chaque joueur a son propre cadrage ; rien n'est stocké ni diffusé, donc le
+  // zoom d'un joueur ne change rien pour les autres. Le DO ignore tout ça : les
+  // pions restent en % de la surface, la transformation est purement visuelle.
+  const VIEW_MIN = 0.5;
+  const VIEW_MAX = 8;
+  let viewZoom = $state(1);
+  let viewPanX = $state(0);
+  let viewPanY = $state(0);
+  let panning = $state<{ x: number; y: number } | null>(null);
+  let viewForMapId: string | null = null;
+
+  /** Taille réelle de la surface (fitted = image ajustée, fill = cadre plein). */
+  const surfaceSize = $derived(
+    fittedSize ? { w: fittedSize.w, h: fittedSize.h } : { w: frameW, h: frameH },
+  );
+
+  $effect(() => {
+    const id = activeMap?.id ?? null;
+    if (id === viewForMapId) return;
+    viewForMapId = id;
+    viewZoom = 1;
+    viewPanX = 0;
+    viewPanY = 0;
+  });
+
+  function resetView() {
+    viewZoom = 1;
+    viewPanX = 0;
+    viewPanY = 0;
+    scheduleFogRedraw();
+  }
+
+  /**
+   * Empêche de perdre la carte, sans casser l'ancrage « zoom sur le curseur ».
+   * Sans marge, dès que la carte couvrait le cadre (cas normal : une carte
+   * haute est d'abord letterboxée sur les côtés), le clamp refusait tout vide et
+   * le point sous la souris glissait de plusieurs % au premier palier. On
+   * autorise donc le cadre à dépasser la carte de VIEW_SLACK de sa taille : le
+   * zoom reste ancré, et le vide autour reste borné (la carte ne peut pas
+   * disparaître). Centrée quand la carte tient dans le cadre.
+   */
+  const VIEW_SLACK = 0.2;
+  function clampView() {
+    const { w: sw, h: sh } = surfaceSize;
+    const z = viewZoom;
+    if (!sw || !sh) return;
+    const sx = (frameW - sw) / 2;
+    const sy = (frameH - sh) / 2;
+    const slackX = frameW * VIEW_SLACK;
+    const slackY = frameH * VIEW_SLACK;
+    viewPanX =
+      z * sw >= frameW
+        ? Math.min(-z * sx + slackX, Math.max(frameW - z * (sx + sw) - slackX, viewPanX))
+        : (frameW * (1 - z)) / 2;
+    viewPanY =
+      z * sh >= frameH
+        ? Math.min(-z * sy + slackY, Math.max(frameH - z * (sy + sh) - slackY, viewPanY))
+        : (frameH * (1 - z)) / 2;
+  }
+
+  /** Zoom ancré sur le curseur : le point sous la souris reste sous la souris. */
+  function zoomAt(clientX: number, clientY: number, factor: number) {
+    const el = frameRef;
+    if (!el || !frameW || !frameH) return;
+    const r = el.getBoundingClientRect();
+    const cx = clientX - r.left;
+    const cy = clientY - r.top;
+    const z0 = viewZoom;
+    const z1 = Math.min(VIEW_MAX, Math.max(VIEW_MIN, z0 * factor));
+    if (z1 === z0) return;
+    const u = (cx - viewPanX) / z0;
+    const v = (cy - viewPanY) / z0;
+    viewZoom = z1;
+    viewPanX = cx - z1 * u;
+    viewPanY = cy - z1 * v;
+    clampView();
+    scheduleFogRedraw();
+  }
+
+  function zoomAtCenter(factor: number) {
+    const el = frameRef;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+  }
+
+  $effect(() => {
+    const el = frameRef;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  });
 
   const displayTokens = $derived.by(() => {
     const out: Record<string, { charId: string; x: number; y: number }> = {
@@ -399,22 +503,40 @@
 
   // ── Carte : coordonnées & interactions ──────────────────────
 
+  /**
+   * Écran → % de la surface, en INVERSANT le zoom/panoramique courant.
+   * Le wrapper porte `transform: translate(tx,ty) scale(z)` en origin 0 0, donc :
+   *   écran = cadre.gauche + tx + z · (offsetSurface + pointLocal)
+   * d'où l'inversion ci-dessous. Sans ce correctif, cliquer pour poser un pion
+   * ou gommer du brouillard atterrirait au mauvais endroit dès que la carte est
+   * zoomée ou déplacée.
+   */
   function mapXY(e: PointerEvent | MouseEvent): { x: number; y: number } {
-    if (!mapContainer) return { x: 50, y: 50 };
-    const r = mapContainer.getBoundingClientRect();
+    const el = frameRef;
+    if (!el) return { x: 50, y: 50 };
+    const { w: sw, h: sh } = surfaceSize;
+    if (!sw || !sh) return { x: 50, y: 50 };
+    const r = el.getBoundingClientRect();
+    const z = viewZoom || 1;
+    const sx = (r.width - sw) / 2;
+    const sy = (r.height - sh) / 2;
+    const lx = (e.clientX - r.left - viewPanX) / z - sx;
+    const ly = (e.clientY - r.top - viewPanY) / z - sy;
     return {
-      x: Math.min(98, Math.max(2, ((e.clientX - r.left) / r.width) * 100)),
-      y: Math.min(97, Math.max(3, ((e.clientY - r.top) / r.height) * 100)),
+      x: Math.min(98, Math.max(2, (lx / sw) * 100)),
+      y: Math.min(97, Math.max(3, (ly / sh) * 100)),
     };
   }
 
-  function toolSelect(t: 'move' | 'pnj' | 'marker' | 'fog') {
+  function toolSelect(t: 'move' | 'hand' | 'pnj' | 'marker' | 'fog') {
     pendingPlace = null;
     tool = tool === t ? 'move' : t;
   }
 
   function tokenPointerDown(charId: string, e: PointerEvent) {
     if (isMj && tool === 'fog') return;
+    // Avec l'outil Main, tout doit panoramiquer — y compris un départ sur un pion.
+    if (tool === 'hand') return;
     if (!canMoveToken(charId)) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -424,6 +546,7 @@
 
   function markerPointerDown(id: string, e: PointerEvent) {
     if (!isMj) return;
+    if (tool === 'hand') return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     drag = { id, kind: 'marker', moved: false };
@@ -431,6 +554,7 @@
   }
 
   function onMapPointerMove(e: PointerEvent) {
+    if (panning) return;
     if (fogErasing) {
       if (fogOn) sendFogReveal(mapXY(e));
       return;
@@ -450,6 +574,7 @@
   function onMapPointerUp() {
     fogErasing = false;
     lastFogPoint = null;
+    panning = null;
     if (drag) {
       const { id, kind } = drag;
       drag = null;
@@ -472,6 +597,33 @@
     fogErasing = true;
     lastFogPoint = null;
     sendFogReveal(mapXY(e));
+  }
+
+  // ── Vue : panoramique (outil « Main », bouton gauche) ───────
+  // Les handlers vivent sur le CADRE et non sur la surface : on peut ainsi
+  // déplacer la carte en partant des marges, ce qui n'est pas possible si le
+  // point de départ doit être sur l'image.
+
+  function onFramePointerDown(e: PointerEvent) {
+    if (tool !== 'hand') return;
+    e.preventDefault();
+    panning = { x: e.clientX, y: e.clientY };
+    skipNextClick = true;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+
+  function onFramePointerMove(e: PointerEvent) {
+    if (!panning) return;
+    viewPanX += e.clientX - panning.x;
+    viewPanY += e.clientY - panning.y;
+    panning = { x: e.clientX, y: e.clientY };
+    clampView();
+  }
+
+  function onFramePointerUp() {
+    if (!panning) return;
+    panning = null;
+    scheduleFogRedraw();
   }
 
   function onMapClick(e: MouseEvent) {
@@ -550,6 +702,18 @@
   let fogDrawnCanvas: HTMLCanvasElement | null = null;
   let fogDrawnMapId: string | null = null;
   let fogDrawnCount = 0;
+  let fogScale = 1;
+  let fogScaleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Repeint le brouillard à la nouvelle résolution (le zoom change l'échelle
+   *  de la backing store). Regroupé pour ne pas redessiner à chaque molette. */
+  function scheduleFogRedraw() {
+    if (fogScaleTimer) clearTimeout(fogScaleTimer);
+    fogScaleTimer = setTimeout(() => {
+      fogScaleTimer = null;
+      drawFog();
+    }, 140);
+  }
 
   function cutFogHole(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
     const px = (x / 100) * w;
@@ -568,6 +732,9 @@
     if (!fogCanvas) return;
     const ctx = fogCanvas.getContext('2d');
     if (!ctx) return;
+    // On dessine en coordonnées de SURFACE et la backing store est plus grande
+    // d'un facteur `fogScale` : le canvas reste net quand la carte est zoomée.
+    ctx.setTransform(fogScale, 0, 0, fogScale, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#3B372E';
@@ -592,13 +759,21 @@
 
   function drawFog() {
     if (!fogCanvas || !mapContainer) return;
-    const r = mapContainer.getBoundingClientRect();
-    const w = Math.max(2, Math.round(r.width));
-    const h = Math.max(2, Math.round(r.height));
-    const resized = fogCanvas.width !== w || fogCanvas.height !== h;
+    // offsetWidth/Height = taille de MISE EN PAGE, insensible au transform CSS.
+    // getBoundingClientRect() renverrait ici la taille déjà zoomée, ce qui
+    // décalerait tous les trous de brouillard.
+    const w = Math.max(2, mapContainer.offsetWidth);
+    const h = Math.max(2, mapContainer.offsetHeight);
+    const dpr = globalThis.devicePixelRatio || 1;
+    const nextScale = Math.min(3, Math.max(1, viewZoom * dpr));
+    const scaleChanged = Math.abs(nextScale - fogScale) > 0.01;
+    fogScale = nextScale;
+    const bw = Math.round(w * fogScale);
+    const bh = Math.round(h * fogScale);
+    const resized = fogCanvas.width !== bw || fogCanvas.height !== bh;
     if (resized) {
-      fogCanvas.width = w;
-      fogCanvas.height = h;
+      fogCanvas.width = bw;
+      fogCanvas.height = bh;
     }
 
     const reveals = activeFog?.reveals ?? [];
@@ -606,7 +781,7 @@
     const sameMap = sameCanvas && fogDrawnMapId === store.state.mapId;
     const grew = sameMap && reveals.length >= fogDrawnCount;
 
-    if (resized || !sameMap || !grew) {
+    if (resized || scaleChanged || !sameMap || !grew) {
       drawFogBase(w, h);
       return;
     }
@@ -614,6 +789,7 @@
 
     const ctx = fogCanvas.getContext('2d');
     if (!ctx) return;
+    ctx.setTransform(fogScale, 0, 0, fogScale, 0, 0);
     ctx.globalCompositeOperation = 'destination-out';
     for (const p of reveals.slice(fogDrawnCount)) {
       cutFogHole(ctx, p.x, p.y, w, h);
@@ -722,6 +898,16 @@
     if (k === '/') {
       e.preventDefault();
       focusChat();
+      return;
+    }
+    if (k === '0') {
+      resetView();
+      return;
+    }
+    // L'outil Main sert à TOUT le monde (chaque joueur cadre sa carte) : il est
+    // donc traité avant le garde isMj ci-dessous.
+    if (k === 'h') {
+      toolSelect('hand');
       return;
     }
     if (!isMj) return;
@@ -963,6 +1149,12 @@
             pendingPlace = { templateId: tpl.id, name: tpl.name, count };
           }} />
           <div class="tsep"></div>
+          <button
+            class="tool-btn"
+            class:active={tool === 'hand'}
+            title="Raccourci : H —glisser pour déplacer la carte"
+            onclick={() => toolSelect('hand')}>Main</button
+          >
           <button class="tool-btn {tool === 'move' ? 'active' : ''}" title="Raccourci : V" onclick={() => toolSelect('move')}>Déplacer</button>
           <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" title="Raccourci : P" onclick={() => toolSelect('pnj')}>+ PNJ</button>
           {#if tool === 'pnj'}
@@ -999,27 +1191,42 @@
         </div>
       {/if}
 
-      <div class="map-frame" bind:this={frameRef}>
+      <div
+        class="map-frame"
+        bind:this={frameRef}
+        role="region"
+        aria-label="Carte de jeu — molette pour zoomer, outil Main pour déplacer"
+        class:panning={!!panning}
+        onpointerdown={onFramePointerDown}
+        onpointermove={onFramePointerMove}
+        onpointerup={onFramePointerUp}
+        onpointercancel={onFramePointerUp}
+      >
         {#if !activeMap}
           <div class="map-placeholder">
             {#if isMj}Créez ou sélectionnez une carte ci-dessus.{:else}Le MJ n'a pas encore choisi de carte.{/if}
           </div>
         {:else}
           <div
-            bind:this={mapContainer}
-            class="map-surface"
-            class:map-surface--fitted={!!fittedSize}
-            class:map-surface--fill={!fittedSize}
-            style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
-            class:cursor-fog={isMj && tool === 'fog'}
-            class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
-            onpointerdown={onMapPointerDown}
-            onpointermove={onMapPointerMove}
-            onpointerup={onMapPointerUp}
-            onpointerleave={onMapPointerUp}
-            onclick={onMapClick}
-            ondblclick={onMapDblClick}
+            class="map-zoom"
+            style="transform: translate({viewPanX}px, {viewPanY}px) scale({viewZoom})"
           >
+            <div
+              bind:this={mapContainer}
+              class="map-surface"
+              class:map-surface--fitted={!!fittedSize}
+              class:map-surface--fill={!fittedSize}
+              class:cursor-hand={tool === 'hand'}
+              style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
+              class:cursor-fog={isMj && tool === 'fog'}
+              class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
+              onpointerdown={onMapPointerDown}
+              onpointermove={onMapPointerMove}
+              onpointerup={onMapPointerUp}
+              onpointerleave={onMapPointerUp}
+              onclick={onMapClick}
+              ondblclick={onMapDblClick}
+            >
             {#if activeMap.hasImage}
               <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
             {/if}
@@ -1071,6 +1278,24 @@
             {#each store.pings as p (p.id)}
               <div class="ping" style="left: {p.x}%; top: {p.y}%;"></div>
             {/each}
+            </div>
+          </div>
+
+          <div
+            class="map-hud"
+            role="toolbar"
+            aria-label="Zoom de la carte"
+            tabindex="-1"
+            onpointerdown={(e) => e.stopPropagation()}
+          >
+            <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
+            <button
+              class="hud-fit"
+              class:off={viewZoom === 1 && viewPanX === 0 && viewPanY === 0}
+              title="Revenir à la carte entière"
+              onclick={resetView}>{Math.round(viewZoom * 100)}%</button
+            >
+            <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
           </div>
         {/if}
       </div>
@@ -1503,11 +1728,61 @@
     margin: 14px;
     min-height: 0;
     position: relative;
+    overflow: hidden;
+    touch-action: none;
   }
+  .map-frame.panning { cursor: grabbing; }
   .map-placeholder { color: var(--text-2); font-style: italic; }
+
+  /* Couche de transformation : c'est ELLE qui porte le zoom/panoramique. Un
+     transform ne change pas la mise en page, donc la surface garde sa taille
+     calculée et le cadre ne peut pas être redimensionné en boucle par le
+     ResizeObserver (le bug de « carte zoomée »). */
+  .map-zoom {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    transform-origin: 0 0;
+  }
+
+  /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
+  .map-hud {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 12px 4px 13px 4px;
+    box-shadow: 0 4px 14px var(--shadow-2);
+  }
+  .map-hud button {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 700;
+    min-width: 26px;
+    height: 24px;
+    padding: 0 5px;
+    background: transparent;
+    border: none;
+    border-radius: 8px 3px 8px 3px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .map-hud button:hover { background: var(--bg); color: var(--text); }
+  .map-hud .hud-fit { color: var(--accent-text); font-size: 11.5px; }
+  .map-hud .hud-fit.off { opacity: 0.55; }
 
   .map-surface {
     position: relative;
+    /* border-box : la taille inline inclut le border, sinon la surface
+       débordait du cadre de 4 px et l'image se trouvait recadrée. */
+    box-sizing: border-box;
     max-width: 100%;
     max-height: 100%;
     /* Contain the mix-blend-mode of the grid overlay to the map (and keep the
@@ -1535,6 +1810,7 @@
   }
   .map-surface.cursor-fog { cursor: crosshair; }
   .map-surface.cursor-place { cursor: copy; }
+  .map-surface.cursor-hand { cursor: grab; }
   .map-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
   .map-grid {
     position: absolute; inset: 0;
