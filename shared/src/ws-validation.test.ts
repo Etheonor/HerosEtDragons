@@ -31,7 +31,8 @@ describe("clientMessageSchema", () => {
       { type: "combat.next" },
       { type: "inv.add", charId: "c1", item: "Corde", qty: 2 },
       { type: "inv.drop", charId: "c1", item: "Corde" },
-      { type: "inv.give", from: "c1", to: "c2", money: { po: 1, pa: 0, pc: 0 } },
+      { type: "inv.give", kind: "money", from: "c1", to: "c2", money: { po: 1, pa: 0, pc: 0 } },
+      { type: "inv.give", kind: "item", from: "c1", to: "c2", item: "Corde" },
     ] as const;
     for (const s of samples) {
       const res = clientMessageSchema.safeParse(s);
@@ -65,6 +66,47 @@ describe("clientMessageSchema", () => {
 
   it("refuse un drop supérieur à n-1", () => {
     const res = clientMessageSchema.safeParse({ type: "dice.roll", sides: 6, n: 4, drop: 4 });
+    expect(res.success).toBe(false);
+  });
+
+  it("inv.give : argent OU objet, jamais les deux, jamais un kind inconnu", () => {
+    const both = clientMessageSchema.safeParse({
+      type: "inv.give",
+      kind: "money",
+      from: "c1",
+      to: "c2",
+      money: { po: 1, pa: 0, pc: 0 },
+      item: "Corde",
+    });
+    expect(both.success).toBe(false);
+
+    const mismatch = clientMessageSchema.safeParse({
+      type: "inv.give",
+      kind: "item",
+      from: "c1",
+      to: "c2",
+      money: { po: 1, pa: 0, pc: 0 },
+    });
+    expect(mismatch.success).toBe(false);
+
+    const badKind = clientMessageSchema.safeParse({
+      type: "inv.give",
+      kind: "gold",
+      from: "c1",
+      to: "c2",
+      item: "Corde",
+    });
+    expect(badKind.success).toBe(false);
+  });
+
+  it("refuse un don d'un montant négatif (argent injouté)", () => {
+    const res = clientMessageSchema.safeParse({
+      type: "inv.give",
+      kind: "money",
+      from: "c1",
+      to: "c2",
+      money: { po: -1, pa: 0, pc: 0 },
+    });
     expect(res.success).toBe(false);
   });
 

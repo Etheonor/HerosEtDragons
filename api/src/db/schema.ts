@@ -12,6 +12,7 @@ import {
   type TableSettings,
 } from "@rollwith/shared/protocol";
 import type { CharacterSheet, ArmorKind } from "@rollwith/shared/sheet";
+import type { Inventory } from "@rollwith/shared/inventory";
 
 export type { CharacterSheet, ArmorKind };
 
@@ -173,6 +174,12 @@ export const characters = sqliteTable(
     pvMax: integer("pv_max").notNull().default(0),
     pvTemp: integer("pv_temp").notNull().default(0),
     conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** Sac d'inventaire (R9) : { items: [{name, qty}], money: {po, pa, pc} }.
+     *  Privé : jamais diffusé dans CharacterCard, seulement au socket concerné. */
+    inventory: text("inventory", { mode: "json" })
+      .$type<Inventory>()
+      .notNull()
+      .default(sql`'{"items":[],"money":{"po":0,"pa":0,"pc":0}}'`),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),

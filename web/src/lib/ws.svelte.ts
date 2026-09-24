@@ -12,6 +12,7 @@ import type {
   CharacterCard,
   TableSettings,
 } from "@rollwith/shared/protocol";
+import type { Inventory } from "@rollwith/shared/inventory";
 import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
 
 export interface TableState {
@@ -52,6 +53,8 @@ export interface TableStore {
   characters: CharacterCard[];
   settings: TableSettings;
   journal: JournalEntry[];
+  /** Sacs visibles par CE joueur : tous pour le MJ, le sien pour un joueur. */
+  inventories: Record<string, Inventory>;
   presence: PresenceUser[];
   pings: Ping[];
   diceAnim: DiceAnim | null;
@@ -71,6 +74,7 @@ export const tableStore = $state<TableStore>({
   characters: [],
   settings: DEFAULT_SETTINGS,
   journal: [],
+  inventories: {},
   presence: [],
   pings: [],
   diceAnim: null,
@@ -101,6 +105,7 @@ export function resetTableStore() {
   tableStore.settings = DEFAULT_SETTINGS;
   tableStore.journal = [];
   journalIds = new Set();
+  tableStore.inventories = {};
   tableStore.presence = [];
   tableStore.pings = [];
   tableStore.diceAnim = null;
@@ -185,6 +190,7 @@ function handleMessage(msg: Record<string, unknown>) {
       tableStore.settings = (msg.settings as TableSettings) ?? DEFAULT_SETTINGS;
       tableStore.journal = (msg.journalTail as JournalEntry[]) ?? [];
       journalIds = new Set(tableStore.journal.map((e) => e.id));
+      tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
       break;
 
@@ -237,6 +243,11 @@ function handleMessage(msg: Record<string, unknown>) {
       if (entry.id !== undefined && journalIds.has(entry.id)) break;
       if (entry.id !== undefined) journalIds.add(entry.id);
       tableStore.journal = [...tableStore.journal, entry];
+      break;
+    }
+
+    case "inv": {
+      tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       break;
     }
 

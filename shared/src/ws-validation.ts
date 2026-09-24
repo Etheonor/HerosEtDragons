@@ -153,32 +153,42 @@ export const initiativeRollSchema = z.object({
 
 export const combatNextSchema = z.object({ type: z.literal("combat.next") });
 
-// Messages d'inventaire (protocole, phase 7 pas encore câblée) :
-// validés pour rester alignés, le DO répondra « unknown » en attendant.
+// Messages d'inventaire (R9). `inv.give` couvre l'argent ET les objets via un
+// champ `kind` : le discriminant externe du union reste `type`, donc on ne peut
+// pas imbriquer un second discriminatedUnion — d'où la refinement « xor ».
 const money = z.object({
   po: intField(0, 1_000_000, "po"),
   pa: intField(0, 1_000_000, "pa"),
   pc: intField(0, 1_000_000, "pc"),
 });
 
-export const invGiveSchema = z.object({
-  type: z.literal("inv.give"),
-  from: id,
-  to: id,
-  money,
-});
+const itemName = z.string({ error: "objet requis" }).min(1).max(200);
+
+export const invGiveSchema = z
+  .object({
+    type: z.literal("inv.give"),
+    kind: z.enum(["money", "item"]),
+    from: id,
+    to: id,
+    money: money.optional(),
+    item: itemName.optional(),
+  })
+  .refine((v) => (v.kind === "money" ? !!v.money && !v.item : !!v.item && !v.money), {
+    message: "don : argent ou objet, pas les deux",
+    path: ["kind"],
+  });
 
 export const invAddSchema = z.object({
   type: z.literal("inv.add"),
   charId: id,
-  item: z.string({ error: "objet requis" }).min(1).max(200),
+  item: itemName,
   qty: intField(1, 9999, "quantité").default(1),
 });
 
 export const invDropSchema = z.object({
   type: z.literal("inv.drop"),
   charId: id,
-  item: z.string({ error: "objet requis" }).min(1).max(200),
+  item: itemName,
 });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [

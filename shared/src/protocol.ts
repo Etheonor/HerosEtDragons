@@ -4,7 +4,7 @@
 // Type guards testés.
 // ═══════════════════════════════════════════════════════════
 
-import type { Money } from "./inventory";
+import type { Inventory, Money } from "./inventory";
 import type { InitiativeEntry } from "./initiative";
 
 export type Role = "mj" | "player";
@@ -126,6 +126,8 @@ export interface TableSnapshot {
   settings: TableSettings;
   journalTail: JournalEntry[];
   presence: PresenceUser[];
+  /** Sacs visibles par CE socket : tous pour le MJ, le sien pour un joueur. */
+  inventories: Record<string, Inventory>;
 }
 
 // ── Client → Serveur ──────────────────────────────────────────
@@ -392,6 +394,14 @@ export interface DiceResultMsg {
 export interface PresenceMsg {
   type: "presence";
   users: PresenceUser[];
+}
+
+/** Sacs d'inventaire — filtré par rôle : le MJ reçoit tous les sacs, un
+ *  joueur le sien seulement (R9.1). Ne transite JAMAIS par CharacterCard, qui
+ *  est diffusé à tous. */
+export interface InventoryMsg {
+  type: "inv";
+  inventories: Record<string, Inventory>;
 }
 
 export interface ErrorMsg {

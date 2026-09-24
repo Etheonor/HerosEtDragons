@@ -16,6 +16,7 @@ import type { GameTableDO } from "../src/do/game-table";
 const CAMPAIGN = "campaign-test";
 const MJ = { userId: "mj-1", name: "Maître", role: "mj" as const };
 const PLAYER = { userId: "p1", name: "Kaelith", role: "player" as const };
+const PLAYER2 = { userId: "p2", name: "Ragnar", role: "player" as const };
 
 // NB : createDb doit être créé DANS le test (module scope = mauvais isolate).
 
@@ -48,6 +49,7 @@ async function seedWorld() {
     .values([
       { id: MJ.userId, name: MJ.name, email: "mj@test.local" },
       { id: PLAYER.userId, name: PLAYER.name, email: "p1@test.local" },
+      { id: PLAYER2.userId, name: PLAYER2.name, email: "p2@test.local" },
     ]);
   await db!.insert(schema.campaigns).values({
     id: CAMPAIGN,
@@ -59,6 +61,7 @@ async function seedWorld() {
     .values([
       { campaignId: CAMPAIGN, userId: MJ.userId, role: "mj" },
       { campaignId: CAMPAIGN, userId: PLAYER.userId, role: "player" },
+      { campaignId: CAMPAIGN, userId: PLAYER2.userId, role: "player" },
     ]);
   await d()
     .insert(schema.characters)
@@ -88,6 +91,20 @@ async function seedWorld() {
         sheet: createSheet({ identite: { nom: "Gobelin" }, pvMax: 7, ca: 15, initiativeBonus: 2 }),
         pv: 7,
         pvMax: 7,
+        pvTemp: 0,
+        conditions: [],
+      },
+      {
+        id: "pj-2",
+        campaignId: CAMPAIGN,
+        ownerId: PLAYER2.userId,
+        kind: "pj",
+        name: "Ragnar",
+        color: "#7FA3B8",
+        active: true,
+        sheet: createSheet({ identite: { nom: "Ragnar" }, pvMax: 30, ca: 14 }),
+        pv: 30,
+        pvMax: 30,
         pvTemp: 0,
         conditions: [],
       },
@@ -194,12 +211,11 @@ describe("GameTableDO — intégration", () => {
     const plSnap = await player.next("snapshot");
     await mj.next("presence");
 
-    expect((mjSnap!.characters as unknown[]).length).toBe(3);
+    expect((mjSnap!.characters as unknown[]).length).toBe(4);
     // B5 : sans pion révélé, un joueur ne reçoit pas la carte des PNJ —
     // ni leur nom, ni leurs PV. Un simple rechargement ne rend rien visible.
     const plChars = plSnap!.characters as { id: string; kind: string }[];
-    expect(plChars.length).toBe(1);
-    expect(plChars.map((c) => c.id)).toEqual(["pj-1"]);
+    expect(plChars.map((c) => c.id).sort()).toEqual(["pj-1", "pj-2"]);
     const mjPnj = pnjCards(mjSnap!);
     expect((mjPnj["pnj-1"] as { pv: number | null }).pv).toBe(7);
   });
@@ -538,6 +554,135 @@ describe("GameTableDO — intégration", () => {
       expect(live?.mapId).toBeNull();
       expect(live?.tokensByMap["map-1"]).toBeUndefined();
     });
+  });
+
+  it("inventaire (R9) : le MJ ajoute, le joueur donne le sien, le sac reste privé", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const kaelith = await connect({ ...PLAYER, charId: "pj-1" });
+    await kaelith.ready();
+    const other = await connect({ ...PLAYER2, charId: "pj-2" });
+    await other.ready();
+
+    // 1. Le MJ ajoute des objets et de l'argent à Kaelith.
+    mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 2 });
+    mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 1 });
+    await mj.nextWhere((m) => m.type === "inv");
+
+    // La fusion par nom est insensible à la casse : 2 + 1 = 3.
+    const mjInv = await mj.nextWhere((m) => m.type === "inv");
+    const asInv = (m: Record<string, unknown>) =>
+      (m.inventories as Record<string, { items: { name: string; qty: number }[] }>)["pj-1"]!;
+    expect(asInv(mjInv).items).toEqual([{ name: "Potion de soin", qty: 3 }]);
+
+    // 2. Le joueur ne voit QUE son sac (R9.1) : pas celui de l'autre PJ.
+    const plInv = await kaelith.nextWhere((m) => m.type === "inv");
+    const plBags = plInv.inventories as Record<string, unknown>;
+    expect(Object.keys(plBags)).toEqual(["pj-1"]);
+
+    // 3. Le joueur jette un objet de SON sac, et le mouvement est journalisé.
+    kaelith.send({ type: "inv.drop", charId: "pj-1", item: "potion de soin" });
+    const journal = await other.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { text: string }).text.includes("jette"),
+    );
+    expect((journal.entry as { text: string }).text).toContain("jette Potion de soin");
+    const after = await kaelith.nextWhere((m) => {
+      const bags = m.inventories as Record<string, { items: { qty: number }[] }> | undefined;
+      return bags?.["pj-1"]?.items[0]?.qty === 2;
+    });
+    expect(
+      (after.inventories as Record<string, { items: { qty: number }[] }>)["pj-1"]!.items[0]!.qty,
+    ).toBe(2);
+  });
+
+  it("inventaire (R9) : un joueur ne peut pas toucher au sac d'un autre", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const kaelith = await connect({ ...PLAYER, charId: "pj-1" });
+    await kaelith.ready();
+
+    // Le sac du PNJ est REMPLI : sans le garde d'autorisation, les deux
+    // tentatives ci-dessous réussiraient (l'objet existe, le solde existe).
+    mj.send({ type: "inv.add", charId: "pnj-1", item: "Torche", qty: 4 });
+    mj.send({ type: "inv.add", charId: "pj-2", item: "Parchemin", qty: 1 });
+    await mj.nextWhere((m) => m.type === "inv");
+    await mj.nextWhere((m) => m.type === "inv");
+    await d()
+      .update(schema.characters)
+      .set({ inventory: { items: [{ name: "Torche", qty: 4 }], money: { po: 5, pa: 0, pc: 0 } } })
+      .where(eq(schema.characters.id, "pnj-1"));
+    await tableStub().notifyCharacterUpdated("pnj-1");
+    await new Promise((r) => setTimeout(r, 100));
+
+    // 1. Jeter depuis le sac d'un PNJ → refusé.
+    kaelith.send({ type: "inv.drop", charId: "pnj-1", item: "Torche" });
+    // 2. Donner AU NOM d'un autre (from ≠ son personnage) → refusé.
+    kaelith.send({
+      type: "inv.give",
+      kind: "item",
+      from: "pnj-1",
+      to: "pj-1",
+      item: "Torche",
+    });
+    // 3. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
+    //    cas légitime), donc on cible bien pnj-1 pour tester le refus.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const npj = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .get();
+    // La torche est toujours là, à 4 : ni jetée, ni donnée.
+    expect((npj!.inventory as { items: { name: string; qty: number }[] }).items).toEqual([
+      { name: "Torche", qty: 4 },
+    ]);
+  });
+
+  it("inventaire (R9) : transfert d'argent et d'objet, atomique et vérifié des deux côtés", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const kaelith = await connect({ ...PLAYER, charId: "pj-1" });
+    await kaelith.ready();
+
+    mj.send({ type: "inv.add", charId: "pj-1", item: "Épée", qty: 1 });
+    await mj.nextWhere((m) => m.type === "inv");
+    await d()
+      .update(schema.characters)
+      .set({ inventory: { items: [{ name: "Épée", qty: 1 }], money: { po: 10, pa: 0, pc: 0 } } })
+      .where(eq(schema.characters.id, "pj-1"));
+    await tableStub().notifyCharacterUpdated("pj-1");
+    await mj.nextWhere((m) => m.type === "inv");
+
+    // Don de 10 po + de l'épée à pj-2 (le PNJ Loup, alone propriétaire).
+    kaelith.send({
+      type: "inv.give",
+      kind: "money",
+      from: "pj-1",
+      to: "pj-2",
+      money: { po: 10, pa: 0, pc: 0 },
+    });
+    await mj.nextWhere((m) => m.type === "inv");
+
+    // Fonds insuffisants ensuite → rien ne bouge, pas de duplication d'argent.
+    kaelith.send({
+      type: "inv.give",
+      kind: "money",
+      from: "pj-1",
+      to: "pj-2",
+      money: { po: 10, pa: 0, pc: 0 },
+    });
+    await new Promise((r) => setTimeout(r, 120));
+
+    const [from, to] = await Promise.all([
+      d().select().from(schema.characters).where(eq(schema.characters.id, "pj-1")).get(),
+      d().select().from(schema.characters).where(eq(schema.characters.id, "pj-2")).get(),
+    ]);
+    expect((from!.inventory as { money: { po: number } }).money.po).toBe(0);
+    expect((to!.inventory as { money: { po: number } }).money.po).toBe(10);
   });
 
   it("shareCompendium (RPC) : entrée de journal + ligne compendium_shares, broadcast aux connectés", async () => {

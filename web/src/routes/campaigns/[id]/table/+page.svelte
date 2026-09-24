@@ -3,6 +3,7 @@
   import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import type { JournalEntry } from '@rollwith/shared/protocol';
+  import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
@@ -377,6 +378,62 @@
   const myCharId = $derived(
     store.characters.find((c) => c.kind === 'pj' && c.ownerId === session?.user.id)?.id ?? null,
   );
+
+  // ── Inventaire & échanges (R9) ───────────────────────────────
+  const EMPTY_INV: Inventory = { items: [], money: { po: 0, pa: 0, pc: 0 } };
+  // R9.1 : un joueur est verrouillé sur son propre sac, le MJ choisit librement.
+  const invCandidates = $derived(
+    isMj ? store.characters.map((c) => ({ id: c.id, name: c.name })) : [],
+  );
+  let invSelected = $state<string | null>(null);
+  const invTarget = $derived(isMj ? (invSelected ?? invCandidates[0]?.id ?? null) : myCharId);
+  const invOwner = $derived(
+    invTarget ? (store.characters.find((c) => c.id === invTarget) ?? null) : null,
+  );
+  const inv = $derived<Inventory>(
+    invTarget ? (store.inventories[invTarget] ?? EMPTY_INV) : EMPTY_INV,
+  );
+  // Cible de don : les autres PJs, jamais soi-même.
+  const invGiveTargets = $derived(
+    store.characters.filter((c) => c.kind === 'pj' && c.id !== invTarget),
+  );
+
+  let invItemDraft = $state('');
+  let invQtyDraft = $state(1);
+  let invGiveTo = $state<string | null>(null);
+  let invPoDraft = $state(0);
+  let invPaDraft = $state(0);
+  let invPcDraft = $state(0);
+
+  function invAddItem() {
+    const name = invItemDraft.trim();
+    if (!name || !invTarget || !isMj) return;
+    sendWs({ type: 'inv.add', charId: invTarget, item: name, qty: Math.max(1, invQtyDraft | 0) });
+    invItemDraft = '';
+    invQtyDraft = 1;
+  }
+
+  function invDrop(item: string) {
+    if (!invTarget) return;
+    sendWs({ type: 'inv.drop', charId: invTarget, item });
+  }
+
+  function invGiveItem(item: string) {
+    if (!invTarget || !invGiveTo) return;
+    sendWs({ type: 'inv.give', kind: 'item', from: invTarget, to: invGiveTo, item });
+  }
+
+  function invGiveMoney() {
+    if (!invTarget || !invGiveTo) return;
+    const po = Math.max(0, invPoDraft | 0);
+    const pa = Math.max(0, invPaDraft | 0);
+    const pc = Math.max(0, invPcDraft | 0);
+    if (po + pa + pc === 0) return;
+    sendWs({ type: 'inv.give', kind: 'money', from: invTarget, to: invGiveTo, money: { po, pa, pc } });
+    invPoDraft = 0;
+    invPaDraft = 0;
+    invPcDraft = 0;
+  }
 
   function canRollInitiative(charId: string): boolean {
     return isMj || charId === myCharId;
@@ -1432,7 +1489,70 @@
       <!-- Onglet Inventaire -->
       {#if activeTab === 'inv'}
         <div class="inv-tab">
-          <p class="inv-placeholder">Inventaire — à venir</p>
+          {#if invGiveTargets.length === 0}
+            <p class="inv-placeholder">Inventaire — aucun personnage visible</p>
+          {:else}
+            {#if isMj && invCandidates.length > 1}
+              <div class="inv-selector">
+                <label for="inv-bag">Sac</label>
+                <select id="inv-bag" bind:value={invSelected}>
+                  {#each invCandidates as c (c.id)}
+                    <option value={c.id}>{c.name}</option>
+                  {/each}
+                </select>
+              </div>
+            {:else}
+              <div class="inv-owner">{invOwner?.name ?? '—'}</div>
+            {/if}
+
+            <div class="inv-purse">
+              <span class="coin po">{inv.money.po}<em>po</em></span>
+              <span class="coin pa">{inv.money.pa}<em>pa</em></span>
+              <span class="coin pc">{inv.money.pc}<em>pc</em></span>
+            </div>
+
+            <ul class="inv-list">
+              {#each inv.items as it (it.name)}
+                <li>
+                  <span class="inv-name">{it.name}{#if it.qty > 1}<span class="inv-qty">×{it.qty}</span>{/if}</span>
+                  <span class="inv-actions">
+                    {#if invGiveTo}
+                      <button title="Donner à {store.characters.find((c) => c.id === invGiveTo)?.name}" onclick={() => invGiveItem(it.name)}>→</button>
+                    {/if}
+                    <button title="Jeter {it.name}" onclick={() => invDrop(it.name)}>✕</button>
+                  </span>
+                </li>
+              {:else}
+                <li class="inv-empty">Sac vide</li>
+              {/each}
+            </ul>
+
+            {#if isMj}
+              <div class="inv-add">
+                <input class="inv-input" placeholder="nom de l'objet" bind:value={invItemDraft} onkeydown={(e) => e.key === 'Enter' && invAddItem()} />
+                <input class="inv-input narrow" type="number" min="1" max="9999" bind:value={invQtyDraft} title="quantité" />
+                <button class="ghost-btn" onclick={invAddItem}>Ajouter</button>
+              </div>
+            {/if}
+
+            {#if invGiveTargets.length > 0}
+              <div class="inv-give">
+                <div class="inv-give-head">Donner à</div>
+                <select class="inv-select" bind:value={invGiveTo}>
+                  <option value={null}>— choisir —</option>
+                  {#each invGiveTargets as c (c.id)}
+                    <option value={c.id}>{c.name}</option>
+                  {/each}
+                </select>
+                <div class="inv-money">
+                  <input class="inv-input narrow" type="number" min="0" bind:value={invPoDraft} placeholder="po" />
+                  <input class="inv-input narrow" type="number" min="0" bind:value={invPaDraft} placeholder="pa" />
+                  <input class="inv-input narrow" type="number" min="0" bind:value={invPcDraft} placeholder="pc" />
+                  <button class="ghost-btn" disabled={!invGiveTo} onclick={invGiveMoney}>Donner l'argent</button>
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       {/if}
     </aside>
@@ -2029,6 +2149,76 @@
     border-bottom: 1px dashed var(--border-soft); color: var(--text-2);
   }
 
-  .inv-tab { padding: 14px; flex: 1; }
+  .inv-tab { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
   .inv-placeholder { color: var(--text-2); font-style: italic; font-size: 13px; }
+  .inv-selector { display: flex; align-items: center; gap: 6px; }
+  .inv-selector label { font-size: 12px; color: var(--text-2); }
+  .inv-owner { font-family: var(--font-title); font-size: 14px; color: var(--heading); }
+  .inv-select,
+  .inv-selector select {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    padding: 4px 7px;
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    max-width: 100%;
+  }
+  .inv-purse { display: flex; gap: 6px; }
+  .coin {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 3px 9px;
+    border: 2px solid var(--border);
+    border-radius: 10px 4px 10px 4px;
+    background: var(--bg);
+  }
+  .coin em { font-style: normal; font-size: 10.5px; color: var(--text-2); }
+  .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .inv-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 4px 6px;
+    border-bottom: 1px dashed var(--border-soft);
+  }
+  .inv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inv-qty { color: var(--accent-text); font-weight: 700; margin-left: 4px; }
+  .inv-empty { color: var(--text-3); font-style: italic; justify-content: center; }
+  .inv-actions { display: flex; gap: 2px; flex: none; }
+  .inv-actions button {
+    font-size: 12px;
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .inv-actions button:hover { background: var(--bg); color: var(--text); }
+  .inv-add { display: flex; gap: 4px; align-items: center; }
+  .inv-input {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    padding: 4px 7px;
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    min-width: 0;
+    flex: 1;
+  }
+  .inv-input.narrow { flex: none; width: 52px; }
+  .inv-give { border-top: 1px dashed var(--border-soft); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .inv-give-head { font-size: 11.5px; color: var(--text-2); font-weight: 700; letter-spacing: 0.4px; }
+  .inv-money { display: flex; gap: 4px; align-items: center; }
 </style>

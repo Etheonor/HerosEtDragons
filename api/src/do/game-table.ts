@@ -2,6 +2,14 @@ import { DurableObject } from "cloudflare:workers";
 import { createDb, schema } from "../db";
 import { createSheet } from "@rollwith/shared/sheet";
 import { applyDamage } from "@rollwith/shared/damage";
+import {
+  addItem,
+  removeItem,
+  transferItem,
+  transferMoney,
+  type Inventory,
+  type Money,
+} from "@rollwith/shared/inventory";
 import type {
   JournalEntry,
   Marker,
@@ -57,6 +65,35 @@ const FOG_REVEAL_RADIUS_PCT = 9;
 const FOG_REVEAL_MIN_SPACING_PCT = 3;
 const FOG_MAX_REVEALS = 600;
 
+/** Rendu d'un montant pour le journal : « 1 po 20 pa 5 pc », zéro omis. */
+function formatMoney(m: Money): string {
+  const parts: string[] = [];
+  if (m.po) parts.push(`${m.po} po`);
+  if (m.pa) parts.push(`${m.pa} pa`);
+  if (m.pc) parts.push(`${m.pc} pc`);
+  return parts.length > 0 ? parts.join(" ") : "rien";
+}
+
+/** Réflexe défensif : la colonne est NOT NULL mais une ligne ancienne ou une
+ *  écriture manuelle pourrait contenir null/un objet partiel. */
+function normalizeInventory(raw: unknown): Inventory {
+  const v = (raw ?? {}) as Partial<Inventory>;
+  const money = (v.money ?? {}) as Partial<Money>;
+  const items = Array.isArray(v.items)
+    ? v.items
+        .filter((i): i is { name: string; qty: number } => !!i && typeof i.name === "string")
+        .map((i) => ({ name: i.name, qty: Math.max(1, Math.floor(i.qty) || 1) }))
+    : [];
+  return {
+    items,
+    money: {
+      po: Math.max(0, Math.floor(money.po ?? 0) || 0),
+      pa: Math.max(0, Math.floor(money.pa ?? 0) || 0),
+      pc: Math.max(0, Math.floor(money.pc ?? 0) || 0),
+    },
+  };
+}
+
 // Sécurité (audit S1/S2) : un membre authentifié reste borné.
 const MAX_RAW_MESSAGE_BYTES = 32_000;
 const MAX_SOCKETS_PER_USER = 4;
@@ -95,6 +132,9 @@ type MarkerMoveMsg = Extract<ClientMessageInput, { type: "marker.move" }>;
 type MarkerRemoveMsg = Extract<ClientMessageInput, { type: "marker.remove" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
+type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
+type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
+type InvGiveMsg = Extract<ClientMessageInput, { type: "inv.give" }>;
 type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
 
@@ -439,7 +479,7 @@ export class GameTableDO extends DurableObject<Env> {
     // L'upgrade (101) part IMMÉDIATEMENT. Le snapshot (plusieurs lectures D1)
     // est construit après : un handshake lent pendant un cold start multi-connect
     // faisait échouer la connexion (interruption au chargement de la page).
-    void this.afterUpgrade(server, role).catch(() => {
+    void this.afterUpgrade(server, attachment).catch(() => {
       /* le client se reconnecte ; le prochain snapshot passera */
     });
 
@@ -447,8 +487,8 @@ export class GameTableDO extends DurableObject<Env> {
   }
 
   /** Snapshot envoyé juste après l'upgrade (non bloquant pour le 101). */
-  private async afterUpgrade(ws: WebSocket, role: "mj" | "player"): Promise<void> {
-    const snapshot = await this.buildSnapshot(role);
+  private async afterUpgrade(ws: WebSocket, att: WsAttachment): Promise<void> {
+    const snapshot = await this.buildSnapshot(att.role, att.charId);
     try {
       ws.send(JSON.stringify({ type: "snapshot", ...snapshot }));
     } catch {
@@ -593,6 +633,15 @@ export class GameTableDO extends DurableObject<Env> {
         case "fog.disable":
           await this.handleFogDisable(ws, attachment);
           break;
+        case "inv.add":
+          await this.handleInvAdd(ws, attachment, m);
+          break;
+        case "inv.drop":
+          await this.handleInvDrop(ws, attachment, m);
+          break;
+        case "inv.give":
+          await this.handleInvGive(ws, attachment, m);
+          break;
         case "ping":
           this.handlePing(attachment, m);
           break;
@@ -725,6 +774,8 @@ export class GameTableDO extends DurableObject<Env> {
       conditions: ch.conditions,
     };
     this.broadcastRoleAware({ characters: { [charId]: card } });
+    // Le sac a pu changer en REST (fiche, etc.) : on le repousse filtré.
+    await this.broadcastInventories();
   }
 
   /**
@@ -1640,6 +1691,151 @@ export class GameTableDO extends DurableObject<Env> {
     await this.broadcastPnjVisibility(); // B5 : plus de brouillard = tous les PNJ visibles
   }
 
+  // ── Inventaire & échanges (R9) ───────────────────────────────
+  // Les sacs sont PRIVÉS (R9.1) : un joueur ne reçoit que le sien, le MJ tous.
+  // Ils ne voyagent donc jamais dans CharacterCard (diffusé à tous) mais dans un
+  // message « inv » filtré socket par socket.
+  //
+  // Atomicité (R9.5) : handleWsMessage sérialise toutes les mutations via
+  // mutationChain, donc le cycle lecture→calcul→écriture de deux sacs ne peut
+  // pas être entrelacé par un autre message : pas de duplication ni de perte.
+
+  private async loadInv(
+    charId: string,
+  ): Promise<{ inv: Inventory; name: string; kind: string } | null> {
+    const db = this.getDb();
+    const [ch] = await db
+      .select({
+        name: schema.characters.name,
+        kind: schema.characters.kind,
+        inv: schema.characters.inventory,
+      })
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
+      .limit(1);
+    if (!ch) return null;
+    return { inv: normalizeInventory(ch.inv), name: ch.name, kind: ch.kind };
+  }
+
+  private async saveInv(charId: string, inv: Inventory): Promise<void> {
+    await this.getDb()
+      .update(schema.characters)
+      .set({ inventory: inv, updatedAt: new Date() })
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
+  }
+
+  /** Pousse les sacs visibles à chaque socket (MJ : tous, joueur : le sien). */
+  private async broadcastInventories(): Promise<void> {
+    const rows = await this.getDb()
+      .select({ id: schema.characters.id, inv: schema.characters.inventory })
+      .from(schema.characters)
+      .where(eq(schema.characters.campaignId, this.campaignId));
+    const all: Record<string, Inventory> = {};
+    for (const r of rows) all[r.id] = normalizeInventory(r.inv);
+
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | null;
+      if (!att) continue;
+      const inventories: Record<string, Inventory> = {};
+      if (att.role === "mj") {
+        Object.assign(inventories, all);
+      } else if (att.charId && all[att.charId]) {
+        inventories[att.charId] = all[att.charId]!;
+      }
+      try {
+        ws.send(JSON.stringify({ type: "inv", inventories }));
+      } catch {
+        /* socket fermée */
+      }
+    }
+  }
+
+  /** Un mouvement est public seulement si TOUS les personnages nommés sont
+   *  visibles aux joueurs (B5) : sinon l'entrée reste « mj ». */
+  private invVisibility(charIds: string[]): "all" | "mj" {
+    return charIds.every((id) => this.journalVisibilityFor(id) === "all") ? "all" : "mj";
+  }
+
+  private async journalInv(charIds: string[], text: string, att: WsAttachment): Promise<void> {
+    const visibility = this.invVisibility(charIds);
+    const entry = this.makeJournalEntry("system", att.name ?? null, att.color, text);
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
+  }
+
+  /** MJ uniquement : conjure / dépose N × un objet dans un sac. */
+  private async handleInvAdd(ws: WebSocket, att: WsAttachment, msg: InvAddMsg) {
+    if (att.role !== "mj") return;
+    const target = await this.loadInv(msg.charId);
+    if (!target) return;
+    const inv = addItem(target.inv, msg.item.trim(), msg.qty);
+    await this.saveInv(msg.charId, inv);
+    await this.journalInv(
+      [msg.charId],
+      `✦ Le MJ ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${msg.item.trim()} à ${target.name}.`,
+      att,
+    );
+    await this.broadcastInventories();
+  }
+
+  /** MJ ou propriétaire : jette ×1 un objet de son sac. */
+  private async handleInvDrop(ws: WebSocket, att: WsAttachment, msg: InvDropMsg) {
+    if (att.role !== "mj" && msg.charId !== att.charId) return;
+    const target = await this.loadInv(msg.charId);
+    if (!target) return;
+    // Le nom canonique sert au journal : « potion de soin » et « Potion de
+    // soin » désignent le même objet, le journal doit donc écrire pareil.
+    const stored = target.inv.items.find((i) => i.name.toLowerCase() === msg.item.toLowerCase());
+    if (!stored) return;
+    let inv: Inventory;
+    try {
+      inv = removeItem(target.inv, msg.item);
+    } catch {
+      return;
+    }
+    await this.saveInv(msg.charId, inv);
+    await this.journalInv([msg.charId], `✦ ${target.name} jette ${stored.name}.`, att);
+    await this.broadcastInventories();
+  }
+
+  /** MJ, ou propriétaire de `from` : donne de l'argent ou ×1 objet à un autre PJ. */
+  private async handleInvGive(ws: WebSocket, att: WsAttachment, msg: InvGiveMsg) {
+    if (att.role !== "mj" && msg.from !== att.charId) return;
+    if (msg.from === msg.to) return;
+    const [from, to] = await Promise.all([this.loadInv(msg.from), this.loadInv(msg.to)]);
+    if (!from || !to) return;
+
+    let nextFrom: Inventory;
+    let nextTo: Inventory;
+    let text: string;
+    try {
+      if (msg.kind === "money" && msg.money) {
+        const [mFrom, mTo] = transferMoney(from.inv.money, to.inv.money, msg.money);
+        nextFrom = { ...from.inv, money: mFrom };
+        nextTo = { ...to.inv, money: mTo };
+        text = `✦ ${from.name} donne ${formatMoney(msg.money)} à ${to.name}.`;
+      } else if (msg.item) {
+        const stored = from.inv.items.find((i) => i.name.toLowerCase() === msg.item!.toLowerCase());
+        if (!stored) return;
+        [nextFrom, nextTo] = transferItem(from.inv, to.inv, msg.item);
+        text = `✦ ${from.name} donne ${stored.name} à ${to.name}.`;
+      } else {
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    await this.saveInv(msg.from, nextFrom);
+    await this.saveInv(msg.to, nextTo);
+    await this.journalInv([msg.from, msg.to], text, att);
+    await this.broadcastInventories();
+  }
+
   private handlePing(att: WsAttachment, msg: PingMsg) {
     const x = this.clamp(msg.x);
     const y = this.clamp(msg.y);
@@ -1990,7 +2186,10 @@ export class GameTableDO extends DurableObject<Env> {
     }
   }
 
-  private async buildSnapshot(role: "mj" | "player"): Promise<{
+  private async buildSnapshot(
+    role: "mj" | "player",
+    charId: string | null,
+  ): Promise<{
     state: TableLiveState;
     characters: CharacterCard[];
     settings: TableSettings;
@@ -2002,6 +2201,7 @@ export class GameTableDO extends DurableObject<Env> {
       charId: string | null;
       color: string;
     }[];
+    inventories: Record<string, Inventory>;
   }> {
     const db = this.getDb();
     const state = await this.getState();
@@ -2057,6 +2257,13 @@ export class GameTableDO extends DurableObject<Env> {
     const journalTail = await this.getJournalTail(50, role);
     const presence = this.getPresence();
 
+    // R9.1 : les sacs sont privés. Le MJ voit tous, un joueur seulement le sien.
+    const inventories: Record<string, Inventory> = {};
+    for (const ch of charRows) {
+      if (role === "mj") inventories[ch.id] = normalizeInventory(ch.inventory);
+      else if (charId && ch.id === charId) inventories[ch.id] = normalizeInventory(ch.inventory);
+    }
+
     return {
       state: {
         mode: state.mode,
@@ -2070,6 +2277,7 @@ export class GameTableDO extends DurableObject<Env> {
       settings: campaign?.settings ?? DEFAULT_SETTINGS,
       journalTail,
       presence,
+      inventories,
     };
   }
 

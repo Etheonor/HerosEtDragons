@@ -1,0 +1,1 @@
+ALTER TABLE `characters` ADD `inventory` text DEFAULT '{"items":[],"money":{"po":0,"pa":0,"pc":0}}' NOT NULL;
