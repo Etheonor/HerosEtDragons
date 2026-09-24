@@ -16,6 +16,10 @@ dist
 !.vscode/extensions.json
 .idea
 
+# Index/outils d'assistant (hors dépôt)
+.serena
+.codegraph
+
 # Logs
 *.log
 
