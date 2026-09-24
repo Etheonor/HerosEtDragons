@@ -139,27 +139,29 @@
   const FOG_SEND_MIN_DIST = 2.5;
 
   // P2 (audit) : un pointermove = jusqu'à 60-120 messages/s. On n'émet qu'une
-  // fois par rAF ; la position locale (dragOverride) reste fluide sans réseau.
+  // fois par rAF ET au plus toutes les TOKEN_SEND_MIN_MS : la position locale
+  // (dragOverride) reste fluide sans réseau, et les autres joueurs n'ont pas
+  // besoin de 60 Hz — 30/s est indiscernable et deux fois moins de trafic.
+  const TOKEN_SEND_MIN_MS = 33;
   let pendingTokenMove: { id: string; x: number; y: number } | null = null;
   let tokenMoveRaf = 0;
+  let tokenMoveLastSent = 0;
 
-  function scheduleTokenMove(id: string, x: number, y: number) {
-    pendingTokenMove = { id, x, y };
-    if (tokenMoveRaf) return;
-    tokenMoveRaf = requestAnimationFrame(() => {
-      tokenMoveRaf = 0;
-      const m = pendingTokenMove;
-      pendingTokenMove = null;
-      if (m) sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
-    });
-  }
-
-  function flushTokenMove() {
+  function flushTokenMove(force = false) {
     if (tokenMoveRaf) cancelAnimationFrame(tokenMoveRaf);
     tokenMoveRaf = 0;
     const m = pendingTokenMove;
     pendingTokenMove = null;
-    if (m) sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+    if (!m) return;
+    if (!force && Date.now() - tokenMoveLastSent < TOKEN_SEND_MIN_MS) return;
+    tokenMoveLastSent = Date.now();
+    sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+  }
+
+  function scheduleTokenMove(id: string, x: number, y: number) {
+    pendingTokenMove = { id, x, y };
+    if (tokenMoveRaf) return;
+    tokenMoveRaf = requestAnimationFrame(() => flushTokenMove());
   }
 
   function sendFogReveal(p: { x: number; y: number }) {
@@ -580,7 +582,9 @@
     if (drag) {
       const { id, kind } = drag;
       drag = null;
-      flushTokenMove();
+      // `true` : la position finale part TOUJOURS, même si le throttle vient de
+      //DROP la précédente — sinon le pion resterait en retard d'un mouvement.
+      flushTokenMove(true);
       setTimeout(() => {
         if (kind === 'token') {
           const { [id]: _drop, ...rest } = dragOverride;

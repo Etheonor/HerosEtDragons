@@ -62,6 +62,12 @@ const MAX_RAW_MESSAGE_BYTES = 32_000;
 const MAX_SOCKETS_PER_USER = 4;
 const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_MAX_MESSAGES = 60;
+/** Budget distinct pour les messages de déplacement (pion/repère/brouillard).
+ *  Un glisser legitime envoi ~30-60 messages/s : les compter dans le budget
+ *  general (60 par fenetre) faisait tomber le joueur en "trop de messages"
+ *  apres une seule seconde de drag. Un budget propre, plus large mais toujours
+ *  borne, evite ce faux positif SANS ouvrir la porte a une boucle abusive. */
+const RATE_LIMIT_MAX_MOVES = 900;
 
 // Perf (audit P2) : la persistance des déplacements de pion est débounced,
 // seule la diffusion reste immédiate.
@@ -115,8 +121,11 @@ export class GameTableDO extends DurableObject<Env> {
   private tokenPersistDirty = false;
   private tokenPersistTimer: ReturnType<typeof setTimeout> | null = null;
   /** Fenêtre glissante par utilisateur (audit S1) — remise à zéro naturelle :
-   *  les timestamps hors fenêtre sont purgés à chaque appel. */
+   *  les timestamps hors fenêtre sont purgés à chaque appel. Deux budgets
+   *  séparés : le déplacement continu ne doit pas consommer le budget des
+   *  messages normaux (sinon un simple drag bloque le chat). */
   private rateLimitHits: Map<string, number[]> = new Map();
+  private rateLimitMoveHits: Map<string, number[]> = new Map();
 
   private getDb(): ReturnType<typeof createDb> {
     if (!this.db) {
@@ -370,15 +379,16 @@ export class GameTableDO extends DurableObject<Env> {
     await this.ctx.storage.put("liveState", this.liveState);
   }
 
-  /** Compteur à fenêtre glissante par utilisateur (audit S1). */
-  private isRateLimited(userId: string): boolean {
+  /** Compteur à fenêtre glissante par utilisateur (audit S1). `isMove` selects
+   *  le budget déplacement, plus large mais toujours borné. */
+  private isRateLimited(userId: string, isMove = false): boolean {
     const now = Date.now();
-    const hits = (this.rateLimitHits.get(userId) ?? []).filter(
-      (t) => now - t < RATE_LIMIT_WINDOW_MS,
-    );
+    const store = isMove ? this.rateLimitMoveHits : this.rateLimitHits;
+    const max = isMove ? RATE_LIMIT_MAX_MOVES : RATE_LIMIT_MAX_MESSAGES;
+    const hits = (store.get(userId) ?? []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
     hits.push(now);
-    this.rateLimitHits.set(userId, hits);
-    return hits.length > RATE_LIMIT_MAX_MESSAGES;
+    store.set(userId, hits);
+    return hits.length > max;
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -505,8 +515,12 @@ export class GameTableDO extends DurableObject<Env> {
     }
 
     // S1 : compteur à fenêtre glissante par utilisateur — un membre qui boucle
-    // sur chat.say/token.move ne doit pas pouvoir saturer D1/le broadcast.
-    if (this.isRateLimited(attachment.userId)) {
+    // sur chat.say ne doit pas pouvoir saturer D1/le broadcast. Le déplacement
+    // (drag de pion) a son propre budget, sinon un usage normal le fait tomber.
+    const rawType = msg.type;
+    const isMoveMsg =
+      rawType === "token.move" || rawType === "marker.move" || rawType === "fog.reveal";
+    if (this.isRateLimited(attachment.userId, isMoveMsg)) {
       ws.send(
         JSON.stringify({ type: "error", code: "RATE_LIMITED", msg: "Trop de messages, ralentis" }),
       );
@@ -1316,12 +1330,19 @@ export class GameTableDO extends DurableObject<Env> {
     const state = await this.getState();
     const current = this.tokensOf(state);
     if (!current[tokenId]) return;
+    // B5/perf : la carte d'un PNJ n'est ré-poussée que si sa VISIBILITÉ change
+    // réellement. Bouger un pion dans le même état de brouillard ne change rien
+    // pour les joueurs — et surtout, cela évitait un SELECT D1 par message
+    // (soit ~30-60 requêtes par seconde pour un simple glisser).
+    const wasVisible = this.isCharVisibleToPlayers(tokenId, state);
     const tokens = { ...current, [tokenId]: { charId: tokenId, x: cx, y: cy } };
     // P2 : la diffusion reste immédiate, la persistance est débouncée (60-120
     // messages/s en drag ne doivent pas écrire le storage à chaque frame).
-    this.patchStateInMemory(this.patchTokens(state, tokens));
+    const after = this.patchStateInMemory(this.patchTokens(state, tokens));
     this.broadcastRoleAware({ tokens: { [tokenId]: tokens[tokenId]! } });
-    if (this.npcIds.has(tokenId)) await this.broadcastPnjVisibility([tokenId]);
+    if (this.npcIds.has(tokenId) && this.isCharVisibleToPlayers(tokenId, after) !== wasVisible) {
+      await this.broadcastPnjVisibility([tokenId]);
+    }
   }
 
   /** Le MJ place un personnage (PJ ou PNJ) sur la carte active. */
@@ -1511,7 +1532,9 @@ export class GameTableDO extends DurableObject<Env> {
     const markers = this.markersOf(state).map((m) =>
       m.id === id ? { ...m, x: this.clamp(x), y: this.clamp(y) } : m,
     );
-    await this.patchState(this.patchMarkers(state, markers));
+    // Comme les pions : persistance débouncée (c'était un storage.put complet
+    // par message de drag), diffusion immédiate.
+    this.patchStateInMemory(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
   }
 

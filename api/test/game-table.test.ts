@@ -394,6 +394,46 @@ describe("GameTableDO — intégration", () => {
     expect((plDelta2.patch as { tokens: Record<string, unknown> }).tokens["pj-1"]).toBeDefined();
   });
 
+  it("token.move : un drag soutenu ne déclenche PAS le rate limit (budget déplacement)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "token.put", charId: "pnj-1", x: 40, y: 40 });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { tokens?: Record<string, unknown> } | undefined)?.tokens?.["pnj-1"] !==
+        undefined,
+    );
+
+    // Un drag de ~2 s à 60 messages/s : 120 messages. Avant le budget
+    // déplacement, le compteur général (60/fenêtre) levait « RATE_LIMITED »
+    // dès la première seconde de glissement.
+    for (let i = 0; i < 120; i++) {
+      mj.send({ type: "token.move", tokenId: "pnj-1", x: 40 + (i % 10) * 0.1, y: 40 });
+    }
+    // Laisse le DO traiter la rafale.
+    await new Promise((r) => setTimeout(r, 300));
+    const errors = mj.messages.filter((m) => m.type === "error");
+    expect(errors).toEqual([]);
+  });
+
+  it("un Abuse de chat reste plafonné (le budget général n'a pas été relâché)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    for (let i = 0; i < 80; i++) {
+      mj.send({ type: "chat.say", text: `spam ${i}` });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    const limited = mj.messages.filter((m) => (m as { code?: string }).code === "RATE_LIMITED");
+    expect(limited.length).toBeGreaterThan(0);
+  });
+
   it("token.move : le MJ déplace un pion (diffusé) ; un joueur ne bouge que son propre pion", async () => {
     await setupWorld();
     const mj = await connect(MJ);
