@@ -251,7 +251,7 @@
   let viewZoom = $state(1);
   let viewPanX = $state(0);
   let viewPanY = $state(0);
-  let panning = $state<{ x: number; y: number } | null>(null);
+  let panning = $state<{ x: number; y: number; id: number } | null>(null);
   let viewForMapId: string | null = null;
 
   /** Taille réelle de la surface (fitted = image ajustée, fill = cadre plein). */
@@ -574,7 +574,9 @@
   function onMapPointerUp() {
     fogErasing = false;
     lastFogPoint = null;
-    panning = null;
+    // NB : on ne touche PAS à `panning` ici. Le setPointerCapture du cadre
+    // déclenche un pointerleave immédiat sur la surface, qui appelait ce
+    // handler et annulait le panoramique dès la première frame.
     if (drag) {
       const { id, kind } = drag;
       drag = null;
@@ -605,26 +607,40 @@
   // point de départ doit être sur l'image.
 
   function onFramePointerDown(e: PointerEvent) {
-    if (tool !== 'hand') return;
+    if (tool !== 'hand' || panning) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
     e.preventDefault();
-    panning = { x: e.clientX, y: e.clientY };
+    panning = { x: e.clientX, y: e.clientY, id: e.pointerId };
     skipNextClick = true;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
 
   function onFramePointerMove(e: PointerEvent) {
-    if (!panning) return;
+    if (!panning || panning.id !== e.pointerId) return;
     viewPanX += e.clientX - panning.x;
     viewPanY += e.clientY - panning.y;
-    panning = { x: e.clientX, y: e.clientY };
+    panning = { x: e.clientX, y: e.clientY, id: e.pointerId };
     clampView();
   }
 
-  function onFramePointerUp() {
-    if (!panning) return;
+  function onFramePointerUp(e: PointerEvent) {
+    if (!panning || (e && panning.id !== e.pointerId)) return;
     panning = null;
+    skipNextClick = false;
     scheduleFogRedraw();
   }
+
+  // Filet de sécurité : si le pointeur est relâché hors du cadre (ou si le
+  // capture est perdu), on ne doit pas rester « en train de panoramique ».
+  $effect(() => {
+    const end = (e: PointerEvent) => onFramePointerUp(e);
+    globalThis.addEventListener('pointerup', end);
+    globalThis.addEventListener('pointercancel', end);
+    return () => {
+      globalThis.removeEventListener('pointerup', end);
+      globalThis.removeEventListener('pointercancel', end);
+    };
+  });
 
   function onMapClick(e: MouseEvent) {
     if (skipNextClick) {
