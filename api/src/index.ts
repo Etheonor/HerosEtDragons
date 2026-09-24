@@ -9,7 +9,8 @@ import maps from "./routes/maps";
 import notes from "./routes/notes";
 import npcTemplates from "./routes/npc-templates";
 import compendium from "./routes/compendium";
-import { securityHeaders, limitJsonBody } from "./middleware";
+import dev from "./routes/dev";
+import { securityHeaders, limitJsonBody, resolveDevUser } from "./middleware";
 
 export { GameTableDO } from "./do/game-table";
 
@@ -24,6 +25,25 @@ app.use("*", limitJsonBody);
 app.get("/api/health", (c) => c.json({ ok: true, name: "rollwith-hd", time: Date.now() }));
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+  // Mode dev : le client appelle get-session pour connaître son utilisateur.
+  // Le bypass couvre déjà requireAuth et le WS, mais pas better-auth — on
+  // répond donc ici avec une session synthétique, ce qui évite de mettre la
+  // moindre logique « dev » dans le code client.
+  if (new URL(c.req.url).pathname === "/api/auth/get-session") {
+    const devUser = await resolveDevUser(c.env, c.req.raw);
+    if (devUser) {
+      return c.json({
+        session: {
+          id: `dev-${devUser.id}`,
+          userId: devUser.id,
+          token: "dev",
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        user: { ...devUser, emailVerified: true, createdAt: new Date(), updatedAt: new Date() },
+      });
+    }
+  }
+
   const auth = createAuth(c.env, c.req.raw);
   const res = await auth.handler(c.req.raw);
   // Le rejet de la whitelist se traduit par une erreur interne mieux-auth →
@@ -63,18 +83,22 @@ app.get("/api/invitations/:token", async (c) => {
     .where(eq(schema.campaigns.id, inv.campaignId))
     .limit(1);
 
-  const auth = createAuth(c.env, c.req.raw);
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  const dev = await resolveDevUser(c.env, c.req.raw);
+  let session: Awaited<ReturnType<ReturnType<typeof createAuth>["api"]["getSession"]>> | null =
+    null;
+  if (!dev) {
+    const auth = createAuth(c.env, c.req.raw);
+    session = await auth.api.getSession({ headers: c.req.raw.headers });
+  }
 
-  if (session) {
+  if (dev || session) {
+    const userId = dev ? dev.id : session!.user.id;
     const [acct] = await db
       .select({ accountId: schema.account.accountId })
       .from(schema.account)
-      .where(
-        and(eq(schema.account.userId, session.user.id), eq(schema.account.providerId, "discord")),
-      )
+      .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, "discord")))
       .limit(1);
-    const res = await consumeInvitation(db, token, session.user.id, acct?.accountId ?? null);
+    const res = await consumeInvitation(db, token, userId, acct?.accountId ?? null);
     if (!res.ok) {
       return c.json(
         {
@@ -104,6 +128,8 @@ app.route("/api/maps", maps);
 app.route("/api/notes", notes);
 app.route("/api/npc-templates", npcTemplates);
 app.route("/api/compendium", compendium);
+// Mode dev : 404 complet si DEV_AUTH n'est pas défini (garde dans le routeur).
+app.route("/api/dev", dev);
 
 // WebSocket route for game tables
 app.get("/api/tables/:campaignId/ws", async (c) => {
@@ -111,17 +137,25 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
   if (!campaignId) return c.json({ error: "Campaign ID manquant" }, 400);
 
   // Auth check
-  const auth = createAuth(c.env, c.req.raw);
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!session) return c.json({ error: "Non authentifié" }, 401);
+  const dev = await resolveDevUser(c.env, c.req.raw);
+  let userId: string;
+  let userName: string;
+  if (dev) {
+    userId = dev.id;
+    userName = dev.name;
+  } else {
+    const auth = createAuth(c.env, c.req.raw);
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: "Non authentifié" }, 401);
+    userId = session.user.id;
+    userName = session.user.name;
+  }
 
   const db = createDb(c.env.DB);
   const [membership] = await db
     .select()
     .from(schema.members)
-    .where(
-      and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, session.user.id)),
-    )
+    .where(and(eq(schema.members.campaignId, campaignId), eq(schema.members.userId, userId)))
     .limit(1);
 
   if (!membership) return c.json({ error: "Pas membre" }, 403);
@@ -133,7 +167,7 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
     .where(
       and(
         eq(schema.characters.campaignId, campaignId),
-        eq(schema.characters.ownerId, session.user.id),
+        eq(schema.characters.ownerId, userId),
         eq(schema.characters.active, true),
       ),
     )
@@ -150,8 +184,8 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
 
   const wsUrl = new URL("https://internal/ws");
   wsUrl.searchParams.set("campaignId", campaignId);
-  wsUrl.searchParams.set("userId", session.user.id);
-  wsUrl.searchParams.set("name", session.user.name);
+  wsUrl.searchParams.set("userId", userId);
+  wsUrl.searchParams.set("name", userName);
   wsUrl.searchParams.set("role", membership.role);
   wsUrl.searchParams.set("charId", char?.id ?? "");
   wsUrl.searchParams.set("color", char?.color ?? "#C0392B");

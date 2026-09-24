@@ -166,7 +166,11 @@ export const api = {
       const form = new FormData();
       if (fields.name !== undefined) form.set("name", fields.name);
       if (fields.image) form.set("image", fields.image);
-      if (fields.gridSize !== undefined) form.set("gridSize", String(fields.gridSize));
+      if (fields.gridSize !== undefined) {
+        // FormData n'a pas de null : « retirer la grille » se code "" (le
+        // serveur distingue "" = retirer de l'absence = ne pas y toucher).
+        form.set("gridSize", fields.gridSize === null ? "" : String(fields.gridSize));
+      }
       return fetchForm<MapSummary>(`/api/maps/${mapId}`, form, "PATCH");
     },
     remove: (mapId: string) => fetchJson<{ ok: true }>(`/api/maps/${mapId}`, { method: "DELETE" }),

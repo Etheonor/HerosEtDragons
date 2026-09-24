@@ -29,3 +29,7 @@ portraits/
 
 # sorties de l'outil d'ingestion (locales)
 tools/ingest/out/
+
+# E2E Playwright
+test-results/
+playwright-report/

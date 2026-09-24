@@ -69,6 +69,35 @@ sinon le typecheck échoue sur des types obsolètes.
 - **Port 5173** (vite) = développement front avec HMR. `web/vite.config.ts`
   relaie `/api` (HTTP **et** WebSocket via `ws: true`) vers 8787.
 
+## 4bis. Mode dev, seed et e2e
+
+Un mode local contourne l'auth Discord pour l'outillage (tests, e2e, banc
+d'essai). Il est **verrouillé trois fois** (`api/src/middleware.ts`,
+`resolveDevUser`) :
+
+1. `DEV_AUTH=1` dans **`.dev.vars`** (gitignoré, jamais dans les secrets prod) ;
+2. l'**hôte** de la requête doit être une boucle locale (`isLocalHost`) ;
+3. un cookie `hd-dev-user` posé par `POST /api/dev/login`.
+
+Sans `DEV_AUTH`, **toutes** les routes `/api/dev/*` renvoient 404 et le cookie
+ne vaut rien. Ne jamais définir `DEV_AUTH` en production.
+
+```bash
+pnpm e2e              # 12 tests navigateur (Playwright) — démarre 8787 si besoin
+pnpm e2e:ui           # mode interactif
+pnpm e2e:headed       # navigateur visible
+pnpm dev:seed         # réinitialise la fixture (campagne dev-camp)
+```
+
+La fixture seedée : campagne `dev-camp`, utilisateurs `mj` / `kaelith` /
+`ragnar`, personnages `pj-kaelith` / `pj-ragnar` / `pnj-gobelin`, cartes
+`map-image` (avec image) et `map-grid`. `POST /api/dev/seed {"reset":true}`
+purgeraussi le Durable Object — sans quoi l'état survit d'un run à l'autre.
+
+Les tests REST (`api/test/rest.test.ts`) utilisent le même bypass : le binding
+`DEV_AUTH: "1"` est injecté par `api/vitest.config.ts`, et les requêtes
+utilisent l'hôte `localhost`.
+
 ## 5. Documentation existante (`docs/`)
 
 | Document                                      | Contenu                                           | État                               |

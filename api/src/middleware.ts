@@ -22,7 +22,75 @@ export interface AuthVariables {
 
 export type AppContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
 
+export const DEV_COOKIE = "hd-dev-user";
+
+/** L'hôte est-il bien une boucle locale ? On teste le HOSTNAME (pas une liste
+ *  de ports, qui casse dès que le port change) et on refuse tout le reste. */
+export function isLocalHost(request: Request): boolean {
+  const { hostname } = new URL(request.url);
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1" ||
+    hostname.endsWith(".localhost")
+  );
+}
+
+/**
+ * Bypass d'auth du mode dev. Trois verrous cumulés, pour qu'un oubli ne
+ * transforme jamais la prod en bac à sable :
+ *   1. env DEV_AUTH === "1" — présent uniquement dans .dev.vars (gitignoré) ;
+ *   2. l'hôte de la requête est bien local ;
+ *   3. un cookie hd-dev-user a été posé par POST /api/dev/login.
+ * L'utilisateur est créé à la volée (user + allowed_users) pour que le mode
+ * dev n'exige aucun setup manuel.
+ */
+export async function resolveDevUser(
+  env: Env,
+  request: Request,
+): Promise<AuthVariables["user"] | null> {
+  if (env.DEV_AUTH !== "1") return null;
+  if (!isLocalHost(request)) return null;
+  const cookie = request.headers
+    .get("Cookie")
+    ?.split(";")
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${DEV_COOKIE}=`));
+  const id = cookie?.slice(DEV_COOKIE.length + 1);
+  if (!id || !/^[a-z0-9_-]{1,64}$/i.test(id)) return null;
+
+  const db = createDb(env.DB);
+  let [row] = await db.select().from(schema.user).where(eq(schema.user.id, id)).limit(1);
+  if (!row) {
+    const name = id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    await db.insert(schema.user).values({ id, name, email: `${id}@dev.local` });
+    await db
+      .insert(schema.allowedUsers)
+      .values({ discordId: id, note: "dev" })
+      .onConflictDoNothing();
+    row = {
+      id,
+      name,
+      email: `${id}@dev.local`,
+      emailVerified: false,
+      image: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+  return { id: row.id, name: row.name, email: row.email, image: row.image ?? null };
+}
+
 export async function requireAuth(c: AppContext, next: Next) {
+  const dev = await resolveDevUser(c.env, c.req.raw);
+  if (dev) {
+    c.set("user", dev);
+    c.set("membership", null);
+    await next();
+    return;
+  }
+
   const auth = createAuth(c.env, c.req.raw);
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
 

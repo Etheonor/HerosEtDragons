@@ -13,7 +13,7 @@ export default defineWorkersConfig(async () => {
         workers: {
           wrangler: { configPath: path.resolve(__dirname, "../wrangler.jsonc") },
           miniflare: {
-            bindings: { TEST_MIGRATIONS: migrations },
+            bindings: { TEST_MIGRATIONS: migrations, DEV_AUTH: "1" },
           },
         },
       },
