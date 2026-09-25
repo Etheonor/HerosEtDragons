@@ -99,6 +99,45 @@ test.describe("Inventaire (R9)", () => {
   });
 });
 
+test.describe("Carte : import d'image", () => {
+  test("le MJ importe une image et la carte devient jouable", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+
+    // Le panneau d'import utilise un <input type=file> caché.
+    await page.setInputFiles('input[type=file][accept*="image/png"]', {
+      name: "donjon.png",
+      mimeType: "image/png",
+      // PNG 2x2 valide, encodé en base64.
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVQI12NkYPjPgAcw4ZMcVQAAAOJ9Wl2nJwAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    });
+
+    // La carte importée devient active et son image est servie par l'API.
+    const thumb = page.locator(".thumb").first();
+    await expect(thumb).toHaveAttribute("src", /\/api\/maps\/.+\/image/);
+    // …et elle est affichée sur la table.
+    await expect(page.locator(".map-img")).toBeVisible();
+  });
+
+  test("un fichier qui n'est pas une image est refusé sans casser le panneau", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+
+    await page.setInputFiles('input[type=file][accept*="image/png"]', {
+      name: "pas-une-image.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("ceci n'est pas un PNG"),
+    });
+
+    // Le panneau affiche l'erreur et la liste des cartes survit.
+    await expect(page.locator(".panel-error")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Carte illustrée/ })).toBeVisible();
+  });
+});
+
 test.describe("Carte : grille et vue", () => {
   test("le quadrillage réglable par le MJ apparaît sur la carte", async ({ page }) => {
     await openTable(page, MJ);
