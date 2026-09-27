@@ -92,6 +92,37 @@ export function suggestedCa(sheet: CharacterSheet): number {
   return Math.max(0, base + shieldBonus);
 }
 
+/**
+ * Migration des fiches antérieures aux sous-races : la sous-race était tapée
+ * dans le champ race (« Gnome des Lacs »), et n'était donc jamais appliquée.
+ * Renvoie la séparation à effectuer, ou null si rien à faire.
+ *
+ * Idempotent par construction : après séparation, `race` ne contient plus le nom
+ * de la sous-race, `findSubrace` ne retrace plus rien, et une sous-race
+ * volontairement retirée ne ressuscite pas.
+ */
+export function adoptedSubrace(sheet: CharacterSheet): { race: string; sousRace: string } | null {
+  if (sheet.identite?.sousRace) return null;
+  const race = findRace(sheet.identite?.race);
+  if (!race) return null;
+  const sub = findSubrace(sheet.identite?.race, race.key);
+  if (!sub) return null;
+  return { race: race.label, sousRace: sub.label };
+}
+
+/**
+ * La CA est-elle en calcul automatique ?
+ *
+ * Absent ou `null` = automatique, exactement comme `pvAuto` : seule une valeur
+ * `false` explicite fige la CA (bouton « manuel · auto ? »). L'inverse — absent
+ * = manuel — laissait une CA figée pour toujours sur les fiches créées avant la
+ * CA automatique, y compris après un changement de DEX ou d'armure : c'est
+ * exactement le cas « CA 10 alors que la DEX vaut +2 » qui remontait.
+ */
+export function isCaAuto(sheet: CharacterSheet): boolean {
+  return sheet.caAuto !== false;
+}
+
 /** Détail lisible du calcul de CA (infobulle du champ CA). */
 export function caBreakdown(sheet: CharacterSheet): string {
   const dexMod = abilityModifier(effectiveCarac(sheet, "dex"));

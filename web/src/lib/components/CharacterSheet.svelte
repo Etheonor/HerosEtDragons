@@ -22,7 +22,7 @@
   import { xpThreshold } from '$shared/rules';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary, CARAC_LABELS_SHORT } from '$lib/hd-text';
-  import { suggestedPvMax, suggestedCa } from '$lib/char-utils';
+  import { adoptedSubrace, isCaAuto, suggestedPvMax, suggestedCa } from '$lib/char-utils';
   import SheetCaracs from '$lib/components/SheetCaracs.svelte';
   import SheetSaves from '$lib/components/SheetSaves.svelte';
   import SheetCombat from '$lib/components/SheetCombat.svelte';
@@ -110,14 +110,12 @@
     touch();
   }
 
-  // ── CA auto : une armure équipée (+ bouclier) détermine la CA. ──
-  // Règle d'or : aucune action requise — dès qu'on équipe une armure, la CA
-  // suit. Tant qu'aucune armure n'est équipée on ne touche pas à une CA
-  // manuelle (moine, armure naturelle…) ; l'échappatoire = caAuto=false.
-  const hasEquippedArmor = $derived((sheet.armures ?? []).some((a) => a.equipee));
-  const caAutoOn = $derived(
-    sheet.caAuto === true || (sheet.caAuto === undefined && hasEquippedArmor),
-  );
+  // ── CA auto : la CA suit la DEX et l'armure. ─────────────────
+  // Règle d'or : aucune action requise. « Absent » = automatique, comme
+  // pvAuto : seule une CA marquée manuelle (bouton « manuel · auto ? »,
+  // caAuto=false) échappe au calcul. Avant, une CA absente de drapeau restait
+  // figée pour toujours s'il n'y avait pas d'armure.
+  const caAutoOn = $derived(isCaAuto(sheet));
   $effect(() => {
     if (readonly || !caAutoOn) return;
     const s = suggestedCa(sheet);
@@ -197,6 +195,22 @@
     applyRacialFromTables();
     touch();
   }
+
+  /**
+   * Migration des fiches antérieures aux sous-races : la sous-race était tapée
+   * dans le champ race (« Gnome des Lacs »), donc jamais appliquée. On la
+   * sépare une fois pour toutes, ce qui rend le +1 effectif (la logique et ses
+   * cas limites sont dans `adoptedSubrace`).
+   */
+  $effect(() => {
+    if (readonly) return;
+    const split = adoptedSubrace(sheet);
+    if (!split) return;
+    sheet.identite.race = split.race;
+    sheet.identite.sousRace = split.sousRace;
+    applyRacialFromTables();
+    touch();
+  });
 
   const raceChoices = $derived<ChoiceOption[]>(
     RACES.map((r) => ({ title: r.label, sub: bonusRacialText(r), link: compLink('races', r.key) })),

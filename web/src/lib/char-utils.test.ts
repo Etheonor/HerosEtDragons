@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  adoptedSubrace,
   caBreakdown,
   effectiveCarac,
   getMod,
   getPassivePerception,
+  isCaAuto,
   racialBreakdown,
   spellMatchesClass,
   suggestedCa,
@@ -325,5 +327,79 @@ describe("appartenance d'un sort du grimoire à une classe", () => {
     expect(spellMatchesClass([], "Ensorceleur")).toBe(false);
     expect(spellMatchesClass(undefined, "Ensorceleur")).toBe(false);
     expect(spellMatchesClass(["Barde"], null)).toBe(false);
+  });
+});
+
+describe("CA automatique", () => {
+  it("absent ou null = auto ; seule une valeur false fige la CA", () => {
+    // Régression : une CA sans drapeau restait figée pour toujours tant qu'aucune
+    // armure n'était équipée (cas « CA 10 avec une DEX à +2 »).
+    expect(isCaAuto(sheet({}))).toBe(true);
+    expect(isCaAuto(sheet({ caAuto: null as never }))).toBe(true);
+    expect(isCaAuto(sheet({ caAuto: true }))).toBe(true);
+    expect(isCaAuto(sheet({ caAuto: false }))).toBe(false);
+  });
+
+  it("une CA automatique suit la DEX et l'armure", () => {
+    const s = sheet({
+      identite: {
+        nom: "T",
+        race: "",
+        classe: "Guerrier",
+        niveau: 1,
+        historique: "",
+        alignement: "",
+        xp: 0,
+      },
+      caracs: { for: 10, dex: 16, con: 10, int: 10, sag: 10, cha: 10 },
+      ca: 10,
+    });
+    expect(suggestedCa(s)).toBe(13); // 10 + mod DEX 16 (+3)
+    // la valeur figée n'est reprise que si l'utilisateur l'a forcée
+    const manuel = { ...s, caAuto: false };
+    expect(isCaAuto(manuel)).toBe(false);
+  });
+});
+
+describe("adoption d'une sous-race tapée dans le champ race", () => {
+  const withRace = (race: string, sousRace?: string) =>
+    sheet({
+      identite: {
+        nom: "T",
+        race,
+        sousRace,
+        classe: "",
+        niveau: 1,
+        historique: "",
+        alignement: "",
+        xp: 0,
+      },
+    });
+
+  it("sépare la sous-race d'une fiche ancienne", () => {
+    expect(adoptedSubrace(withRace("Gnome des Lacs"))).toEqual({
+      race: "Gnome",
+      sousRace: "Gnome des lacs",
+    });
+    expect(adoptedSubrace(withRace("Nain des pierres"))).toEqual({
+      race: "Nain",
+      sousRace: "Nain des pierres",
+    });
+  });
+
+  it("ne touche pas une fiche déjà migrate (idempotence)", () => {
+    // après séparation, la course ne contient plus le nom de la sous-race
+    expect(adoptedSubrace(withRace("Gnome", "Gnome des lacs"))).toBeNull();
+    expect(adoptedSubrace(withRace("Gnome", ""))).toBeNull();
+  });
+
+  it("ne vole jamais une sous-race choisie dans la feuille", () => {
+    expect(adoptedSubrace(withRace("Gnome", "Gnome des roches"))).toBeNull();
+  });
+
+  it("ignore les courses sans sous-race et les noms homebrew", () => {
+    for (const r of ["Humain", "Elfe", "Halfelin", "Demi-orc", "", "Licorne", "Nain des lunes"]) {
+      expect(adoptedSubrace(withRace(r)), r).toBeNull();
+    }
   });
 });
