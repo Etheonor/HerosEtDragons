@@ -45,12 +45,34 @@ const gridSizeField = z.preprocess((v) => {
   return Number.isNaN(n) ? v : n;
 }, z.number().int().min(8).max(200).nullable().optional());
 
+/** Couleur du quadrillage : "#rgb" ou "#rrggbb" (ce que renvoie un
+ *  <input type="color">), normalisée en minuscules. "" = retour à la couleur du
+ *  thème, absent = ne pas y toucher. */
+const gridColorField = z.preprocess(
+  (v) => {
+    if (v === undefined) return undefined;
+    if (v === null || v === "") return null;
+    const s = String(v).trim().toLowerCase();
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(s);
+    if (!m) return v; // laisse Zod rejeter avec un message lisible
+    const hex = m[1]!;
+    if (hex.length === 6) return `#${hex}`;
+    return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
+  },
+  z
+    .string()
+    .regex(/^#[0-9a-f]{6}$/, "couleur de quadrillage : #rgb ou #rrggbb")
+    .nullable()
+    .optional(),
+);
+
 const createMapForm = zValidator(
   "form",
   z.object({
     name: z.string().trim().min(1).max(80),
     image: z.instanceof(File).optional(),
     gridSize: gridSizeField,
+    gridColor: gridColorField,
   }),
 );
 
@@ -60,6 +82,7 @@ const updateMapForm = zValidator(
     name: z.string().trim().min(1).max(80).optional(),
     image: z.instanceof(File).optional(),
     gridSize: gridSizeField,
+    gridColor: gridColorField,
   }),
 );
 
@@ -94,6 +117,7 @@ app.get(
         name: m.name,
         hasImage: !!m.r2Key,
         gridSize: m.gridSize,
+        gridColor: m.gridColor,
       })),
     });
   },
@@ -137,10 +161,11 @@ app.post(
     // Sans image, la carte est quadrillée par défaut ; importée, elle ne l'est pas.
     const gridSize =
       form.gridSize === undefined ? (r2Key ? null : DEFAULT_GRID_SIZE) : form.gridSize;
+    const gridColor = form.gridColor ?? null;
 
-    await db.insert(schema.maps).values({ id, campaignId, name, r2Key, gridSize });
+    await db.insert(schema.maps).values({ id, campaignId, name, r2Key, gridSize, gridColor });
 
-    return c.json<MapSummary>({ id, name, hasImage: !!r2Key, gridSize }, 201);
+    return c.json<MapSummary>({ id, name, hasImage: !!r2Key, gridSize, gridColor }, 201);
   },
 );
 
@@ -156,9 +181,15 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
   const [map] = await db.select().from(schema.maps).where(eq(schema.maps.id, mapId)).limit(1);
   if (!map) return c.json({ error: "Carte introuvable" }, 404);
 
-  const patch: { name?: string; r2Key?: string | null; gridSize?: number | null } = {};
+  const patch: {
+    name?: string;
+    r2Key?: string | null;
+    gridSize?: number | null;
+    gridColor?: string | null;
+  } = {};
   if (form.name !== undefined) patch.name = form.name;
   if (form.gridSize !== undefined) patch.gridSize = form.gridSize;
+  if (form.gridColor !== undefined) patch.gridColor = form.gridColor;
 
   const file = form.image;
   if (file && file.size > 0) {
@@ -180,7 +211,12 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
     patch.r2Key = newKey;
   }
 
-  if (patch.name === undefined && patch.r2Key === undefined && patch.gridSize === undefined) {
+  if (
+    patch.name === undefined &&
+    patch.r2Key === undefined &&
+    patch.gridSize === undefined &&
+    patch.gridColor === undefined
+  ) {
     return c.json({ error: "Rien à modifier" }, 400);
   }
 
@@ -191,6 +227,7 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
     name: patch.name ?? map.name,
     hasImage: !!patch.r2Key,
     gridSize: patch.gridSize === undefined ? map.gridSize : patch.gridSize,
+    gridColor: patch.gridColor === undefined ? map.gridColor : patch.gridColor,
   });
 });
 

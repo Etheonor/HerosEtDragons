@@ -32,8 +32,14 @@
   let noteDraft = $state('');
   let noteSaving = $state(false);
 
+  /** Teinte proposée quand le MJ active la couleur : sans effet tant que le
+   *  bouton est sur « Thème » (l'API reçoit alors null = couleur du thème). */
+  const DEFAULT_GRID_COLOR = '#e8d9a8';
+
   let gridFor = $state<string | null>(null);
   let gridDraft = $state(32);
+  let gridColorDraft = $state(DEFAULT_GRID_COLOR);
+  let gridColorOn = $state(false);
   let gridSaving = $state(false);
 
   function toggleGrid(m: MapSummary) {
@@ -43,13 +49,20 @@
     }
     gridFor = m.id;
     gridDraft = m.gridSize ?? 32;
+    gridColorDraft = m.gridColor ?? DEFAULT_GRID_COLOR;
+    gridColorOn = !!m.gridColor;
   }
 
   async function saveGrid(m: MapSummary, remove = false) {
     if (gridSaving) return;
     gridSaving = true;
     try {
-      await api.maps.update(m.id, { gridSize: remove ? null : gridDraft });
+      await api.maps.update(m.id, {
+        gridSize: remove ? null : gridDraft,
+        // La couleur n'est envoyée que si le MJ l'a activée : sinon elle
+        // repasse à celle du thème ("" = null côté API).
+        gridColor: remove || !gridColorOn ? null : gridColorDraft,
+      });
       await onChanged();
       if (remove) gridFor = null;
     } catch (e) {
@@ -326,6 +339,23 @@
                   bind:value={gridDraft}
                 />
                 <span class="grid-unit">px</span>
+                <div class="grid-color-row">
+                  <span class="grid-label">Ligne</span>
+                  <input
+                    id="gridc-{m.id}"
+                    class="grid-color"
+                    type="color"
+                    bind:value={gridColorDraft}
+                    disabled={!gridColorOn}
+                    title={gridColorOn ? 'Couleur du quadrillage' : 'Couleur du thème'}
+                  />
+                  <button
+                    class="foot-btn small"
+                    class:on={gridColorOn}
+                    title="Basculer entre la couleur du thème et une teinte choisie"
+                    onclick={() => (gridColorOn = !gridColorOn)}>{gridColorOn ? 'Teinte' : 'Thème'}</button
+                  >
+                </div>
                 <div class="note-actions">
                   <button
                     class="foot-btn small"
@@ -550,6 +580,22 @@
     font-size: 12px;
     color: var(--text-2);
   }
+  .grid-color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .grid-color {
+    width: 34px;
+    height: 24px;
+    padding: 0;
+    border: 2px solid var(--border);
+    border-radius: 8px 3px 8px 3px;
+    background: var(--bg);
+    cursor: pointer;
+  }
+  .grid-color:disabled { opacity: 0.4; cursor: default; }
+  .foot-btn.on { border-color: var(--accent-border); color: var(--accent-text); }
   .grid-input {
     width: 70px;
     font-family: var(--font-body);
@@ -562,8 +608,7 @@
     outline: none;
   }
   .grid-unit {
-    font-size: 12px;
-    color: var(--text-3);
+    font-size: 12px;    color: var(--text-3);
     margin-top: -22px;
     margin-left: 46px;
     pointer-events: none;

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { CAMPAIGN, KAELITH, MJ, RAGNAR, login, openTable, seed } from "./helpers";
+import { CAMPAIGN, KAELITH, MAP_IMAGE, MJ, RAGNAR, login, openTable, seed } from "./helpers";
 
 test.describe("Connexion et table", () => {
   test("sans cookie de dev, le bypass est inerte (API 401, table vide)", async ({ page }) => {
@@ -148,6 +148,54 @@ test.describe("Carte : grille et vue", () => {
     await expect(grid).toBeVisible();
     const size = await grid.evaluate((el) => getComputedStyle(el).backgroundSize);
     expect(size).toContain("32px");
+  });
+
+  test("le MJ choisit la couleur du quadrillage, et elle est réellement rendue", async ({
+    page,
+  }) => {
+    // Remise à zéro en API : ce test pose une teinte, on ne laisse pas de
+    // couleur derrière lui pour le run suivant (l'UI ne réinitialise pas).
+    const setGridColor = (color: string) =>
+      page.request.patch(`/api/maps/${MAP_IMAGE}`, { multipart: { gridColor: color } });
+    await setGridColor("");
+
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const grid = page.locator(".map-grid--overlay");
+    await expect(grid).toBeVisible();
+    // Par défaut : couleur du thème, donc pas de rendu en teinte.
+    await expect(grid).not.toHaveClass(/map-grid--tinted/);
+
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page
+      .locator(".row-wrap", { hasText: "Carte illustrée" })
+      .getByTitle(/Grille/)
+      .click();
+
+    // Le color picker est désactivé tant qu'on est sur « Thème » ; le bouton
+    // bascule (son libellé change, on le cible donc par position).
+    const swatch = page.locator(".grid-color");
+    await expect(swatch).toBeDisabled();
+    await page.locator(".grid-color-row button").click();
+    await expect(swatch).toBeEnabled();
+    await swatch.fill("#ff0000");
+    await page.getByRole("button", { name: "Appliquer" }).click();
+
+    // La couleur est RENDUE, pas seulement stockée : la classe active le rendu
+    // en teinte et la variable CSS est calculée.
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await expect(grid).toHaveClass(/map-grid--tinted/);
+    const line = await grid.evaluate((el) =>
+      getComputedStyle(el).getPropertyValue("--map-grid-line"),
+    );
+    expect(line).not.toBe("");
+
+    // Retour à la couleur du thème : le rendu d'origine revient.
+    await setGridColor("");
+    await page.reload();
+    await expect(page.locator(".map-grid--overlay")).not.toHaveClass(/map-grid--tinted/);
   });
 
   test("le MJ peut retirer le quadrillage depuis le panneau Cartes", async ({ page }) => {

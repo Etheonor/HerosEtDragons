@@ -162,7 +162,10 @@ export const api = {
       if (gridSize !== undefined) form.set("gridSize", String(gridSize));
       return fetchForm<MapSummary>(`/api/maps/campaigns/${campaignId}`, form);
     },
-    update: (mapId: string, fields: { name?: string; image?: File; gridSize?: number | null }) => {
+    update: (
+      mapId: string,
+      fields: { name?: string; image?: File; gridSize?: number | null; gridColor?: string | null },
+    ) => {
       const form = new FormData();
       if (fields.name !== undefined) form.set("name", fields.name);
       if (fields.image) form.set("image", fields.image);
@@ -170,6 +173,10 @@ export const api = {
         // FormData n'a pas de null : « retirer la grille » se code "" (le
         // serveur distingue "" = retirer de l'absence = ne pas y toucher).
         form.set("gridSize", fields.gridSize === null ? "" : String(fields.gridSize));
+      }
+      if (fields.gridColor !== undefined) {
+        // idem : "" = retour à la couleur du thème.
+        form.set("gridColor", fields.gridColor ?? "");
       }
       return fetchForm<MapSummary>(`/api/maps/${mapId}`, form, "PATCH");
     },

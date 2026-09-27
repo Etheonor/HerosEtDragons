@@ -186,6 +186,9 @@
     return activeMap.hasImage ? null : 32;
   });
 
+  /** Teinte du quadrillage choisie par le MJ ; null = celle du thème. */
+  const activeGridColor = $derived(activeMap?.gridColor ?? null);
+
   // Ratio largeur/hauteur de l'image active — on dimensionne la surface à ce
   // ratio pour TOUJOURS voir l'image à 100% (aucun crop), quel que soit son
   // format (large ou haut). Les pions/repères/brouillard restent alignés car
@@ -1346,7 +1349,8 @@
               <div
                 class="map-grid"
                 class:map-grid--overlay={activeMap.hasImage}
-                style="--map-grid-size: {activeGridSize}px"
+                class:map-grid--tinted={!!activeGridColor}
+                style="--map-grid-size: {activeGridSize}px; --map-grid-color: {activeGridColor ?? 'var(--map-line)'}"
               ></div>
             {/if}
 
@@ -2004,7 +2008,7 @@
   .map-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
   .map-grid {
     position: absolute; inset: 0;
-    background-image: linear-gradient(var(--map-line) 1px, transparent 1px), linear-gradient(90deg, var(--map-line) 1px, transparent 1px);
+    background-image: linear-gradient(var(--map-grid-line, var(--map-line)) 1px, transparent 1px), linear-gradient(90deg, var(--map-grid-line, var(--map-line)) 1px, transparent 1px);
     background-size: var(--map-grid-size) var(--map-grid-size);
     background-color: var(--map-bg);
   }
@@ -2014,11 +2018,18 @@
   .map-grid--overlay {
     background-color: transparent;
     background-image:
-      linear-gradient(rgba(255, 255, 255, 0.45) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.45) 1px, transparent 1px);
+      linear-gradient(var(--map-grid-line, rgba(255, 255, 255, 0.45)) 1px, transparent 1px),
+      linear-gradient(90deg, var(--map-grid-line, rgba(255, 255, 255, 0.45)) 1px, transparent 1px);
     mix-blend-mode: difference;
     pointer-events: none;
     z-index: 1;
+  }
+  /* Teinte choisie par le MJ : on rend la couleur demandée, SANS le blend —
+     « difference » l'inverserait (une teinte rouge ressortirait cyan sur une
+     photo). D'où la transparence : le quadrillage reste un repère, pas un voile. */
+  .map-grid--tinted {
+    --map-grid-line: color-mix(in srgb, var(--map-grid-color) 60%, transparent);
+    mix-blend-mode: normal;
   }
   .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; }
 

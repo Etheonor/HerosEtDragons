@@ -7,6 +7,9 @@ export const MJ = "mj";
 export const KAELITH = "kaelith";
 export const RAGNAR = "ragnar";
 
+/** Id de la carte illustrée du seed (celle qui porte l'image). */
+export const MAP_IMAGE = "map-image";
+
 /**
  * Re-seed la fixture déterministe, en purgeant au passage l'état du Durable
  * Object (journal, carte active, pions) — sans ça l'état survit d'un run à

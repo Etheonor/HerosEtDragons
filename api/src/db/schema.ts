@@ -198,6 +198,8 @@ export const maps = sqliteTable(
     r2Key: text("r2_key"),
     /** Taille d'une case en px (null = pas de quadrillage sur cette carte). */
     gridSize: integer("grid_size"),
+    /** Couleur du quadrillage, "#rrggbb" (null = couleur du thème). */
+    gridColor: text("grid_color"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),

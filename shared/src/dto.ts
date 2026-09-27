@@ -94,6 +94,8 @@ export interface MapSummary {
   hasImage: boolean;
   /** Taille d'une case en px à l'écran ; null = pas de quadrillage. */
   gridSize: number | null;
+  /** Couleur du quadrillage "#rrggbb" ; null = celle du thème. */
+  gridColor: string | null;
 }
 
 // ── Compendium ─────────────────────────────────────────────────
