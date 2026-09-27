@@ -8,9 +8,10 @@
     formatMod,
     suggestedCa,
     caBreakdown,
+    spellMatchesClass,
   } from '$lib/char-utils';
   import { ARMOR_KINDS, ARMOR_KIND_LABELS, type ArmorKind, type SheetArmor, type CharacterSheet } from '$lib/api';
-  import { findClass } from '@rollwith/shared/hd';
+  import { cantripsFor, findClass } from '@rollwith/shared/hd';
   import { api } from '$lib/api';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
@@ -246,8 +247,11 @@
             level?: number;
             school?: string;
           };
-          if (cls && m.classes?.includes(cls) && (m.level ?? 0) >= 1 && (m.level ?? 0) <= maxSpellLevel) {
-            all.push({ level: m.level ?? 1, slug: e.slug, title: e.title, school: m.school ?? '' });
+          // niveau 0 = tour de magie : proposé jusqu'au plus haut emplacement
+          // de la fiche, donc toujours disponible (ils ne s'épuisent pas).
+          const level = m.level ?? 0;
+          if (spellMatchesClass(m.classes, cls) && level >= 0 && level <= maxSpellLevel) {
+            all.push({ level, slug: e.slug, title: e.title, school: m.school ?? '' });
           }
         }
         if (offset + res.entries.length >= res.total) break;
@@ -269,6 +273,13 @@
     }
     return [...byLevel.entries()].sort((a, b) => a[0] - b[0]);
   });
+
+  // ── Tours de magie (niveau 0) ────────────────────────────────
+  // Ce sont des sorts CONNUS, pas des emplacements : pas de pastille à
+  // cochée, quota propre issu de la table DRS (indépendant du compendium,
+  // dont les tables d'évolution ne sont pas toutes ingérées en prod).
+  const cantripLimit = $derived(cantripsFor(classInfo?.key ?? '', sheet.identite?.niveau || 1));
+  const cantripsKnown = $derived(sheet.sorts.connus.filter((s) => s.level === 0));
 
   function pickSpell(sp: { level: number; slug: string; title: string }) {
     const exists = sheet.sorts.connus.some((c) => c.slug === sp.slug);
@@ -521,6 +532,32 @@
           {#if sheet.sorts.connus.length > knownLimit}<span class="quota-over">(au-delà du maximum — retirez-en)</span>{/if}
         </div>
       {/if}
+      {#if cantripLimit > 0}
+        <div class="spell-level">
+          <div class="sl-header">
+            <span class="sl-level">tours de magie</span>
+            <span class="sl-caption" title="Sorts de niveau 0 : connus, jamais épuisés (table DRS)">
+              {cantripsKnown.length} / {cantripLimit} connus :
+            </span>
+          </div>
+          <div class="sl-spells">
+            {#each cantripsKnown as sp (sp.slug)}
+              <span class="spell-chip cantrip" title="Tour de magie — cliquez pour retirer">
+                <span class="chip-name"><Editable {readonly} w={Math.max(60, spellLabel(sp).length * 7 + 8)} value={spellLabel(sp)} onchange={(v) => (sp.name = String(v))} oncommit={() => commitSpellName(sp)} ontype={touch} /></span>
+                {#if !readonly}
+                  <button class="chip-x" title="Retirer ce sort" onclick={() => removeSpell(sp.slug, 0)}>✕</button>
+                {/if}
+              </span>
+            {/each}
+            {#if cantripsKnown.length > cantripLimit}
+              <span class="sl-caption quota-over">(au-delà du maximum — retirez-en)</span>
+            {/if}
+            {#if !readonly}
+              <button class="add-spell" onclick={openSpellPicker}>+ tour de magie</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
       {#each spellsSorted as lv (lv.level)}
         <div class="spell-level">
           <div class="sl-header">
@@ -562,7 +599,7 @@
         {:else}
           <div class="sp-picker-body">
             {#each spellGroups as [level, spells] (level)}
-              <div class="sp-group-title">niveau {level}</div>
+              <div class="sp-group-title">{level === 0 ? 'tours de magie (niveau 0)' : `niveau ${level}`}</div>
               <div class="sp-grid">
                 {#each spells as sp (sp.slug)}
                   <button
@@ -805,6 +842,12 @@
     border-radius: 10px 3px 12px 3px;
     color: var(--accent-text);
     background: var(--bg);
+  }
+  /* tour de magie : sort connu permanent, distingué des sorts d'emplacement */
+  .spell-chip.cantrip {
+    border-style: dotted;
+    border-color: var(--border-soft);
+    color: var(--text-2);
   }
   .chip-x {
     font-family: var(--font-body); font-weight: 700; font-size: 9px;

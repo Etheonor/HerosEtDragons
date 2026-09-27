@@ -156,6 +156,24 @@ export function getShowSpells(sheet: CharacterSheet): boolean {
   return sheet.sorts.caracIncantation !== null;
 }
 
+/**
+ * Un sort du grimoire appartient-il à cette classe ?
+ *
+ * Le DRS regroupe des écoles sous un même jeton de `meta.classes` — les sorts
+ * de l'ensorceleur ET de la sorcelame y sont étiquetés « Ensorceleur/Sorcelame ».
+ * Une égalité stricte laissait donc l'ensorceleur avec un grimoire vide
+ * (20 sorts de niveau 1 invisibles). On accepte donc le libellé exact ou un
+ * jeton qui le préfixe (`Libellé/École`) — sans jamais matcher par simple
+ * début de chaîne, pour ne pas confondre deux classes.
+ */
+export function spellMatchesClass(
+  classes: string[] | undefined | null,
+  classLabel: string | undefined | null,
+): boolean {
+  if (!classLabel || !classes?.length) return false;
+  return classes.some((c) => c === classLabel || c.startsWith(`${classLabel}/`));
+}
+
 export function getSpellSaveDc(sheet: CharacterSheet): number | null {
   if (!sheet.sorts.caracIncantation) return null;
   return spellSaveDc(effectiveCarac(sheet, sheet.sorts.caracIncantation), getLevel(sheet));

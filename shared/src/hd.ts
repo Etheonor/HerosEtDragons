@@ -459,4 +459,25 @@ export function spellSlotsFor(classKey: string, level: number): number[] {
   return table[level - 1] ?? [0, 0, 0, 0, 0, 0, 0, 0, 0];
 }
 
+// ── Tours de magie (sorts de niveau 0) ─────────────────────────
+// Colonne « Tours de magie connus » des tables d'évolution DRS (index 0 =
+// niveau 1). Un tour de magie est un sort CONNU, pas un emplacement : il ne
+// s'use pas, se recharge seul et n'entre pas dans le quota des sorts de
+// niveau ≥ 1. D'où une table distincte, et non une ligne d'emplacements.
+export const CLASS_CANTRIPS: Record<string, number[]> = {
+  barde: [2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+  clerc: [3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+  druide: [2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+  ensorceleur: [4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6],
+  magicien: [3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+  sorcier: [2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+};
+
+/** Tours de magie connus à ce niveau (0 si la classe n'en a pas). */
+export function cantripsFor(classKey: string, level: number): number {
+  const row = CLASS_CANTRIPS[classKey];
+  if (!row || level < 1 || level > 20) return 0;
+  return row[level - 1] ?? 0;
+}
+
 // EOF hd.ts

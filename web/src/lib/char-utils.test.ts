@@ -5,6 +5,7 @@ import {
   getMod,
   getPassivePerception,
   racialBreakdown,
+  spellMatchesClass,
   suggestedCa,
   suggestedPvMax,
 } from "./char-utils";
@@ -265,5 +266,64 @@ describe("suggestedPvMax — minimum 1 PV par niveau", () => {
     });
     // 10 + 2 + 2 × (6 + 2) = 28
     expect(suggestedPvMax(sheet2)).toBe(28);
+  });
+});
+
+describe("appartenance d'un sort du grimoire à une classe", () => {
+  /** Vocabulaire réel de `meta.classes` dans le grimoire du DRS (ingéré) :
+   *  l'ensorceleur et la sorcelame partagent un seul jeton. */
+  const GRIMOIRE = [
+    "Barde",
+    "Clerc",
+    "Druide",
+    "Ensorceleur/Sorcelame",
+    "Magicien",
+    "Ombrelame",
+    "Paladin",
+    "Rôdeur",
+    "Sorcier",
+  ];
+
+  it("accepte le jeton composé de l'ensorceleur (régression du grimoire vide)", () => {
+    expect(spellMatchesClass(["Ensorceleur/Sorcelame"], "Ensorceleur")).toBe(true);
+    expect(spellMatchesClass(["Barde", "Ensorceleur/Sorcelame"], "Ensorceleur")).toBe(true);
+  });
+
+  it("accepte les 8 classes du jeu présentes telles quelles dans le grimoire", () => {
+    for (const cls of ["Barde", "Clerc", "Druide", "Magicien", "Paladin", "Rôdeur", "Sorcier"]) {
+      const sorts = GRIMOIRE.filter((g) => g === cls);
+      expect(sorts.length, `${cls} absent du grimoire`).toBeGreaterThan(0);
+      expect(spellMatchesClass(sorts, cls)).toBe(true);
+    }
+  });
+
+  it("toutes les classes incantatrices trouvent des sorts (le bug n'en laissait qu'une)", () => {
+    const sansSorts = ["Barbare", "Guerrier", "Moine", "Roublard"];
+    for (const cls of [
+      "Barde",
+      "Clerc",
+      "Druide",
+      "Ensorceleur",
+      "Magicien",
+      "Paladin",
+      "Rôdeur",
+      "Sorcier",
+    ]) {
+      const trouve = GRIMOIRE.some((g) => spellMatchesClass([g], cls));
+      expect(trouve, `${cls} : grimoire vide`).toBe(true);
+    }
+    // les non-incantateurs n'ont rien dans le grimoire, c'est normal
+    for (const cls of sansSorts) {
+      expect(GRIMOIRE.some((g) => spellMatchesClass([g], cls))).toBe(false);
+    }
+  });
+
+  it("ne confond pas deux classes ni les nontraits", () => {
+    expect(spellMatchesClass(["Sorcier"], "Ensorceleur")).toBe(false);
+    expect(spellMatchesClass(["Ensorceleur/Sorcelame"], "Sorcier")).toBe(false);
+    expect(spellMatchesClass(["Ombrelame"], "Ensorceleur")).toBe(false);
+    expect(spellMatchesClass([], "Ensorceleur")).toBe(false);
+    expect(spellMatchesClass(undefined, "Ensorceleur")).toBe(false);
+    expect(spellMatchesClass(["Barde"], null)).toBe(false);
   });
 });

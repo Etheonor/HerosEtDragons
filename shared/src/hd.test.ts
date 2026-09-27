@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   spellSlotsFor,
+  cantripsFor,
   CLASSES,
+  CLASS_CANTRIPS,
   RACES,
   SUBRACES,
   caracMod,
@@ -155,5 +157,46 @@ describe("pv niveau 1", () => {
     expect(level1Pv(6, -1)).toBe(5);
     expect(caracMod(14)).toBe(2);
     expect(caracMod(8)).toBe(-1);
+  });
+});
+
+describe("tours de magie (niveau 0)", () => {
+  it("colonne « Tours de magie connus » du DRS", () => {
+    expect(cantripsFor("ensorceleur", 1)).toBe(4);
+    expect(cantripsFor("magicien", 1)).toBe(3);
+    expect(cantripsFor("barde", 1)).toBe(2);
+    expect(cantripsFor("druide", 1)).toBe(2);
+    expect(cantripsFor("sorcier", 1)).toBe(2);
+    expect(cantripsFor("clerc", 1)).toBe(3);
+    // paliers du palier 3 (niv 4) et du palier 9 (niv 10)
+    expect(cantripsFor("ensorceleur", 3)).toBe(4);
+    expect(cantripsFor("ensorceleur", 4)).toBe(5);
+    expect(cantripsFor("barde", 9)).toBe(3);
+    expect(cantripsFor("barde", 10)).toBe(4);
+    expect(cantripsFor("sorcier", 20)).toBe(4);
+  });
+
+  it("seules les 6 classes incantatrices en ont", () => {
+    for (const key of ["barbare", "guerrier", "moine", "roublard"]) {
+      expect(cantripsFor(key, 1)).toBe(0);
+    }
+    for (const c of CLASSES) {
+      const attendu = ["barde", "clerc", "druide", "ensorceleur", "magicien", "sorcier"].includes(
+        c.key,
+      );
+      expect(cantripsFor(c.key, 1) > 0, c.key).toBe(attendu);
+    }
+  });
+
+  it("bornes : niveau hors table ou classe inconnue -> 0", () => {
+    expect(cantripsFor("barde", 0)).toBe(0);
+    expect(cantripsFor("barde", 21)).toBe(0);
+    expect(cantripsFor("licorne", 1)).toBe(0);
+  });
+
+  it("20 niveaux pour chaque classe incantatrice (comme les emplacements)", () => {
+    for (const key of ["barde", "clerc", "druide", "ensorceleur", "magicien", "sorcier"]) {
+      expect(CLASS_CANTRIPS[key]).toHaveLength(20);
+    }
   });
 });
