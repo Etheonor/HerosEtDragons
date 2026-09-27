@@ -8,8 +8,11 @@
   import {
     findRace,
     findClass,
+    findSubrace,
     racialBonus,
+    racialTotal,
     freeChoiceCandidates,
+    subracesFor,
     RACES,
     CLASSES,
     type Carac,
@@ -87,6 +90,9 @@
   // ── Apport course/classe (hd.ts, données officielles DRS) ────
   const raceInfo = $derived(findRace(sheet.identite?.race));
 
+  const compLink = (cat: string, slug: string) =>
+    `/compendium?campaign=${encodeURIComponent(char.campaignId)}&cat=${cat}&slug=${slug}`;
+
   // PV auto : temps que le joueur ne les a pas forcés, pvMax suit
   // DV + niveau + CON effective (modification instantanée, autosave).
   const pvAutoOn = $derived(sheet.pvAuto !== false);
@@ -127,15 +133,28 @@
   }
 
   // ── Bonus raciaux : TOUJOURS calculés, aucune action requise ──
+  // La sous-race est rattachée à sa race : elle n'est proposée que pour la race
+  // désignée, et changer de race efface une sous-race devenue incompatible.
+  const subraceInfo = $derived(findSubrace(sheet.identite?.sousRace, raceInfo?.key ?? null));
+  const subraceChoices = $derived<ChoiceOption[]>(
+    subracesFor(raceInfo?.key ?? null).map((s) => ({
+      title: s.label,
+      sub: bonusRacialText(s),
+      link: compLink('races', raceInfo?.key ?? ''),
+    })),
+  );
+
   const freeNeeded = $derived(raceInfo?.bonus.free?.count ?? 0);
   const freeCandidates = $derived(raceInfo ? freeChoiceCandidates(raceInfo) : []);
+  /** Bonus de la table seule (race + sous-race), hors choix libres. */
+  const baseRacial = $derived(raceInfo ? racialBonus(raceInfo, [], subraceInfo) : {});
+  const baseTotal = $derived(racialTotal(baseRacial));
   const freeAssigned = $derived.by(() => {
     if (!freeNeeded) return true;
     const saved = sheet.racial;
     if (!saved) return false;
-    const fixedMin = Object.values(racialBonus(raceInfo!)).reduce<number>((a, b) => a + (b ?? 0), 0);
-    const savedTotal = Object.values(saved).reduce<number>((a, b) => a + (b ?? 0), 0);
-    return savedTotal >= fixedMin + freeNeeded;
+    const savedTotal = racialTotal(saved);
+    return savedTotal >= baseTotal + freeNeeded;
   });
   const freeMissing = $derived(!!raceInfo && freeNeeded > 0 && !freeAssigned);
 
@@ -144,9 +163,19 @@
     if (freeChosen.includes(c)) freeChosen = freeChosen.filter((x) => x !== c);
     else if (freeChosen.length < freeNeeded) freeChosen = [...freeChosen, c];
   }
+  /** Recalcule le breakdown à partir des tables officielles. Les races à
+   *  choix libres (demi-elfe) passent par saveFreePicks : on ne les écrase pas. */
+  function applyRacialFromTables() {
+    if (!raceInfo) {
+      sheet.racial = null;
+      return;
+    }
+    if (freeNeeded > 0) return;
+    sheet.racial = { ...racialBonus(raceInfo, [], subraceInfo) };
+  }
   function saveFreePicks() {
     if (!raceInfo) return;
-    sheet.racial = { ...racialBonus(raceInfo, freeChosen) };
+    sheet.racial = { ...racialBonus(raceInfo, freeChosen, subraceInfo) };
     touch();
   }
   function rechooseFree() {
@@ -155,8 +184,19 @@
     touch();
   }
 
-  const compLink = (cat: string, slug: string) =>
-    `/compendium?campaign=${encodeURIComponent(char.campaignId)}&cat=${cat}&slug=${slug}`;
+  function pickRace(label: string) {
+    sheet.identite.race = label;
+    const next = findRace(label);
+    if (!findSubrace(sheet.identite?.sousRace, next?.key ?? null)) sheet.identite.sousRace = '';
+    freeChosen = [];
+    applyRacialFromTables();
+    touch();
+  }
+  function pickSubrace(label: string) {
+    sheet.identite.sousRace = label;
+    applyRacialFromTables();
+    touch();
+  }
 
   const raceChoices = $derived<ChoiceOption[]>(
     RACES.map((r) => ({ title: r.label, sub: bonusRacialText(r), link: compLink('races', r.key) })),
@@ -362,7 +402,7 @@
         </div>
         <div class="char-meta-item">
           <div class="meta-label">Race</div>
-          <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.race} options={raceChoices} onpick={(t) => { sheet.identite.race = t; touch(); }} /></div>
+          <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.race} options={raceChoices} onpick={pickRace} /></div>
           {#if raceInfo && freeMissing}
             <div class="free-meta">
               <span class="free-warn">+{freeNeeded} au choix</span>
@@ -379,6 +419,17 @@
             <button class="racial-undo" title="Redésigner les bonus libres" onclick={rechooseFree}>redésigner</button>
           {/if}
         </div>
+        {#if subraceChoices.length}
+          <div class="char-meta-item">
+            <div class="meta-label">Sous-race</div>
+            <div class="meta-value">
+              <ChoicePicker {readonly} value={sheet.identite.sousRace ?? ''} options={subraceChoices} placeholder="— Race seule —" clearlabel="Retirer la sous-race" onpick={pickSubrace} />
+            </div>
+            {#if subraceInfo}
+              <div class="meta-sub">{bonusRacialText(subraceInfo)} appliqué automatiquement</div>
+            {/if}
+          </div>
+        {/if}
         <div class="char-meta-item">
           <div class="meta-label">Historique</div>
           <div class="meta-value"><ChoicePicker {readonly} value={sheet.identite.historique} options={backgroundChoices} onpick={(t) => { sheet.identite.historique = t; touch(); }} /></div>

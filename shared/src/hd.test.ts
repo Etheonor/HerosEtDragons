@@ -3,12 +3,15 @@ import {
   spellSlotsFor,
   CLASSES,
   RACES,
+  SUBRACES,
   caracMod,
   findClass,
   findRace,
+  findSubrace,
   freeChoiceCandidates,
   level1Pv,
   racialBonus,
+  subracesFor,
 } from "./hd";
 
 describe("tables", () => {
@@ -58,6 +61,61 @@ describe("bonus raciaux", () => {
     expect(racialBonus(demiElfe, ["cha", "cha", "sag"])).toEqual({ cha: 2, sag: 1 });
     // incomplet : seulement ce qui est choisi
     expect(racialBonus(demiElfe, ["for"])).toEqual({ cha: 2, for: 1 });
+  });
+});
+
+describe("sous-races", () => {
+  it("chaque sous-race est rattachée à une race connue", () => {
+    const keys = new Set(RACES.map((r) => r.key));
+    for (const s of SUBRACES) expect(keys.has(s.race)).toBe(true);
+  });
+
+  it("les races du DRS qui ont des sous-races sont couvertes", () => {
+    expect(subracesFor("elfe").map((s) => s.label)).toEqual([
+      "Elfe d'aether",
+      "Elfe de fer",
+      "Elfe des sylves",
+    ]);
+    expect(subracesFor("gnome")).toHaveLength(3);
+    expect(subracesFor("halfelin")).toHaveLength(2);
+    expect(subracesFor("nain")).toHaveLength(3);
+    // races sans sous-race dans le DRS
+    expect(subracesFor("humain")).toEqual([]);
+    expect(subracesFor("sangdragon")).toEqual([]);
+    expect(subracesFor(null)).toEqual([]);
+  });
+
+  it("reconnaissance par nom libre, restreinte à la race", () => {
+    expect(findSubrace("Gnome des lacs", "gnome")?.key).toBe("gnome-des-lacs");
+    expect(findSubrace("Gnome des lacs")?.race).toBe("gnome");
+    // une sous-race n'appartient pas à une autre race
+    expect(findSubrace("Gnome des lacs", "elfe")).toBeNull();
+    expect(findSubrace("", "gnome")).toBeNull();
+  });
+
+  it("ne confond jamais le nom d'une race avec une sous-race", () => {
+    // régression : le préfixe inversé faisait retomber « Halfelin » sur
+    // « Halfelin pied-léger » (et « Elfe » sur « Elfe d'aether »).
+    expect(findSubrace("Halfelin", "halfelin")).toBeNull();
+    expect(findSubrace("Elfe", "elfe")).toBeNull();
+    expect(findSubrace("Gnome", "gnome")).toBeNull();
+    expect(findSubrace("Nain", "nain")).toBeNull();
+    // en revanche la saisie explicite ou tronquée fonctionne
+    expect(findSubrace("Halfelin grand sabot", "halfelin")?.key).toBe("halfelin-grand-sabot");
+    expect(findSubrace("nain des pierres", "nain")?.key).toBe("nain-des-pierres");
+  });
+
+  it("bonus de sous-race cumulés avec ceux de la race", () => {
+    const gnome = findRace("Gnome")!;
+    const halfelin = findRace("Halfelin")!;
+    expect(racialBonus(gnome)).toEqual({ int: 2 });
+    expect(racialBonus(gnome, [], findSubrace("Gnome des lacs"))).toEqual({ int: 2, sag: 1 });
+    expect(racialBonus(halfelin, [], findSubrace("Halfelin pied-léger", "halfelin"))).toEqual({
+      dex: 2,
+      cha: 1,
+    });
+    // race sans sous-race : rien ne change
+    expect(racialBonus(halfelin, [], null)).toEqual({ dex: 2 });
   });
 });
 

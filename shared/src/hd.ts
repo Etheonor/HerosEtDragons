@@ -26,6 +26,15 @@ export interface RaceInfo {
   bonus: RaceBonus;
 }
 
+/** Sous-race (variante de race) : toujours rattachée à une race parente. */
+export interface SubraceInfo {
+  key: string;
+  /** clé de la race parente dans RACES */
+  race: string;
+  label: string;
+  bonus: RaceBonus;
+}
+
 export interface ClassInfo {
   key: string;
   label: string;
@@ -54,6 +63,51 @@ export const RACES: RaceInfo[] = [
   { key: "nain", label: "Nain", bonus: { fixed: { con: 2 } } },
   { key: "sangdragon", label: "Sangdragon", bonus: { fixed: { for: 2, cha: 1 } } },
   { key: "tieffelin", label: "Tieffelin", bonus: { fixed: { cha: 2, int: 1 } } },
+];
+
+/** Sous-races officielles (sections `###` des docs/races du DRS).
+ *  Seules les sous-races qui portent une augmentation de caractéristiques
+ *  sont listées : en H&D R2 chacune vaut un simple +1. Les deux sections
+ *  parasites du DRS sont volontairement exclues — « Variante technique »
+ *  (humain : 3 caracs +1 au lieu de +1 partout) et « Ascendance » (sangdragon :
+ *  type de dégâts / souffle / jet de sauvegarde) ne sont pas des sous-races. */
+export const SUBRACES: SubraceInfo[] = [
+  { key: "elfe-aether", race: "elfe", label: "Elfe d'aether", bonus: { fixed: { int: 1 } } },
+  { key: "elfe-fer", race: "elfe", label: "Elfe de fer", bonus: { fixed: { cha: 1 } } },
+  { key: "elfe-des-sylves", race: "elfe", label: "Elfe des sylves", bonus: { fixed: { sag: 1 } } },
+  {
+    key: "gnome-des-roches",
+    race: "gnome",
+    label: "Gnome des roches",
+    bonus: { fixed: { con: 1 } },
+  },
+  { key: "gnome-des-fees", race: "gnome", label: "Gnome des fées", bonus: { fixed: { dex: 1 } } },
+  { key: "gnome-des-lacs", race: "gnome", label: "Gnome des lacs", bonus: { fixed: { sag: 1 } } },
+  {
+    key: "halfelin-pied-leger",
+    race: "halfelin",
+    label: "Halfelin pied-léger",
+    bonus: { fixed: { cha: 1 } },
+  },
+  {
+    key: "halfelin-grand-sabot",
+    race: "halfelin",
+    label: "Halfelin grand-sabot",
+    bonus: { fixed: { con: 1 } },
+  },
+  {
+    key: "nain-des-tertres",
+    race: "nain",
+    label: "Nain des tertres",
+    bonus: { fixed: { sag: 1 } },
+  },
+  {
+    key: "nain-des-pierres",
+    race: "nain",
+    label: "Nain des pierres",
+    bonus: { fixed: { int: 1 } },
+  },
+  { key: "nain-des-laves", race: "nain", label: "Nain des laves", bonus: { fixed: { for: 1 } } },
 ];
 
 export const CLASSES: ClassInfo[] = [
@@ -115,6 +169,50 @@ export function findClass(name: string | undefined | null): ClassInfo | null {
   return matchByRoot(CLASSES, name);
 }
 
+/** Sous-races : comme `normalize`, mais trait d'union = espace, pour que
+ *  « Halfelin grand sabot » retrouve « Halfelin grand-sabot ». */
+function normalizeSubrace(text: string): string {
+  return normalize(text).replace(/-/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Sous-races d'une race (vide si la race n'en a pas). */
+export function subracesFor(raceKey: string | undefined | null): SubraceInfo[] {
+  if (!raceKey) return [];
+  return SUBRACES.filter((s) => s.race === raceKey);
+}
+
+/** Sous-race par nom libre. `raceKey` restreint la recherche aux sous-races de
+ *  cette race (une fiche ne peut pas porter la sous-race d'une autre race).
+ *
+ *  Matching volontairement plus strict que `matchByRoot` : une sous-race doit
+ *  être nommée explicitement. Le préfixe inversé (`libellé commence par la
+ *  saisie`) est proscrit — sans cela « Halfelin » retomberait sur « Halfelin
+ *  pied-léger » et afficherait un +1 Charisme à un halfelin sans sous-race. */
+export function findSubrace(
+  name: string | undefined | null,
+  raceKey?: string | null,
+): SubraceInfo | null {
+  if (!name) return null;
+  const pool = raceKey ? SUBRACES.filter((s) => s.race === raceKey) : SUBRACES;
+  if (!pool.length) return null;
+  const q = normalizeSubrace(name);
+  if (!q) return null;
+  // Garde-fou : le nom d'une race n'est jamais une sous-race. Sans cela le
+  // préfixe inversé (« halfelin-pied-leger » commence par « halfelin »)
+  // attribuait un +1 Charisme fantôme aux halfelins sans sous-race.
+  for (const r of RACES) {
+    if (q === r.key || q === normalizeSubrace(r.label)) return null;
+  }
+  for (const s of pool) {
+    for (const cand of [s.key, normalizeSubrace(s.label)]) {
+      if (q === cand) return s;
+      // saisie tronquée mais jamais triviale : « nain des » → « Nain des tertres »
+      if (cand.startsWith(q) && q.length >= 8) return s;
+    }
+  }
+  return null;
+}
+
 const CARAC_KEYS = CARACS;
 
 /** Choix libres requis pour une race (0 si aucune sélection à faire). */
@@ -128,26 +226,31 @@ export function freeChoiceCandidates(race: RaceInfo): Carac[] {
   return CARAC_KEYS.filter((c) => !fixed.has(c));
 }
 
-/** Bonus raciaux finaux : fixes (+all) + libres validés (ignorés hors candidats). */
+/** Bonus raciaux finaux : fixes (+all) + libres validés (ignorés hors candidats)
+ *  + bonus de sous-race. Le même `freeChoices` sert la race et sa sous-race. */
 export function racialBonus(
   race: RaceInfo,
   freeChoices: Carac[] = [],
+  subrace?: SubraceInfo | null,
 ): Partial<Record<Carac, number>> {
   const out: Partial<Record<Carac, number>> = {};
-  if (race.bonus.all) {
-    for (const c of CARAC_KEYS) out[c] = (out[c] ?? 0) + race.bonus.all;
-  }
-  for (const [c, v] of Object.entries(race.bonus.fixed ?? {}) as [Carac, number][]) {
-    out[c] = (out[c] ?? 0) + v;
-  }
-  if (race.bonus.free) {
-    const eligible = new Set(freeChoiceCandidates(race));
-    const seen = new Set<Carac>();
-    for (const c of freeChoices) {
-      if (!eligible.has(c) || seen.has(c)) continue;
-      seen.add(c);
-      out[c] = (out[c] ?? 0) + race.bonus.free.value;
-      if (seen.size >= race.bonus.free.count) break;
+  for (const b of [race.bonus, subrace?.bonus]) {
+    if (!b) continue;
+    if (b.all) {
+      for (const c of CARAC_KEYS) out[c] = (out[c] ?? 0) + b.all;
+    }
+    for (const [c, v] of Object.entries(b.fixed ?? {}) as [Carac, number][]) {
+      out[c] = (out[c] ?? 0) + v;
+    }
+    if (b.free) {
+      const eligible = new Set(freeChoiceCandidates(race));
+      const seen = new Set<Carac>();
+      for (const c of freeChoices) {
+        if (!eligible.has(c) || seen.has(c)) continue;
+        seen.add(c);
+        out[c] = (out[c] ?? 0) + b.free.value;
+        if (seen.size >= b.free.count) break;
+      }
     }
   }
   return out;

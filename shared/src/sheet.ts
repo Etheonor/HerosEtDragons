@@ -36,6 +36,7 @@ export const SHEET_BOUNDS = {
 export const SHEET_STR_MAX = {
   nom: 100,
   historique: 100,
+  sousRace: 100,
   alignement: 60,
   citation: 4000,
   vitesse: 40,
@@ -98,6 +99,7 @@ export const characterSheetSchema = z.object({
   identite: z.object({
     nom: strField(SHEET_STR_MAX.nom, "nom"),
     race: strField(SHEET_STR_MAX.nom, "race"),
+    sousRace: strField(SHEET_STR_MAX.sousRace, "sous-race").optional().nullable(),
     classe: strField(SHEET_STR_MAX.nom, "classe"),
     niveau: intField(...SHEET_BOUNDS.niveau, "niveau"),
     historique: strField(SHEET_STR_MAX.historique, "historique"),
@@ -260,6 +262,7 @@ export function createSheet(overrides: DeepPartial<CharacterSheet> = {}): Charac
     identite: {
       nom: def(overrides.identite?.nom, "Sans nom"),
       race: def(overrides.identite?.race, ""),
+      sousRace: def(overrides.identite?.sousRace, ""),
       classe: def(overrides.identite?.classe, ""),
       niveau: def(overrides.identite?.niveau, 1),
       historique: def(overrides.identite?.historique, ""),
@@ -349,6 +352,7 @@ export function normalizeSheet(s: CharacterSheet): CharacterSheet {
     identite: {
       nom: clampStr(s.identite.nom, SHEET_STR_MAX.nom) || "Sans nom",
       race: clampStr(s.identite.race, SHEET_STR_MAX.nom),
+      sousRace: clampStr(s.identite.sousRace, SHEET_STR_MAX.sousRace),
       classe: clampStr(s.identite.classe, SHEET_STR_MAX.nom),
       niveau: clampInt(s.identite.niveau, SHEET_BOUNDS.niveau, 1),
       historique: clampStr(s.identite.historique, SHEET_STR_MAX.historique),

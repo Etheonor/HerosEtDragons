@@ -8,9 +8,11 @@
     freeChoiceCandidates,
     level1Pv,
     racialBonus,
+    subracesFor,
     type Carac,
     type ClassInfo,
     type RaceInfo,
+    type SubraceInfo,
   } from '@rollwith/shared/hd';
   import { SKILLS, CARAC_NAMES } from '$lib/char-utils';
   import { bonusRacialText } from '$lib/hd-text';
@@ -37,13 +39,16 @@
 
   // ── Race ─────────────────────────────────────────────────────
   let race = $state<RaceInfo | null>(null);
+  let subrace = $state<SubraceInfo | null>(null);
   let freeChosen = $state<Carac[]>([]);
+  const subraceOptions = $derived(subracesFor(race?.key ?? null));
   const freeCandidates = $derived(race ? freeChoiceCandidates(race) : []);
   const freeNeeded = $derived(race?.bonus.free?.count ?? 0);
-  const racial = $derived(race ? racialBonus(race, freeChosen) : {});
+  const racial = $derived(race ? racialBonus(race, freeChosen, subrace) : {});
 
   function pickRace(r: RaceInfo) {
     race = r;
+    subrace = null;
     freeChosen = [];
   }
   function toggleFree(c: Carac) {
@@ -253,6 +258,7 @@
           identite: {
             nom: nom.trim(),
             race: race.label,
+            sousRace: subrace?.label ?? '',
             classe: classe.label,
             niveau: 1,
             historique: background?.title ?? '',
@@ -333,6 +339,24 @@
           </button>
         {/each}
       </div>
+      {#if race && subraceOptions.length}
+        <div class="free-choice">
+          <span class="lbl">Sous-race (optionnelle)</span>
+          <div class="cards">
+            <button class="card-choice" class:on={!subrace} onclick={() => (subrace = null)}>
+              <span class="choice-title">Race seule</span>
+              <span class="choice-sub">aucun bonus supplémentaire</span>
+            </button>
+            {#each subraceOptions as s (s.key)}
+              <button class="card-choice" class:on={subrace?.key === s.key} onclick={() => (subrace = s)}>
+                <span class="choice-title">{s.label}</span>
+                <span class="choice-sub">{bonusRacialText(s)}</span>
+                <a class="choice-link" href={compendiumLink(race!.key, 'races')} target="_blank" rel="noopener" onclick={(e) => e.stopPropagation()}>fiche →</a>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
       {#if race && freeNeeded > 0}
         <div class="free-choice">
           <span class="lbl">Bonus libres (+1 ×{freeNeeded}) — choisis {freeNeeded - freeChosen.length} carac{freeNeeded - freeChosen.length > 1 ? 's' : ''}</span>
@@ -430,12 +454,15 @@
         {/each}
       </div>
       {#if race}
-        <p class="step-note">Bonus raciaux ({race.label}) appliqués automatiquement — la valeur <b>=</b> est celle enregistrée.</p>
+        <p class="step-note">Bonus raciaux ({race.label}{subrace ? ` · ${subrace.label}` : ''}) appliqués automatiquement — la valeur <b>=</b> est celle enregistrée.</p>
       {/if}
     {:else}
       <div class="summary">
         <div class="sum-line"><span class="lbl">Nom</span><span>{nom}</span></div>
         <div class="sum-line"><span class="lbl">Race</span><span>{race?.label} — {race ? bonusRacialText(race) : ''}</span></div>
+        {#if subrace}
+          <div class="sum-line"><span class="lbl">Sous-race</span><span>{subrace.label} — {bonusRacialText(subrace)}</span></div>
+        {/if}
         <div class="sum-line"><span class="lbl">Classe</span><span>{classe?.label} — DV d{classe?.hitDie}, sauvegardes {classe?.saves.map((s) => s.toUpperCase()).join(', ')}</span></div>
         <div class="sum-line"><span class="lbl">Historique</span><span>{background?.title ?? '—'}</span></div>
         <div class="sum-cards">

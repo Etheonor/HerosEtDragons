@@ -12,6 +12,7 @@
     readonly = false,
     onpick,
     align = 'left',
+    clearlabel = '',
   }: {
     value: string;
     options: ChoiceOption[];
@@ -19,6 +20,8 @@
     readonly?: boolean;
     onpick: (title: string) => void;
     align?: 'left' | 'center';
+    /** libellé du bouton d'effacement ; vide = pas d'effacement possible */
+    clearlabel?: string;
   } = $props();
 
   let open = $state(false);
@@ -39,9 +42,14 @@
 {#if readonly}
   <span class="static {align}">{value || '—'}</span>
 {:else}
-  <button class="choice-field" class:empty={!value} class:center={align === 'center'} onclick={() => (open = true)} title="Choisir dans la liste">
-    {value || placeholder}
-  </button>
+  <span class="field-wrap">
+    <button class="choice-field" class:empty={!value} class:center={align === 'center'} onclick={() => (open = true)} title="Choisir dans la liste">
+      {value || placeholder}
+    </button>
+    {#if clearlabel && value}
+      <button class="choice-clear" title={clearlabel} aria-label={clearlabel} onclick={() => { onpick(''); open = false; }}>✕</button>
+    {/if}
+  </span>
 
   {#if open}
     <div class="overlay" role="presentation" onclick={() => (open = false)}>
@@ -79,6 +87,26 @@
     color: inherit;
   }
   .center { text-align: center; }
+
+  .field-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+  }
+  .choice-clear {
+    font: inherit;
+    font-size: 11px;
+    line-height: 1;
+    background: none;
+    border: 1.5px dashed var(--border);
+    border-radius: 6px;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: 1px 4px;
+    flex: none;
+  }
+  .choice-clear:hover { border-color: var(--accent-border); color: var(--accent-text); }
 
   .choice-field {
     font: inherit;

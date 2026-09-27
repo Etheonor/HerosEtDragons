@@ -1,7 +1,7 @@
 <script lang="ts">
   import { CARAC_LABELS, getMod, getProficiency, formatMod, type CaracKey } from '$lib/char-utils';
   import { effectiveCarac, racialBreakdown } from '$lib/char-utils';
-  import { findRace } from '@rollwith/shared/hd';
+  import { findRace, findSubrace } from '@rollwith/shared/hd';
   import type { CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
@@ -25,6 +25,11 @@
   const caracs: CaracKey[] = ['for', 'dex', 'con', 'int', 'sag', 'cha'];
   const racialShown = $derived(racialBreakdown(sheet));
   const raceInfo = $derived(findRace(sheet.identite?.race));
+  const raceLabel = $derived.by(() => {
+    const sub = findSubrace(sheet.identite?.sousRace, raceInfo?.key ?? null);
+    const base = raceInfo?.label ?? 'course';
+    return sub ? `${base} · ${sub.label}` : base;
+  });
 
   function num(v: unknown, min: number, max: number, fb: number): number {
     const x = Math.round(Number(v));
@@ -73,7 +78,7 @@
           ontype={touch}
         />
         {#if racialShown[c]}
-          <span class="racial-badge" title="+{racialShown[c]} racial ({raceInfo?.label ?? 'course'}) — appliqué automatiquement">+{racialShown[c]}<b class="eff">={effectiveCarac(sheet, c)}</b></span>
+          <span class="racial-badge" title="+{racialShown[c]} racial ({raceLabel}) — appliqué automatiquement">+{racialShown[c]}<b class="eff">={effectiveCarac(sheet, c)}</b></span>
         {/if}
       </div>
     </div>

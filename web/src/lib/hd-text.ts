@@ -1,7 +1,7 @@
 // Libellés dérivés des tables races/classes (hd.ts) — partagés UI création/feuille.
 // Source unique des libellés de caractéristiques (D2) : la feuille et l'assistant
 // importent d'ici, plus aucune copie locale.
-import type { Carac, RaceInfo, ClassInfo } from "@rollwith/shared/hd";
+import type { Carac, RaceBonus, ClassInfo } from "@rollwith/shared/hd";
 
 /** Libellés courts (bonus raciaux, badges). */
 export const CARAC_LABELS_SHORT: Record<Carac, string> = {
@@ -23,7 +23,8 @@ export const CARAC_NAMES: Record<Carac, string> = {
   cha: "Charisme",
 };
 
-export function bonusRacialText(r: RaceInfo): string {
+/** Résumé lisible d'un bonus racial (race ou sous-race : même forme de données). */
+export function bonusRacialText(r: { bonus: RaceBonus }): string {
   const parts: string[] = [];
   if (r.bonus.all) parts.push(`+${r.bonus.all} partout`);
   for (const [k, v] of Object.entries(r.bonus.fixed ?? {})) {

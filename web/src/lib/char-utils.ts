@@ -11,7 +11,7 @@ import {
   type Carac,
   type Skill,
 } from "$shared/rules";
-import { findClass, findRace, racialBonus } from "$shared/hd";
+import { findClass, findRace, findSubrace, racialBonus } from "$shared/hd";
 import { CARAC_NAMES } from "./hd-text";
 import type { ArmorKind, CharacterSheet } from "./api";
 
@@ -30,15 +30,17 @@ export { CARAC_NAMES };
 
 /**
  * Détail du bonus racial appliqué automatiquement : breakdown sauvé sur la
- * fiche (création assistée / choix libres), sinon déduit de la table officielle
- * (partie fixe ; les choix libres du demi-elfe comptent 0 tant qu'ils ne sont
- * pas désignés). Aucune action manuelle n'est requise pour le calcul.
+ * fiche (création assistée / choix libres), sinon déduit des tables oficiais
+ * (race + sous-race désignée ; les choix libres du demi-elfe comptent 0 tant
+ * qu'ils ne sont pas désignés). Aucune action manuelle n'est requise pour le
+ * calcul.
  */
 export function racialBreakdown(sheet: CharacterSheet): Partial<Record<CaracKey, number>> {
   if (sheet.racial && Object.keys(sheet.racial).length) return sheet.racial;
   const r = findRace(sheet.identite?.race);
   if (!r) return {};
-  return racialBonus(r) as Partial<Record<CaracKey, number>>;
+  const sub = findSubrace(sheet.identite?.sousRace, r.key);
+  return racialBonus(r, [], sub) as Partial<Record<CaracKey, number>>;
 }
 
 export function effectiveCarac(sheet: CharacterSheet, carac: CaracKey): number {
