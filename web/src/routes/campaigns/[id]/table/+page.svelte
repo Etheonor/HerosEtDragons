@@ -254,7 +254,7 @@
   let viewZoom = $state(1);
   let viewPanX = $state(0);
   let viewPanY = $state(0);
-  let panning = $state<{ x: number; y: number; id: number } | null>(null);
+  let panning = $state<{ x: number; y: number; id: number; btn: number } | null>(null);
   let viewForMapId: string | null = null;
 
   /** Taille réelle de la surface (fitted = image ajustée, fill = cadre plein). */
@@ -593,6 +593,7 @@
   }
 
   function tokenPointerDown(charId: string, e: PointerEvent) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (isMj && tool === 'fog') return;
     // Avec l'outil Main, tout doit panoramiquer — y compris un départ sur un pion.
     if (tool === 'hand') return;
@@ -605,6 +606,7 @@
 
   function markerPointerDown(id: string, e: PointerEvent) {
     if (!isMj) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (tool === 'hand') return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -655,6 +657,9 @@
   }
 
   function onMapPointerDown(e: PointerEvent) {
+    // Le clic droit/molette appartient au panoramique (voir
+    // onFramePointerDown) : il ne doit déclencher aucune action d'outil ici.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (!isMj || tool !== 'fog') return;
     if (!fogOn) return;
     fogErasing = true;
@@ -662,25 +667,53 @@
     sendFogReveal(mapXY(e));
   }
 
-  // ── Vue : panoramique (outil « Main », bouton gauche) ───────
+  // ── Vue : panoramique (outil « Main », clic droit ou molette) ──
   // Les handlers vivent sur le CADRE et non sur la surface : on peut ainsi
   // déplacer la carte en partant des marges, ce qui n'est pas possible si le
   // point de départ doit être sur l'image.
 
+  /** Un clic droit ou molette panoramique QUEL QUE SOIT l'outil actif : les
+   *  joueurs n'ont pas de bouton « Main » (il est dans la barre MJ), et sur un
+   *  trackpad le clic molette n'existe pas — le clic droit est le geste réel. */
+  const PAN_BUTTONS = new Set([1, 2]);
+
+  /** Le clic droit sur un pion/marqueur garde sa signification (menu contextuel
+   *  du MJ) : on ne le transforme pas en panoramique. */
+  function isOnToken(e: PointerEvent | MouseEvent): boolean {
+    const t = e.target as HTMLElement | null;
+    return !!t?.closest?.('.token, .marker');
+  }
+
   function onFramePointerDown(e: PointerEvent) {
+    if (panning) return;
+    if (e.pointerType === 'mouse' && PAN_BUTTONS.has(e.button)) {
+      if (e.button === 2 && isOnToken(e)) return;
+      e.preventDefault();
+      panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: e.button };
+      skipNextClick = true;
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      return;
+    }
     if (tool !== 'hand' || panning) return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     e.preventDefault();
-    panning = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: e.button };
     skipNextClick = true;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+
+  /** Sur la carte, le clic droit panoramique : on supprime le menu natif, mais
+   *  pas celui des pions (qui passe par `onTokenContextMenu`). */
+  function onFrameContextMenu(e: MouseEvent) {
+    if (isOnToken(e)) return;
+    e.preventDefault();
   }
 
   function onFramePointerMove(e: PointerEvent) {
     if (!panning || panning.id !== e.pointerId) return;
     viewPanX += e.clientX - panning.x;
     viewPanY += e.clientY - panning.y;
-    panning = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: panning.btn };
     clampView();
   }
 
@@ -1272,12 +1305,13 @@
         class="map-frame"
         bind:this={frameRef}
         role="region"
-        aria-label="Carte de jeu — molette pour zoomer, outil Main pour déplacer"
+        aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
         class:panning={!!panning}
         onpointerdown={onFramePointerDown}
         onpointermove={onFramePointerMove}
         onpointerup={onFramePointerUp}
         onpointercancel={onFramePointerUp}
+        oncontextmenu={onFrameContextMenu}
       >
         {#if !activeMap}
           <div class="map-placeholder">
@@ -1361,10 +1395,17 @@
           <div
             class="map-hud"
             role="toolbar"
-            aria-label="Zoom de la carte"
+            aria-label="Vue de la carte"
             tabindex="-1"
             onpointerdown={(e) => e.stopPropagation()}
           >
+            <button
+              class="hud-hand"
+              class:on={tool === 'hand'}
+              title="Déplacer la carte — raccourci H, ou glissez au clic droit"
+              aria-pressed={tool === 'hand'}
+              onclick={() => toolSelect('hand')}>✋</button
+            >
             <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
             <button
               class="hud-fit"
@@ -1917,6 +1958,15 @@
   .map-hud button:hover { background: var(--bg); color: var(--text); }
   .map-hud .hud-fit { color: var(--accent-text); font-size: 11.5px; }
   .map-hud .hud-fit.off { opacity: 0.55; }
+  /* bouton « Main » : disponible pour tout le monde, contrairement à la barre
+     d'outils MJ. S'allume quand le panoramique au clic gauche est actif. */
+  .map-hud .hud-hand { font-size: 13px; opacity: 0.6; }
+  .map-hud .hud-hand:hover { opacity: 1; }
+  .map-hud .hud-hand.on {
+    opacity: 1;
+    background: var(--accent);
+    color: var(--heading);
+  }
 
   .map-surface {
     position: relative;

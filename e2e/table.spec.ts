@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { CAMPAIGN, KAELITH, MJ, RAGNAR, openTable, seed } from "./helpers";
+import { CAMPAIGN, KAELITH, MJ, RAGNAR, login, openTable, seed } from "./helpers";
 
 test.describe("Connexion et table", () => {
   test("sans cookie de dev, le bypass est inerte (API 401, table vide)", async ({ page }) => {
@@ -200,5 +200,57 @@ test.describe("Carte : grille et vue", () => {
     // La carte a bougé à l'écran, et le zoom est resté à 100 %.
     expect(Math.abs(after.x - before.x)).toBeGreaterThan(40);
     await expect(page.locator(".hud-fit")).toHaveText("100%");
+  });
+
+  test("un JOUEUR déplace la carte : clic droit, ou le bouton du HUD", async ({
+    page,
+    browser,
+  }) => {
+    // Le MJ choisit la carte (le panneau Cartes lui est réservé).
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    // Le joueur rejoint SANS re-seeder : sinon le reset purgerait la carte
+    // active que le MJ vient de choisir.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".map-surface")).toBeVisible();
+
+    // 1. Le bouton « Main » du HUD existe pour un joueur (il n'y a pas de
+    //    barre d'outils MJ pour lui) : c'est le reproche initial.
+    const hand = p2.locator(".hud-hand");
+    await expect(hand).toBeVisible();
+
+    // 2. Clic droit glissé = panoramique, sans passer par l'outil Main.
+    const frame = (await p2.locator(".map-frame").boundingBox())!;
+    const before = (await p2.locator(".map-surface").boundingBox())!;
+    const cx = frame.x + frame.width / 2;
+    const cy = frame.y + frame.height / 2;
+    await p2.mouse.move(cx, cy);
+    await p2.mouse.down({ button: "right" });
+    await p2.mouse.move(cx + 130, cy + 90, { steps: 12 });
+    await p2.mouse.up({ button: "right" });
+    const afterRight = (await p2.locator(".map-surface").boundingBox())!;
+    expect(Math.abs(afterRight.x - before.x)).toBeGreaterThan(40);
+
+    // 3. Le bouton du HUD bascule le panoramique au clic gauche (et se désactive).
+    await expect(hand).toHaveAttribute("aria-pressed", "false");
+    await hand.click();
+    await expect(hand).toHaveAttribute("aria-pressed", "true");
+    const beforeLeft = (await p2.locator(".map-surface").boundingBox())!;
+    await p2.mouse.move(cx, cy);
+    await p2.mouse.down();
+    await p2.mouse.move(cx - 110, cy - 70, { steps: 12 });
+    await p2.mouse.up();
+    const afterLeft = (await p2.locator(".map-surface").boundingBox())!;
+    expect(Math.abs(afterLeft.x - beforeLeft.x)).toBeGreaterThan(40);
+    await hand.click();
+    await expect(hand).toHaveAttribute("aria-pressed", "false");
+
+    await ctx.close();
   });
 });
