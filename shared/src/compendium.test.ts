@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSortKey,
   defaultVisibilityFor,
   entryKey,
   monsterAveragePv,
   monsterCa,
+  normalizeFr,
   sizeHitDie,
   type MonsterMeta,
 } from "./compendium";
@@ -54,5 +56,24 @@ describe("dérivés de monstre", () => {
 
   it("clé d'entrée", () => {
     expect(entryKey("bestiaire", "gobelin")).toBe("bestiaire/gobelin");
+  });
+});
+
+describe("normalisation FR (recherche et tri)", () => {
+  it("minuscules, sans accents, ligatures dépliées", () => {
+    expect(normalizeFr("Éclat de bois")).toBe("eclat de bois");
+    expect(normalizeFr("Aigle géant")).toBe("aigle geant");
+    expect(normalizeFr("Mauvais œil")).toBe("mauvais oeil");
+    expect(normalizeFr("Bâton")).toBe("baton");
+    expect(normalizeFr("Félys")).toBe("felys");
+    expect(normalizeFr("  Â   terre ")).toBe("a terre");
+  });
+
+  it("la clé de tri place les titres accentés à leur rang alphabétique", () => {
+    // Le symptôme remonté : « Éclat de bois » arrivait en 354ᵉ sur 361 parce
+    // que SQLite compare les octets (É = 0xC3 0x89 se classe après Z).
+    const titres = ["Zèbre", "Éclat de bois", "Aide", "Éponge", "Âne", "Bête"];
+    const tri = [...titres].sort((a, b) => (buildSortKey(a) < buildSortKey(b) ? -1 : 1));
+    expect(tri).toEqual(["Aide", "Âne", "Bête", "Éclat de bois", "Éponge", "Zèbre"]);
   });
 });

@@ -67,19 +67,37 @@
     };
   });
 
-  async function loadEntries() {
-    if (!campaign) return;
+  /** Taille de page : le plafond de l'API est 200, et trois catégories
+   *  dépassent ce plafond (bestiaire 753, grimoire 361, objets magiques 301) —
+   *  sans pagination, la liste s'arrêtait net à la 200ᵉ fiche, ce qui coupait
+   *  le grimoire à la lettre « L ». */
+  const PAGE_SIZE = 200;
+  let loadingMore = $state(false);
+
+  async function loadEntries(append = false) {
+    if (!campaign || loadingMore) return;
     listError = '';
+    if (append) loadingMore = true;
     try {
       const res = await api.compendium.entries(campaign, {
         q: search.trim() || undefined,
         category: search.trim() ? undefined : activeCategory || undefined,
-        limit: 200,
+        limit: PAGE_SIZE,
+        offset: append ? entries.length : 0,
       });
-      entries = res.entries;
+      if (append) {
+        // Dédoublonnage : la clé du each est category/slug, et le compendium
+        // pourrait bouger entre deux requêtes (recherche en cours).
+        const seen = new Set(entries.map((e) => `${e.category}/${e.slug}`));
+        entries = [...entries, ...res.entries.filter((e) => !seen.has(`${e.category}/${e.slug}`))];
+      } else {
+        entries = res.entries;
+      }
       total = res.total;
     } catch (e) {
       listError = e instanceof Error ? e.message : 'Recherche impossible';
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -205,6 +223,9 @@
             {:else}
               <span>{LABELS[activeCategory] ?? ''}</span>
             {/if}
+            {#if entries.length < total}
+              <span class="list-count">{entries.length} / {total}</span>
+            {/if}
           </div>
           <div class="list">
             {#each entries as e (e.category + '/' + e.slug)}
@@ -221,6 +242,13 @@
               <p class="list-empty">Aucun résultat.</p>
             {/each}
           </div>
+          {#if entries.length < total}
+            <div class="list-more">
+              <button class="more-btn" disabled={loadingMore} onclick={() => void loadEntries(true)}>
+                {loadingMore ? 'Chargement…' : `Afficher plus (${total - entries.length} restants)`}
+              </button>
+            </div>
+          {/if}
         </section>
 
         <!-- Fiche -->
@@ -433,7 +461,20 @@
   .rail-lock { font-size: 11px; color: var(--accent-text); }
 
   .list-col { border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; min-height: 0; }
-  .list-head { padding: 10px 14px 6px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); flex: none; }
+  .list-head {
+    padding: 10px 14px 6px; font-size: 12px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--text-3); flex: none;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  }
+  .list-count { color: var(--text-2); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .list-more { padding: 0 8px 10px; flex: none; }
+  .more-btn {
+    font-family: var(--font-body); font-size: 12.5px; font-weight: 700; width: 100%;
+    padding: 7px 10px; background: transparent; border: 2px dashed var(--border);
+    border-radius: 10px 3px 12px 3px; color: var(--text-2); cursor: pointer;
+  }
+  .more-btn:hover:not(:disabled) { border-color: var(--accent-border); color: var(--accent-text); }
+  .more-btn:disabled { opacity: 0.5; cursor: default; }
   .list { overflow-y: auto; padding: 0 8px 12px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
   .row {
     font-family: var(--font-body); display: flex; flex-direction: column; gap: 1px; align-items: flex-start;

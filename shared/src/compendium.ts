@@ -25,6 +25,38 @@ export function defaultVisibilityFor(category: CompendiumCategory): "public" | "
   return category === "bestiaire" || category === "objets-magiques" ? "mj" : "public";
 }
 
+/**
+ * Normalisation FR (minuscules, sans accents, ligatures dépliées) — la seule
+ * qui serve à la fois à la recherche et au tri.
+ *
+ * NFD ne décompose pas les ligatures : « œil » et « safran » resteraient
+ * introuvables sans ce cas. Les accents combines sont en revanche supprimés.
+ */
+export function normalizeFr(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/œ/g, "oe")
+    .replace(/Œ/g, "oe")
+    .replace(/æ/g, "ae")
+    .replace(/Æ/g, "ae")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Clé de tri d'un titre.
+ *
+ * SQLite ordonne par OCTETS : « É » (0xC3 0x89) se classe après « Z », si bien
+ * que les titres accentués partaient à la fin de la liste — « Éclat de bois »
+ * arrivait en 354ᵉ sur 361 au lieu de 118ᵉ. La clé est donc pré-calculée à
+ * l'ingestion, ce que SQL ne peut pas faire (pas d'ICU en D1).
+ */
+export function buildSortKey(title: string): string {
+  return normalizeFr(title);
+}
+
 export interface BodySection {
   heading: string | null;
   markdown: string;
@@ -106,8 +138,10 @@ export interface CompendiumEntry {
   body: BodySection[];
   visibility: "public" | "mj";
   origin: "drs" | "maison";
-  /** index de recherche v1 : titre + catégorie + mots-clés, minuscules sans accents */
+  /** index de recherche : titre + catégorie + mots-clés, normalisé FR */
   searchText: string;
+  /** clé de tri alphabétique FR (titre normalisé) — cf. buildSortKey */
+  sortKey: string;
   /** incrémenté à chaque ré-ingestion qui modifie la fiche */
   version: number;
   hash: string;

@@ -1,12 +1,13 @@
 // Parsing des fiches de bestiaire DRS (frontmatter YAML + corps markdown).
-import { createHash } from "node:crypto";
 import matter from "gray-matter";
 import {
+  buildSortKey,
   defaultVisibilityFor,
   type BodySection,
   type CompendiumEntry,
   type MonsterMeta,
 } from "@rollwith/shared/compendium";
+import { buildSearchText, hashRaw } from "../util.js";
 
 function asNumber(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -149,9 +150,7 @@ export function parseMonsterFile(slug: string, raw: string): CompendiumEntry {
     meta.subtype ?? "",
     ...(meta.environments ?? []),
     ...(meta.languages ?? []),
-  ]
-    .join(" ")
-    .toLowerCase();
+  ];
 
   return {
     slug,
@@ -163,8 +162,21 @@ export function parseMonsterFile(slug: string, raw: string): CompendiumEntry {
     body: splitBodySections(content),
     visibility: defaultVisibilityFor("bestiaire"),
     origin: "drs",
-    searchText: keywords,
+    // buildSearchText normalise (accents, ligatures) : sans lui, « Aigle
+    // géant » n'était pas trouvable en tapant « aigle geant ».
+    searchText: buildSearchText(keywords),
+    sortKey: buildSortKey(title),
     version: 1,
-    hash: createHash("sha256").update(raw).digest("hex"),
+    // Hash de la SORTIE, comme les autres parseurs : c'est ce qui permet au
+    // diff de détecter un changement de parseur sur des fiches déjà en base.
+    hash: hashRaw(
+      JSON.stringify({
+        title,
+        meta,
+        body: splitBodySections(content),
+        searchText: buildSearchText(keywords),
+        sortKey: buildSortKey(title),
+      }),
+    ),
   };
 }

@@ -124,7 +124,12 @@ app.get("/entries", requireAuth, memberOfCampaign, entriesQuery, async (c) => {
     })
     .from(schema.compendiumEntries)
     .where(where)
-    .orderBy(schema.compendiumEntries.title)
+    // Tri sur la clé normalisée (cf. buildSortKey) : ordonner par le titre
+    // lui-même est un tri OCTET, qui plaçait « Éclat de bois » en 354ᵉ sur 361
+    // au lieu de 118ᵉ. Le slug en second critère rend la pagination stable
+    // (deux titres normalisés identiques ne peuvent pas se chevaucher d'une
+    // page à l'autre).
+    .orderBy(schema.compendiumEntries.sortKey, schema.compendiumEntries.slug)
     .limit(limit ?? 60)
     .offset(offset ?? 0);
 

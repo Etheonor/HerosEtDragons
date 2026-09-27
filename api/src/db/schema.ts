@@ -225,6 +225,9 @@ export const compendiumEntries = sqliteTable(
       .notNull()
       .default("drs"),
     searchText: text("search_text").notNull().default(""),
+    /** Titre normalisé FR : clé de tri (SQLite ordonne par octets, donc un
+     *  titre accentué partait après « Z »). Alimente l'ingestion. */
+    sortKey: text("sort_key").notNull().default(""),
     version: integer("version").notNull().default(1),
     hash: text("hash").notNull(),
     ingestCommit: text("ingest_commit"),

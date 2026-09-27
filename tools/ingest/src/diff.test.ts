@@ -13,6 +13,7 @@ function entry(slug: string, hash: string, title = slug): CompendiumEntry {
     visibility: "mj",
     origin: "drs",
     searchText: slug,
+    sortKey: slug,
     version: 1,
     hash,
   };

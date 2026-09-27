@@ -1,0 +1,1 @@
+ALTER TABLE `compendium_entries` ADD `sort_key` text DEFAULT '' NOT NULL;

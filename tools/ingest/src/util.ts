@@ -6,7 +6,7 @@ import type {
   CompendiumEntry,
   CompendiumMeta,
 } from "@rollwith/shared/compendium";
-import { defaultVisibilityFor } from "@rollwith/shared/compendium";
+import { buildSortKey, defaultVisibilityFor, normalizeFr } from "@rollwith/shared/compendium";
 
 export function hashRaw(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -40,12 +40,7 @@ export function parseCellLink(cell: string): { text: string; anchor: string | nu
 }
 
 export function buildSearchText(parts: (string | number | undefined | null)[]): string {
-  return parts
-    .filter((p) => p !== undefined && p !== null && p !== "")
-    .join(" ")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  return normalizeFr(parts.filter((p) => p !== undefined && p !== null && p !== "").join(" "));
 }
 
 export function makeEntry(input: {
@@ -71,11 +66,21 @@ export function makeEntry(input: {
     visibility: defaultVisibilityFor(input.category),
     origin: input.origin ?? "drs",
     searchText: buildSearchText([input.title, ...input.keywords]),
+    sortKey: buildSortKey(input.title),
     version: 1,
     // Le hash couvre la SORTIE générée (pas seulement la source) : un
     // changement de parser doit être détecté par le diff au même titre
-    // qu'une modification du DRS.
-    hash: hashRaw(JSON.stringify({ title: input.title, meta: input.meta, body: input.body })),
+    // qu'une modification du DRS. searchText/sortKey en font partie, sinon
+    // corriger la normalisation ne réécrirait aucune ligne existante.
+    hash: hashRaw(
+      JSON.stringify({
+        title: input.title,
+        meta: input.meta,
+        body: input.body,
+        searchText: buildSearchText([input.title, ...input.keywords]),
+        sortKey: buildSortKey(input.title),
+      }),
+    ),
   };
 }
 

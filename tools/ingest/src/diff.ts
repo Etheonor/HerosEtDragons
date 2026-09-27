@@ -60,6 +60,7 @@ function rowValues(
     q(entry.visibility),
     q(entry.origin),
     q(entry.searchText),
+    q(entry.sortKey),
     String(version),
     q(entry.hash),
     q(commit),
@@ -70,7 +71,7 @@ function rowValues(
 }
 
 const COLS =
-  "key, category, slug, title, source, source_page, meta, body, visibility, origin, search_text, version, hash, ingest_commit, campaign_id, created_at, updated_at";
+  "key, category, slug, title, source, source_page, meta, body, visibility, origin, search_text, sort_key, version, hash, ingest_commit, campaign_id, created_at, updated_at";
 
 /** SQL D1 (upsert) : les inchangés ne sont pas écrits ; une modif incrémente version. */
 export function buildUpsertSql(plan: IngestPlan, now: number, commit: string | null): string {
@@ -85,7 +86,8 @@ export function buildUpsertSql(plan: IngestPlan, now: number, commit: string | n
       `INSERT INTO compendium_entries (${COLS}) VALUES (${rowValues(entry, version, now, commit)}) ON CONFLICT(key) DO UPDATE SET
         title = excluded.title, source = excluded.source, source_page = excluded.source_page,
         meta = excluded.meta, body = excluded.body, visibility = excluded.visibility,
-        search_text = excluded.search_text, version = excluded.version, hash = excluded.hash,
+        search_text = excluded.search_text, sort_key = excluded.sort_key,
+        version = excluded.version, hash = excluded.hash,
         ingest_commit = excluded.ingest_commit, updated_at = excluded.updated_at;`,
     );
   }

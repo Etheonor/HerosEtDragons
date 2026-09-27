@@ -109,9 +109,32 @@ describe("parseMonsterFile — robustesse", () => {
   it("hash stable et sensible au contenu", () => {
     const raw = fixture("aboleth");
     expect(parseMonsterFile("aboleth", raw).hash).toBe(parseMonsterFile("aboleth", raw).hash);
-    expect(parseMonsterFile("aboleth", raw + "\n").hash).not.toBe(
+    // Le hash couvre la SORTIE (comme tous les autres parseurs) : ce qui compte
+    // est qu'une correction de parseur réécrive les fiches déjà en base. Un
+    // changement de contenu qui change la fiche doit donc changer le hash.
+    expect(parseMonsterFile("aboleth", raw + "\nUne ligne de plus.\n").hash).not.toBe(
       parseMonsterFile("aboleth", raw).hash,
     );
+    // …et une modification qui ne change rien à la fiche ne réécrit pas.
+    expect(parseMonsterFile("aboleth", raw + "\n").hash).toBe(
+      parseMonsterFile("aboleth", raw).hash,
+    );
+  });
+
+  it("searchText et sortKey sont produits par la normalisation FR", () => {
+    // Le bestiaire construit sa fiche à la main : il doit bien passer par
+    // buildSearchText/buildSortKey, sinon les accents restaient (250 titres du
+    // bestiaire étaient introuvables sans accent, dont « Aigle géant »).
+    const e = parseMonsterFile("aboleth", fixture("aboleth"));
+    expect(e.sortKey).toBe("aboleth");
+    expect(e.searchText.startsWith("aboleth ")).toBe(true);
+    // Aucune fiche bestiaire ne doit garder d'accent dans ses deux champs.
+    const accent = /[À-ÿŒœÆæ]/;
+    for (const f of ["aboleth", "gobelin", "dragon-noir-adulte"]) {
+      const entry = parseMonsterFile(f, fixture(f));
+      expect(entry.sortKey, f).not.toMatch(accent);
+      expect(entry.searchText, f).not.toMatch(accent);
+    }
   });
 });
 
