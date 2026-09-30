@@ -1,16 +1,31 @@
 <!--
-  SPIKE — jetable. Supprimer ce fichier (et sa route) à la fin de la validation.
+  SPIKE - jetable. Supprimer ce fichier (et sa route) avant toute mise en prod :
+  adapter-static le publierait tel quel.
 
   But : prouver (ou infirmer) qu'un menu / popover / dialogue peut se poser
-  au-dessus d'une carte qui porte `transform: scale(2.5)` sans être lui-même
-  mis à l'échelle ni mal positionné.
+  au-dessus d'une carte qui porte `transform: scale(N)` sans etre lui-meme mis a
+  l'echelle ni mal positionne.
 
-  Référence : docs/atlas-benchmark/05-architecture-svelte.md §1
+  Reference : docs/atlas-benchmark/05-architecture-svelte.md §1
 
-  Le diagnostic est objectif, pas visuel :
-    - `offsetWidth`             = largeur de mise en page (JAMAIS transformée)
-    - `getBoundingClientRect()` = largeur à l'écran (transformée)
-  Si le 2e est ~zoom × le 1er, l'overlay est resté dans le parent transformé.
+  Deux groupes de tests, parce qu'ils ne se valent pas :
+
+  · GROUPE 1 - declencheurs HORS de la carte (dans le « chrome »).
+    C'est la que vivront la barre d'outils et les panneaux dans la nouvelle
+    architecture : ils sont freres de la couche carte, pas descendants. Ils ne
+    devraient donc JAMAIS poser probleme. Ce sont des temoins de controle.
+
+  · GROUPE 2 - declencheurs DANS la carte transformee.
+    Le seul cas reellement difficile, et le seul qui se produira en vrai : menu
+    contextuel sur un pion, popover sur un lien de zone, apercu au survol.
+
+  · T6 est un temoin negatif : meme chose que T4 mais SANS Portal et SANS
+    strategy="fixed". Il DOIT echouer. S'il passe, le harnais ne teste rien.
+
+  Diagnostic numerique, pas visuel :
+    offsetWidth = largeur de mise en page (jamais transformee)
+    getBoundingClientRect().width = largeur a l'ecran (transformee)
+  Si le 2e vaut environ zoom fois le 1er, l'overlay est reste dans le parent.
 -->
 <script lang="ts">
   import { BitsConfig, ContextMenu, Dialog, Popover } from 'bits-ui';
@@ -19,6 +34,7 @@
 
   interface Report {
     label: string;
+    expected: 'ok' | 'ko';
     escapedTree: Verdict;
     notScaled: Verdict;
     anchored: Verdict;
@@ -27,16 +43,40 @@
     note: string;
   }
 
-  let zoom = $state(2.5);
+  let zoom = $state(1.5);
+  let pan = $state({ x: 0, y: 0 });
   let report = $state<Report | null>(null);
+
+  let dragging = $state(false);
+  let grab = { px: 0, py: 0, ox: 0, oy: 0 };
 
   const nbFail = $derived(
     report ? [report.escapedTree, report.notScaled, report.anchored].filter((v) => v === 'ko').length : 0
   );
+  const conforme = $derived(
+    report ? (nbFail === 0 ? report.expected === 'ok' : report.expected === 'ko') : false
+  );
 
-  /** Mesure l'overlay ouvert dont la racine porte `data-spike`, puis compare
-   *  à son ancre si fournie. */
-  function measure(label: string, anchorSelector: string | null, note: string): void {
+  /* panoramique : la carte doit rester atteignable quel que soit le zoom */
+  function panDown(e: PointerEvent): void {
+    if ((e.target as HTMLElement).closest('[data-no-pan]')) return;
+    dragging = true;
+    grab = { px: e.clientX, py: e.clientY, ox: pan.x, oy: pan.y };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function panMove(e: PointerEvent): void {
+    if (!dragging) return;
+    pan = { x: grab.ox + (e.clientX - grab.px), y: grab.oy + (e.clientY - grab.py) };
+  }
+  function panUp(): void {
+    dragging = false;
+  }
+  function resetPan(): void {
+    pan = { x: 0, y: 0 };
+  }
+
+  /** Mesure l'overlay ouvert (racine portant data-spike) face a son ancre. */
+  function measure(label: string, expected: 'ok' | 'ko', anchorSelector: string | null, note: string): void {
     const root = document.querySelector<HTMLElement>('[data-spike="open"]');
     if (!root) {
       report = null;
@@ -47,38 +87,58 @@
     const rect = root.getBoundingClientRect();
     const rectW = rect.width;
 
-    // 1. L'overlay est-il encore dans l'arbre du conteneur transformé ?
+    // 1. L'overlay a-t-il quitte l'arbre du conteneur transforme ?
     const escapedTree = root.closest('[data-scaled]') === null ? 'ok' : 'ko';
 
     // 2. Est-il agrandi par le transform ?
     const ratio = layoutW > 0 ? rectW / layoutW : 1;
     const notScaled = ratio > zoom * 0.85 && ratio < zoom * 1.15 ? 'ko' : 'ok';
 
-    // 3. Est-il ancré juste sous son déclencheur, en coordonnées viewport ?
+    // 3. Est-il ancre juste sous son declencheur, en coordonnees viewport ?
     let anchored: Verdict = 'neutre';
     let fullNote = note;
     if (anchorSelector) {
-      const anchor = document.querySelector<HTMLElement>(anchorSelector);
-      if (!anchor) {
+      const el = document.querySelector<HTMLElement>(anchorSelector);
+      if (!el) {
         anchored = 'ko';
-        fullNote += ' — ancre introuvable';
+        fullNote += ' - ancre introuvable';
       } else {
-        const a = anchor.getBoundingClientRect();
+        const a = el.getBoundingClientRect();
         const dx = Math.abs(rect.left - a.left);
         const dy = Math.abs(rect.top - a.bottom);
-        // tolère l'écart de placement propre à chaque composant (centrage, offset)
-        const near = dx < 12 && dy < 24;
-        anchored = near ? 'ok' : 'ko';
-        fullNote += ` — écart à l'ancre : ${dx.toFixed(0)}px horiz / ${dy.toFixed(0)}px vert`;
+        anchored = dx < 14 && dy < 26 ? 'ok' : 'ko';
+        fullNote += ' - ecart a l ancre : ' + dx.toFixed(0) + ' px horiz / ' + dy.toFixed(0) + ' px vert';
       }
     }
 
-    report = { label, escapedTree, notScaled, anchored, rectW: Math.round(rectW), layoutW, note: fullNote };
-  }
+    report = {
+      label: label,
+      expected: expected,
+      escapedTree: escapedTree,
+      notScaled: notScaled,
+      anchored: anchored,
+      rectW: Math.round(rectW),
+      layoutW: layoutW,
+      note: fullNote,
+    };
+    }
 
-  function clear(): void {
-    report = null;
-  }
+  /*
+   * Styles inline pour le contenu portalé : le portail sort du sous-arbre stylé
+   * par Svelte, les styles scopés ne le suivent pas. Constat important.
+   */
+  const PANEL =
+    'position:fixed;background:var(--panel);border:2px solid var(--border);border-radius:14px;' +
+    'box-shadow:0 12px 40px var(--shadow-2);color:var(--text);font-family:var(--font-body);' +
+    'padding:14px;width:260px;font-size:13px;line-height:1.45;';
+  const MENU =
+    'position:fixed;min-width:200px;padding:6px;background:var(--panel);border:2px solid var(--border);' +
+    'border-radius:14px;box-shadow:0 12px 40px var(--shadow-2);color:var(--text);font-family:var(--font-body);';
+  const ITEM = 'padding:6px 10px;border-radius:8px;font-size:13px;outline:none;';
+  const DLG =
+    'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:300px;padding:18px;' +
+    'background:var(--panel);border:2px solid var(--border);border-radius:16px;' +
+    'box-shadow:0 12px 40px var(--shadow-2);color:var(--text);font-family:var(--font-body);';
 </script>
 
 <svelte:head>
@@ -91,127 +151,170 @@
   <header>
     <h1>Spike — overlays au-dessus d'une carte transformée</h1>
     <p>
-      Le bloc quadrillé à gauche simule <code>.map-zoom</code> : il porte
-      <code>transform: scale({zoom})</code>. Les déclencheurs sont <em>à l'intérieur</em> de
-      ce bloc — c'est le cas difficile. Un overlay correct est positionné sur le viewport,
-      à sa taille réelle, juste sous son déclencheur. Le diagnostic est calculé à
-      l'ouverture, automatiquement.
+      <strong>Glisse sur la carte pour la déplacer</strong> et change le zoom : tout doit rester
+      atteignable. Le groupe 1 est hors de la carte (témoins, ça doit toujours marcher). Le
+      groupe 2 est <em>dans</em> la carte transformée — le seul cas réel. <strong>T6 doit
+      échouer</strong> : c'est le témoin négatif qui prouve que le diagnostic détecte le
+      problème.
     </p>
   </header>
 
   <div class="stage">
-    <div class="controls">
-      <span class="muted">Zoom de la carte :</span>
-      {#each [1, 2, 2.5, 3] as z}
+    <div class="chrome-bar">
+      <span class="tag">groupe 1 · hors carte</span>
+
+      <Dialog.Root onOpenChange={(o) => o && measure('T1 · Dialog', 'ok', null, 'modal centré, 300 px')}>
+        <Dialog.Trigger class="tbtn">T1 · Dialog</Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay style="position:fixed;inset:0;background:var(--overlay);" />
+          <Dialog.Content data-spike="open" style={DLG}>
+            <div style="margin-bottom:10px;font:700 16px var(--font-title);color:var(--heading);">T1 · Dialog</div>
+            <p style="margin:0 0 14px;font-size:13px;line-height:1.45;color:var(--text-2);">
+              Largeur fixe : 300&nbsp;px. Si le diagnostic rapporte environ 300 fois le zoom,
+              l'overlay est multiplié → échec.
+            </p>
+            <Dialog.Close class="tbtn">Fermer</Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Popover.Root onOpenChange={(o) => o && measure('T2 · Popover', 'ok', '[data-anchor="t2"]', 'hors carte')}>
+        <Popover.Trigger data-anchor="t2" class="tbtn">T2 · Popover</Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content data-spike="open" strategy="fixed" style={PANEL}>
+            Ancré sous son bouton, hors de la carte : témoin de contrôle.
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+
+      <button
+        id="t3trigger"
+        data-anchor="t3"
+        class="tbtn"
+        popovertarget="t3pop"
+        onclick={() => setTimeout(() => measure('T3 · popover natif', 'ok', '[data-anchor="t3"]', 'top layer par la spec'), 30)}
+        >T3 · popover natif</button
+      >
+
+      <button class="tbtn" onclick={resetPan}>Recadrer</button>
+
+      <span class="sp muted">zoom {zoom}× · pan {Math.round(pan.x)},{Math.round(pan.y)}</span>
+      {#each [1, 1.5, 2, 3] as z}
         <button class="zbtn" class:on={zoom === z} onclick={() => (zoom = z)}>{z}×</button>
       {/each}
     </div>
 
-    <div class="viewport">
-      <div class="map-frame" data-scaled style="transform: scale({zoom}); transform-origin: 0 0;">
+    <div
+      class="map-window"
+      class:grabbing={dragging}
+      role="application"
+      aria-label="Carte simulée — glisser pour déplacer"
+      onpointerdown={panDown}
+      onpointermove={panMove}
+      onpointerup={panUp}
+      onpointercancel={panUp}
+    >
+      <div
+        class="map-frame"
+        data-scaled
+        style="transform: translate({pan.x}px, {pan.y}px) scale({zoom}); transform-origin: 0 0;"
+      >
         <div class="map-surface">
           <div class="map-bg"></div>
-          <div class="fake-token" style="left: 10%; top: 18%;">A</div>
-          <div class="fake-token" style="left: 58%; top: 40%;">B</div>
-          <div class="fake-token" style="left: 26%; top: 66%;">C</div>
 
-          <!-- T3 : ContextMenu sur le faux pion B (le cas le plus dur) -->
-          <ContextMenu.Root onOpenChange={(open) => open && measure('T3 · ContextMenu', '[data-anchor="t3"]', 'pion B')}>
-            <ContextMenu.Trigger
-              data-anchor="t3"
-              class="ctx-trigger">B</ContextMenu.Trigger
-            >
+          <div class="fake-token" style="left: 74%; top: 26%;">A</div>
+          <div class="fake-token" style="left: 82%; top: 74%;">C</div>
+
+          <span class="tag tag--inmap inmap-label">groupe 2 · dans la carte</span>
+
+          <Popover.Root
+            onOpenChange={(o) =>
+              o && measure('T4 · Popover dans la carte', 'ok', '[data-anchor="t4"]', 'ancré dans la carte transformée')
+            }
+          >
+            <Popover.Trigger data-anchor="t4" data-no-pan class="tbtn inmap" style="left: 10%; top: 20%;">
+              T4 · Popover
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content data-spike="open" strategy="fixed" style={PANEL}>
+                Doit rester à sa taille et se poser juste sous le bouton, <b>malgré</b> le zoom.
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+
+          <ContextMenu.Root
+            onOpenChange={(o) => o && measure('T5 · ContextMenu sur un pion', 'ok', '[data-anchor="t5"]', 'pion B')}
+          >
+            <ContextMenu.Trigger data-anchor="t5" data-no-pan class="tok tok--live">B</ContextMenu.Trigger>
             <ContextMenu.Portal>
-              <ContextMenu.Content data-spike="open" strategy="fixed" class="menu">
-                <ContextMenu.Item class="item">Apparaître</ContextMenu.Item>
-                <ContextMenu.Item class="item">Retirer</ContextMenu.Item>
-                <ContextMenu.Item class="item">Supprimer</ContextMenu.Item>
+              <ContextMenu.Content data-spike="open" strategy="fixed" style={MENU}>
+                <ContextMenu.Item style={ITEM}>Apparaître</ContextMenu.Item>
+                <ContextMenu.Item style={ITEM}>Retirer</ContextMenu.Item>
+                <ContextMenu.Item style={ITEM}>Supprimer</ContextMenu.Item>
               </ContextMenu.Content>
             </ContextMenu.Portal>
           </ContextMenu.Root>
 
-          <div class="triggers">
-            <!-- T1 : Dialog -->
-            <Dialog.Root onOpenChange={(open) => open && measure('T1 · Dialog', null, 'largeur fixe 300px')}>
-              <Dialog.Trigger data-anchor="t1" class="tbtn">T1 · Dialog</Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay class="ovl" />
-                <Dialog.Content data-spike="open" class="dialog">
-                  <Dialog.Title class="dlg-title">T1 · Dialog</Dialog.Title>
-                  <Dialog.Description class="muted">
-                    Largeur fixe : 300&nbsp;px. Si le diagnostic rapporte ≈ 750&nbsp;px, l'overlay
-                    est multiplié par le zoom → échec.
-                  </Dialog.Description>
-                  <Dialog.Close class="tbtn">Fermer</Dialog.Close>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
-
-            <!-- T2 : Popover ancré sur son bouton -->
-            <Popover.Root onOpenChange={(open) => open && measure('T2 · Popover', '[data-anchor="t2"]', 'ancré sous le bouton')}>
-              <Popover.Trigger data-anchor="t2" class="tbtn">T2 · Popover</Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content data-spike="open" strategy="fixed" class="menu menu--pop">
-                  Largeur 260&nbsp;px, doit se poser exactement sous « T2 · Popover ».
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-
-            <!-- T4 : popover NATIF (top layer par la spec) -->
-            <button
-              id="t4trigger"
-              data-anchor="t4"
-              class="tbtn"
-              popovertarget="t4pop"
-              onclick={() => setTimeout(() => measure('T4 · popover natif', '[data-anchor="t4"]', 'top layer natif'), 30)}
-              >T4 · popover natif</button
-            >
-          </div>
-
-          <!-- enfant DOM de la carte transformée, MAIS dans le top layer -->
-          <div id="t4pop" popover class="menu menu--pop" style="width: 240px; margin: 0;">
-            Élément enfant de la carte transformée, mais en <em>top layer</em> → ne doit pas être
-            mis à l'échelle.
-          </div>
+          <Popover.Root
+            onOpenChange={(o) =>
+              o && measure('T6 · Popover SANS Portal (temoin)', 'ko', '[data-anchor="t6"]', 'ce test doit echouer')
+            }
+          >
+            <Popover.Trigger data-anchor="t6" data-no-pan class="tbtn inmap" style="left: 10%; top: 34%;">
+              T6 · sans Portal
+            </Popover.Trigger>
+            <Popover.Content data-spike="open" style={PANEL}>
+              Ce popover n'a <b>ni Portal ni strategy</b>. Il reste dans l'arbre transformé : il doit
+              être mis à l'échelle et mal ancré.
+            </Popover.Content>
+          </Popover.Root>
         </div>
       </div>
     </div>
   </div>
 
   <aside class="diag">
-    <h2>Tests</h2>
-    <p class="muted">
-      Le diagnostic se remplit tout seul à l'ouverture de chaque overlay. Change le zoom et
-      réessaie : le diagnostic doit rester vert.
-    </p>
+    <h2>Diagnostic</h2>
 
-    <ul class="list">
-      <li>
-        <strong>T1 · Dialog</strong> — <em>clic sur « T1 · Dialog »</em><br />
-        <span class="muted">Contrôle le fond : l'overlay ne doit pas être multiplié par le zoom.</span>
-      </li>
-      <li>
-        <strong>T2 · Popover</strong> — <em>clic sur « T2 · Popover »</em><br />
-        <span class="muted">Contrôle l'ancrage : doit être collé sous son bouton.</span>
-      </li>
-      <li>
-        <strong>T3 · ContextMenu</strong> — <em>clic droit sur le pion B</em><br />
-        <span class="muted">Le cas le plus dur : positionné sur les coordonnées du pointeur.</span>
-      </li>
-      <li>
-        <strong>T4 · popover natif</strong> — <em>clic sur « T4 · popover natif »</em><br />
-        <span class="muted">La solution normative, sans dépendance.</span>
-      </li>
-    </ul>
+    <div class="grp">
+      <span class="tag">groupe 1 · hors carte</span>
+      <dl>
+        <dt>T1 · Dialog</dt>
+        <dd>modal centré, largeur fixe 300 px — à ouvrir</dd>
+        <dt>T2 · Popover</dt>
+        <dd>ancré sous son bouton — à ouvrir</dd>
+        <dt>T3 · popover natif</dt>
+        <dd>top layer par la spec — à ouvrir</dd>
+      </dl>
+    </div>
+
+    <div class="grp">
+      <span class="tag tag--inmap">groupe 2 · dans la carte</span>
+      <dl>
+        <dt>T4 · Popover</dt>
+        <dd>ancré à un bouton posé <em>dans</em> la carte — à ouvrir</dd>
+        <dt>T5 · ContextMenu</dt>
+        <dd>clic droit sur le pion B</dd>
+      </dl>
+    </div>
+
+    <div class="grp grp--ko">
+      <span class="tag tag--ko">témoin négatif</span>
+      <p class="muted">Doit <b>échouer</b>. S'il passe, le diagnostic ne teste rien.</p>
+      <dl>
+        <dt>T6 · sans Portal</dt>
+        <dd>même popover, ni Portal ni strategy</dd>
+      </dl>
+    </div>
 
     {#if report}
-      <div class="report" class:report--fail={nbFail > 0}>
+      <div class="report" class:report--bad={!conforme}>
         <div class="report-head">
           <strong>{report.label}</strong>
-          {#if nbFail > 0}
-            <span class="fail">{nbFail} échec{nbFail > 1 ? 's' : ''}</span>
+          {#if conforme}
+            <span class="pass">conforme</span>
           {:else}
-            <span class="pass">OK</span>
+            <span class="fail">inattendu</span>
           {/if}
         </div>
         <table>
@@ -233,28 +336,13 @@
               <td class="num">{report.rectW} / {report.layoutW} px</td>
             </tr>
           </tbody>
-          <tbody>
-            <tr>
-              <td>Hors de l'arbre transformé</td>
-              <td class="v-{report.escapedTree}">{report.escapedTree}</td>
-            </tr>
-            <tr>
-              <td>Taille non mise à l'échelle</td>
-              <td class="v-{report.notScaled}">{report.notScaled}</td>
-            </tr>
-            <tr>
-              <td>Ancrage correct</td>
-              <td class="v-{report.anchored}">{report.anchored}</td>
-            </tr>
-            <tr>
-              <td>largeur écran / mise en page</td>
-              <td class="num">{report.rectW} / {report.layoutW} px</td>
-            </tr>
-          </tbody>
         </table>
-        <p class="muted note">{report.note}</p>
+        <p class="note muted">{report.note}</p>
+        <p class="attendu muted">
+          Attendu pour ce test : {report.expected === 'ok' ? 'aucun échec' : 'au moins un échec'}.
+        </p>
       </div>
-      <button class="tbtn clear" onclick={clear}>Effacer le diagnostic</button>
+      <button class="tbtn clear" onclick={() => (report = null)}>Effacer</button>
     {:else}
       <p class="muted">Aucun overlay ouvert.</p>
     {/if}
@@ -262,19 +350,28 @@
     <div class="manual">
       <h3>À vérifier à l'œil</h3>
       <ol>
-        <li>Les couleurs sont-elles correctes ? (les tokens héritent à travers le portail)</li>
+        <li>Les couleurs sont-elles bonnes ? (les tokens héritent à travers le portail)</li>
         <li><kbd>Échap</kbd> et le clic extérieur ferment-ils ?</li>
-        <li>Répéter sur <strong>Safari</strong> et <strong>Firefox</strong> — le top layer n'a pas le même comportement partout.</li>
+        <li>Répéter sur <strong>Safari</strong> et <strong>Firefox</strong> — le top layer ne se comporte pas partout pareil.</li>
       </ol>
     </div>
   </aside>
 </div>
 
+<div
+  id="t3pop"
+  popover
+  style="position:fixed;background:var(--panel);border:2px solid var(--border);border-radius:14px;
+         box-shadow:0 12px 40px var(--shadow-2);color:var(--text);font-family:var(--font-body);
+         padding:14px;width:250px;font-size:13px;line-height:1.45;margin:0;"
+>
+  Top layer natif, hors de la carte : témoin de contrôle.
+</div>
+
 <style>
-  /* ─── chrome de la page ─── */
   .page {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr) 330px;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 14px;
     height: 100vh;
@@ -290,31 +387,30 @@
   }
 
   h1 {
-    font: 700 22px var(--font-title);
+    font: 700 21px var(--font-title);
     margin: 0 0 6px;
     color: var(--heading);
   }
 
   h2 {
-    font: 700 18px var(--font-title);
-    margin: 0 0 8px;
+    font: 700 17px var(--font-title);
+    margin: 0 0 10px;
   }
 
   h3 {
-    font: 700 14px var(--font-title);
+    font: 700 13px var(--font-title);
     margin: 0 0 6px;
   }
 
   header p {
     margin: 0;
-    max-width: 78ch;
+    max-width: 88ch;
+    font-size: 14px;
     line-height: 1.5;
   }
 
-  code {
-    background: var(--selected);
-    padding: 1px 5px;
-    border-radius: 4px;
+  .muted {
+    color: var(--text-2);
   }
 
   kbd {
@@ -326,11 +422,27 @@
     font-size: 11px;
   }
 
-  .muted {
+  .tag {
+    font: 700 10px var(--font-body);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
   }
 
-  /* ─── scène ─── */
+  .tag--inmap {
+    color: var(--accent-text);
+    border-color: var(--accent-border);
+  }
+
+  .tag--ko {
+    color: #e06c60;
+    border-color: #c0392b;
+  }
+
   .stage {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -338,14 +450,35 @@
     min-height: 0;
   }
 
-  .controls {
+  .chrome-bar {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .sp {
+    margin-left: auto;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tbtn {
+    padding: 5px 11px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .tbtn:hover {
+    background: var(--selected);
   }
 
   .zbtn {
-    padding: 4px 11px;
+    padding: 4px 10px;
     border: 2px solid var(--border);
     border-radius: 8px;
     background: var(--panel);
@@ -360,13 +493,19 @@
     border-color: var(--accent-border);
   }
 
-  .viewport {
+  .map-window {
     position: relative;
     overflow: hidden;
     background: #111;
     border: 2px solid var(--border);
     border-radius: 8px;
     min-height: 0;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .map-window.grabbing {
+    cursor: grabbing;
   }
 
   .map-frame {
@@ -405,110 +544,33 @@
     transform: translate(-50%, -50%);
   }
 
-  .ctx-trigger {
+  .inmap {
     position: absolute;
-    left: 58%;
-    top: 40%;
-    width: 48px;
-    height: 48px;
+    transform: translate(-50%, -50%);
+  }
+
+  .inmap-label {
+    left: 10%;
+    top: 10%;
+  }
+
+  .tok--live {
+    position: absolute;
+    left: 42%;
+    top: 26%;
+    width: 54px;
+    height: 54px;
     border-radius: 48% 52% 50% 50% / 52% 48% 52% 48%;
     background: var(--map-token-bg);
     border: 3px solid var(--accent);
     color: var(--map-token-fg);
     display: grid;
     place-items: center;
-    font: 700 18px var(--font-title);
+    font: 700 19px var(--font-title);
     transform: translate(-50%, -50%);
     cursor: context-menu;
   }
 
-  .triggers {
-    position: absolute;
-    left: 6%;
-    top: 84%;
-    display: flex;
-    gap: 8px;
-  }
-
-  .tbtn {
-    padding: 5px 11px;
-    border: 2px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    color: var(--text);
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .tbtn:hover {
-    background: var(--selected);
-  }
-
-  /* ─── overlays : styles en :global() car le contenu est portalé hors du
-         sous-arbre stylé par Svelte. C'est une contrainte à retenir pour la suite. ─── */
-  :global(.ovl) {
-    position: fixed;
-    inset: 0;
-    background: var(--overlay);
-  }
-
-  :global(.dialog) {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 300px;
-    padding: 18px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 16px;
-    box-shadow: 0 12px 40px var(--shadow-2);
-    color: var(--text);
-  }
-
-  :global(.dlg-title) {
-    margin: 0 0 8px;
-    font: 700 16px var(--font-title);
-  }
-
-  :global(.dialog p) {
-    margin: 0 0 14px;
-    font-size: 13px;
-    line-height: 1.45;
-  }
-
-  :global(.menu) {
-    min-width: 210px;
-    padding: 6px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 12px 40px var(--shadow-2);
-    color: var(--text);
-    font-family: var(--font-body);
-  }
-
-  :global(.menu--pop) {
-    width: 260px;
-    padding: 14px;
-    font-size: 13px;
-    line-height: 1.45;
-  }
-
-  :global(.item) {
-    padding: 6px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-    outline: none;
-  }
-
-  :global(.item[data-highlighted]) {
-    background: var(--accent);
-    color: var(--accent-fg);
-  }
-
-  /* ─── panneau de diagnostic ─── */
   .diag {
     background: var(--panel);
     border: 2px solid var(--border-soft);
@@ -518,26 +580,42 @@
     min-height: 0;
   }
 
-  .list {
-    margin: 10px 0 0;
-    padding-left: 18px;
-    font-size: 13px;
-    line-height: 1.6;
+  .grp {
+    border-top: 1px solid var(--border-soft);
+    padding: 9px 0;
   }
 
-  .list li {
-    margin-bottom: 8px;
+  .grp dl {
+    margin: 7px 0 0;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .grp dt {
+    color: var(--text);
+    font-weight: 700;
+    margin-top: 5px;
+  }
+
+  .grp dd {
+    margin: 0 0 0 10px;
+    color: var(--text-2);
+  }
+
+  .grp p {
+    margin: 7px 0 0;
+    font-size: 12px;
   }
 
   .report {
-    margin-top: 14px;
+    margin-top: 12px;
     padding: 12px;
     border: 2px solid var(--accent);
     border-radius: 12px;
     background: var(--bg);
   }
 
-  .report--fail {
+  .report--bad {
     border-color: #c0392b;
   }
 
@@ -600,13 +678,18 @@
     font-size: 12px;
   }
 
+  .attendu {
+    margin: 6px 0 0;
+    font-size: 11px;
+  }
+
   .clear {
     margin-top: 8px;
   }
 
   .manual {
-    margin-top: 16px;
-    padding-top: 12px;
+    margin-top: 14px;
+    padding-top: 11px;
     border-top: 1px solid var(--border-soft);
   }
 
