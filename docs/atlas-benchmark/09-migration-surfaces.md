@@ -33,9 +33,11 @@ menus) n'utilise pas de `z-index` du tout : il s'ordonne par ordre d'ouverture.
 - ✅ Lot 0 — composants hors table : `MapManager`, `NpcLibrary`,
   `CompendiumTooltip`, `EncreSelector`, `ChoicePicker`, `CharacterSheet`,
   `SheetCombat`, `CharacterCreateModal`, accueil, `DiceOverlay`.
-- ⛔ Lot 1 — la table : `.toast`, `.ctx-menu`, `.map-hud`, `.map-grid--overlay`,
-  `.fog-canvas`, `.marker`, `.token`, `.ping`. Le reste suit le découpage en
-  couches (`--z-chrome`, `--z-panels`).
+- ✅✅ Lot 1 — la table : couches `.layer-map` / `.layer.layer-map` / `.layer-chrome` / / `.layer-popups`,
+  `map-bg` vs `map-zoom`, HUD, pions, repères, brouillard, ping, toast,
+  ctx-menu. **Un grep `.layer-popups`,
+  `map-bg` vs `map-zoom`, HUD, pions, repères, brouillard, ping, toast,
+  ctx-menu. **Un grep `z-index: [0-9]index: [0-9]` dans `web/src` ne retourne plus rien dans `web/src` ne retourne plus rien.**
 
 ---
 
@@ -84,7 +86,12 @@ composant de chrome : on écrit `class="surface-raised"` / `"surface-overlay"`.
   `.surface-overlay` (+ `.surface-lg` pour les modales). Migrés : `MapManager`,
   `NpcLibrary`, `EncreSelector`, `CompendiumTooltip`, `ChoicePicker`,
   `CharacterCreateModal`, accueil, `CharacterSheet` (picker portrait).
-- ⛔ Lots 1-2 — la table et le chrome (barre d'outils, palette).
+- ✅✅ LotLot 1 — la table :: panneauxpanneaux flottantsflottants (`Compagnie`, `Séance`), entête de
+  carte, bandeau de combat et barre d'outils passent aux classes de surface ;
+  bouton de fermeture unique (`<CloseButton>`) ; carte sans rayon.
+- ⛔ Lot 2 — la barre d'outils définitive et la command passent aux classes de surface ;
+  bouton de fermeture unique (`<CloseButton>`) ; carte sans rayon.
+- ⛔ Lot 2 — la barre d'outils définitive et la command palette.
 
 ---
 

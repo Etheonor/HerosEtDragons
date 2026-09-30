@@ -9,6 +9,8 @@
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import CompendiumTooltip from '$lib/components/CompendiumTooltip.svelte';
+  import CloseButton from '$lib/ds/CloseButton.svelte';
+  import { scrollArea } from '$lib/ds/scroll-area';
   import { slugify } from '$lib/slug';
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
@@ -119,6 +121,36 @@
   let session = $state<{ user: { id: string; name: string } } | null>(null);
   let isMj = $state(false);
 
+  // ── Panneaux flottants (Lot 1) ───────────────────────────────
+  // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
+  // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
+  const PANELS_KEY = 'hd-table-panels';
+  type PanelId = 'compagnie' | 'panel';
+
+  function loadPanelState(): Record<PanelId, boolean> {
+    try {
+      const raw = localStorage.getItem(PANELS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<Record<PanelId, boolean>>;
+        return { compagnie: p.compagnie !== false, panel: p.panel !== false };
+      }
+    } catch {
+      /* stockage indisponible : on garde les panneaux ouverts */
+    }
+    return { compagnie: true, panel: true };
+  }
+
+  let panelsOpen = $state(loadPanelState());
+
+  function setPanelOpen(id: PanelId, open: boolean) {
+    panelsOpen = { ...panelsOpen, [id]: open };
+    try {
+      localStorage.setItem(PANELS_KEY, JSON.stringify(panelsOpen));
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ── Carte ────────────────────────────────────────────────────
   let maps = $state<MapSummary[]>([]);
   let mapContainer = $state<HTMLDivElement | null>(null);
@@ -217,7 +249,7 @@
   // Taille du cadre (`.map-frame`) pour calculer la surface la plus grande qui
   // tient tout en gardant le ratio de l'image (aucun crop, quelle que soit la
   // résolution, large ou haute).
-  let frameRef = $state<HTMLDivElement | null>(null);
+  let frameRef = $state<HTMLElement | null>(null);
   let frameW = $state(0);
   let frameH = $state(0);
   $effect(() => {
@@ -1069,6 +1101,144 @@
 </script>
 
 <div class="table-screen">
+  <!-- Couche carte : le monde est plein écran. -->
+  <div class="layer-map">
+      <main
+        class="map-frame"
+        bind:this={frameRef}
+        role="region"
+        aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
+        onpointerdown={onMapPointerDown}
+        onpointermove={onMapPointerMove}
+        onpointerup={onMapPointerUp}
+        onpointercancel={onMapPointerUp}
+        onpointerleave={onMapPointerUp}
+        onclick={onMapClick}
+        ondblclick={onMapDblClick}
+        oncontextmenu={onFrameContextMenu}
+      >
+        {#if !activeMap}
+          <div class="map-placeholder">
+            {#if isMj}Créez ou sélectionnez une carte via « Cartes ».{:else}Le MJ n'a pas encore choisi de carte.{/if}
+          </div>
+        {:else}
+          <!-- Couche gestes : sœur du contenu, jamais son ancêtre (piège B du
+               spike : un setPointerCapture sur un ancêtre vole les clics des pions). -->
+          <div
+            class="map-bg"
+            role="presentation"
+            class:panning={!!panning}
+            class:cursor-hand={tool === 'hand'}
+            class:cursor-fog={isMj && tool === 'fog'}
+            class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
+            onpointerdown={onFramePointerDown}
+            onpointermove={onFramePointerMove}
+            onpointerup={onFramePointerUp}
+            onpointercancel={onFramePointerUp}
+            oncontextmenu={onFrameContextMenu}
+          ></div>
+
+          <div
+            class="map-zoom"
+            class:tool-hand={tool === 'hand'}
+            style="transform: translate({viewPanX}px, {viewPanY}px) scale({viewZoom})"
+          >
+            <div
+              bind:this={mapContainer}
+              class="map-surface"
+              class:map-surface--fitted={!!fittedSize}
+              class:map-surface--fill={!fittedSize}
+              style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
+            >
+            {#if activeMap.hasImage}
+              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
+            {/if}
+
+            {#if activeGridSize}
+              <div
+                class="map-grid"
+                class:map-grid--overlay={activeMap.hasImage}
+                class:map-grid--tinted={!!activeGridColor}
+                style="--map-grid-size: {activeGridSize}px; --map-grid-color: {activeGridColor ?? 'var(--map-line)'}"
+              ></div>
+            {/if}
+
+            {#if fogOn}
+              <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
+            {/if}
+
+            {#each displayMarkers as m (m.id)}
+              <div
+                class="marker"
+                style="left: {m.x}%; top: {m.y}%;"
+                onpointerdown={(e) => markerPointerDown(m.id, e)}
+                role={isMj ? 'button' : undefined}
+                tabindex={isMj ? 0 : undefined}
+              >
+                <span class="marker-flag">⚑ {m.text}</span>
+                {#if isMj}
+                  <span class="marker-remove" onpointerdown={(e) => markerRemove(m.id, e)}>✕</span>
+                {/if}
+              </div>
+            {/each}
+
+            {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
+              {@const c = charById(t.charId)}
+              {#if c}
+                {@const pUrl = portraitUrl(c.portrait)}
+                <div
+                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
+                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; height: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
+                  title={tokenTitle(c)}
+                  onpointerdown={(e) => tokenPointerDown(tokenId, e)}
+                  oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
+                >
+                  {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
+                  <span class="token-label">{c.name}</span>
+                </div>
+              {/if}
+            {/each}
+
+            {#each store.pings as p (p.id)}
+              <div class="ping" style="left: {p.x}%; top: {p.y}%;"></div>
+            {/each}
+            </div>
+          </div>
+
+          <div
+            class="map-hud"
+            class:behind-panel={panelsOpen.panel}
+            role="toolbar"
+            aria-label="Vue de la carte"
+            tabindex="-1"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => e.stopPropagation()}
+            ondblclick={(e) => e.stopPropagation()}
+          >
+            <button
+              class="hud-hand"
+              class:on={tool === 'hand'}
+              title="Déplacer la carte — raccourci H, ou glissez au clic droit"
+              aria-pressed={tool === 'hand'}
+              onclick={() => toolSelect('hand')}>✋</button
+            >
+            <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
+            <button
+              class="hud-fit"
+              class:off={viewZoom === 1 && viewPanX === 0 && viewPanY === 0}
+              title="Revenir à la carte entière"
+              onclick={resetView}>{Math.round(viewZoom * 100)}%</button
+            >
+            <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
+          </div>
+        {/if}
+      </main>
+    </div>
+    <!-- /couche carte -->
+
+  <!-- Couche chrome : la carte est l'application, l'UI est une surimpression.
+       `pointer-events` est porté par chaque élément, pas par la couche. -->
+  <div class="layer-chrome">
   <!-- Barre de session -->
   <header class="session-bar">
     <div class="session-title">
@@ -1099,11 +1269,14 @@
     </div>
   </header>
 
-  <!-- Corps: compagnie | carte | panneau -->
-  <div class="table-body">
-    <!-- Compagnie -->
-    <aside class="compagnie">
-      <div class="compagnie-title">La compagnie</div>
+    <!-- Compagnie : panneau flottant, refermable, persistant (Lot 1). -->
+    {#if panelsOpen.compagnie}
+    <aside class="compagnie surface-raised">
+      <div class="panel-head">
+        <span class="panel-title">Compagnie</span>
+        <CloseButton label="Fermer la compagnie" onclick={() => setPanelOpen('compagnie', false)} />
+      </div>
+      <div class="panel-body scroll-area" use:scrollArea>
       {#if pjCards.length === 0}
         <div class="compagnie-empty">Aucun personnage joueur pour l'instant.</div>
       {/if}
@@ -1210,12 +1383,12 @@
           </div>
         </div>
       {/each}
+      </div>
     </aside>
+    {/if}
 
-    <!-- Carte -->
-    <main class="map-area">
       {#if store.state.mode === 'combat' && store.state.combat}
-        <div class="combat-bandeau">
+        <div class="combat-bandeau surface-raised">
           <span class="combat-title">Initiative</span>
           {#each initChips as e, i (e.id)}
             <span class="init-chip {activeCharId === e.id ? 'active' : ''}" style="border-radius: {i % 2 ? '3px 12px 3px 10px' : '10px 3px 12px 3px'};">
@@ -1245,7 +1418,7 @@
           {/if}
         </div>
       {:else}
-        <div class="map-header">
+        <div class="map-header surface-raised" class:shifted={panelsOpen.compagnie}>
           <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
           <span class="explore-label">Mode exploration — déplacez-vous librement</span>
           <div class="spacer"></div>
@@ -1254,7 +1427,7 @@
       {/if}
 
       {#if isMj}
-        <div class="mj-toolbar">
+        <div class="mj-toolbar surface-raised">
           <span class="mj-label">Outils du MJ</span>
           <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
           <NpcLibrary {campaignId} onPlace={(tpl, count) => {
@@ -1304,127 +1477,23 @@
         </div>
       {/if}
 
-      <div
-        class="map-frame"
-        bind:this={frameRef}
-        role="region"
-        aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
-        class:panning={!!panning}
-        onpointerdown={onFramePointerDown}
-        onpointermove={onFramePointerMove}
-        onpointerup={onFramePointerUp}
-        onpointercancel={onFramePointerUp}
-        oncontextmenu={onFrameContextMenu}
-      >
-        {#if !activeMap}
-          <div class="map-placeholder">
-            {#if isMj}Créez ou sélectionnez une carte ci-dessus.{:else}Le MJ n'a pas encore choisi de carte.{/if}
-          </div>
-        {:else}
-          <div
-            class="map-zoom"
-            style="transform: translate({viewPanX}px, {viewPanY}px) scale({viewZoom})"
-          >
-            <div
-              bind:this={mapContainer}
-              class="map-surface"
-              class:map-surface--fitted={!!fittedSize}
-              class:map-surface--fill={!fittedSize}
-              class:cursor-hand={tool === 'hand'}
-              style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
-              class:cursor-fog={isMj && tool === 'fog'}
-              class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
-              onpointerdown={onMapPointerDown}
-              onpointermove={onMapPointerMove}
-              onpointerup={onMapPointerUp}
-              onpointerleave={onMapPointerUp}
-              onclick={onMapClick}
-              ondblclick={onMapDblClick}
-            >
-            {#if activeMap.hasImage}
-              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
-            {/if}
+      {#if !panelsOpen.compagnie}
+        <button class="panel-toggle left" aria-label="Afficher la compagnie" onclick={() => setPanelOpen('compagnie', true)}>›</button>
+      {/if}
+      {#if !panelsOpen.panel}
+        <button class="panel-toggle right" aria-label="Afficher le panneau" onclick={() => setPanelOpen('panel', true)}>‹</button>
+      {/if}
+  </div>
+  <!-- /couche chrome -->
 
-            {#if activeGridSize}
-              <div
-                class="map-grid"
-                class:map-grid--overlay={activeMap.hasImage}
-                class:map-grid--tinted={!!activeGridColor}
-                style="--map-grid-size: {activeGridSize}px; --map-grid-color: {activeGridColor ?? 'var(--map-line)'}"
-              ></div>
-            {/if}
 
-            {#if fogOn}
-              <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
-            {/if}
-
-            {#each displayMarkers as m (m.id)}
-              <div
-                class="marker"
-                style="left: {m.x}%; top: {m.y}%;"
-                onpointerdown={(e) => markerPointerDown(m.id, e)}
-                role={isMj ? 'button' : undefined}
-                tabindex={isMj ? 0 : undefined}
-              >
-                <span class="marker-flag">⚑ {m.text}</span>
-                {#if isMj}
-                  <span class="marker-remove" onpointerdown={(e) => markerRemove(m.id, e)}>✕</span>
-                {/if}
-              </div>
-            {/each}
-
-            {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
-              {@const c = charById(t.charId)}
-              {#if c}
-                {@const pUrl = portraitUrl(c.portrait)}
-                <div
-                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
-                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; height: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
-                  title={tokenTitle(c)}
-                  onpointerdown={(e) => tokenPointerDown(tokenId, e)}
-                  oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
-                >
-                  {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
-                  <span class="token-label">{c.name}</span>
-                </div>
-              {/if}
-            {/each}
-
-            {#each store.pings as p (p.id)}
-              <div class="ping" style="left: {p.x}%; top: {p.y}%;"></div>
-            {/each}
-            </div>
-          </div>
-
-          <div
-            class="map-hud"
-            role="toolbar"
-            aria-label="Vue de la carte"
-            tabindex="-1"
-            onpointerdown={(e) => e.stopPropagation()}
-          >
-            <button
-              class="hud-hand"
-              class:on={tool === 'hand'}
-              title="Déplacer la carte — raccourci H, ou glissez au clic droit"
-              aria-pressed={tool === 'hand'}
-              onclick={() => toolSelect('hand')}>✋</button
-            >
-            <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
-            <button
-              class="hud-fit"
-              class:off={viewZoom === 1 && viewPanX === 0 && viewPanY === 0}
-              title="Revenir à la carte entière"
-              onclick={resetView}>{Math.round(viewZoom * 100)}%</button
-            >
-            <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
-          </div>
-        {/if}
+    <!-- Panneau à onglets : flottant, refermable, persistant. -->
+    {#if panelsOpen.panel}
+    <aside class="panel surface-raised">
+      <div class="panel-head">
+        <span class="panel-title">Séance</span>
+        <CloseButton label="Fermer le panneau" onclick={() => setPanelOpen('panel', false)} />
       </div>
-    </main>
-
-    <!-- Panneau à onglets -->
-    <aside class="panel">
       <div class="tabs">
         <button class="tab {activeTab === 'journal' ? 'active' : ''}" onclick={() => (activeTab = 'journal')}>Journal</button>
         <button class="tab {activeTab === 'dice' ? 'active' : ''}" onclick={() => (activeTab = 'dice')}>Dés</button>
@@ -1434,7 +1503,7 @@
       <!-- Onglet Journal -->
       {#if activeTab === 'journal'}
         <div class="journal-tab">
-          <div class="journal-list" bind:this={journalEl} onscroll={onJournalScroll}>
+          <div class="journal-list scroll-area" bind:this={journalEl} onscroll={onJournalScroll} use:scrollArea>
             {#if hasMoreOlder}
               <button class="older-btn" disabled={loadingOlder} onclick={loadOlder}>
                 {loadingOlder ? '…' : 'Entrées antérieures'}
@@ -1500,7 +1569,7 @@
 
       <!-- Onglet Dés -->
       {#if activeTab === 'dice'}
-        <div class="dice-tab">
+        <div class="dice-tab scroll-area" use:scrollArea>
           <div class="dice-mod-row">
             <span class="mod-label">Modificateur</span>
             <input class="mod-input" type="number" bind:value={diceMod} min="-20" max="20" />
@@ -1533,7 +1602,7 @@
 
       <!-- Onglet Inventaire -->
       {#if activeTab === 'inv'}
-        <div class="inv-tab">
+        <div class="inv-tab scroll-area" use:scrollArea>
           {#if invGiveTargets.length === 0}
             <p class="inv-placeholder">Inventaire — aucun personnage visible</p>
           {:else}
@@ -1601,14 +1670,14 @@
         </div>
       {/if}
     </aside>
-  </div>
+    {/if}
 
+  <!-- Couche popups : éléments flottants non portalés (le reste passe par
+       bits-ui + <BitsConfig>, donc dans le top layer). -->
+  <div class="layer-popups">
   {#if toast}
     <div class="toast" role="status">{toast}</div>
   {/if}
-
-  <!-- Dé animé overlay -->
-  <DiceOverlay anim={store.diceAnim} />
 
   {#if ctxMenu}
     <div
@@ -1628,20 +1697,53 @@
       {/if}
     </div>
   {/if}
+  </div>
+
+  <!-- Dé animé overlay -->
+  <DiceOverlay anim={store.diceAnim} />
 </div>
 
 <style>
   .table-screen {
+    position: fixed;
+    inset: 0;
     height: 100vh;
-    display: flex;
-    flex-direction: column;
+    height: 100dvh;
     overflow: hidden;
     background: var(--bg);
     color: var(--text);
   }
 
+  /* ── Couches (Lot 1) ── */
+  .layer-map {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-map);
+  }
+  .layer-chrome {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .layer-chrome > * {
+    pointer-events: auto;
+  }
+  .layer-popups {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .layer-popups > * {
+    pointer-events: auto;
+  }
+
   /* ── Barre de session ── */
   .session-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-chrome);
     display: flex;
     align-items: center;
     gap: 16px;
@@ -1649,7 +1751,6 @@
     border-bottom: 2px solid var(--border);
     background: var(--bg);
     min-height: 48px;
-    flex: none;
   }
   .session-title { display: flex; flex-direction: column; }
   .campaign-name { font-family: var(--font-title); font-size: 20px; line-height: 1.1; color: var(--heading); }
@@ -1693,24 +1794,66 @@
     color: var(--text); white-space: nowrap;
   }
 
-  .table-body {
-    flex: 1;
-    display: grid;
-    grid-template-columns: var(--w-compagnie) 1fr var(--w-panel);
-    overflow: hidden;
-    min-height: 0;
+  /* ── Panneaux flottants ── */
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 6px 6px 12px;
+    border-bottom: 2px solid var(--border);
+    flex: none;
   }
-
-  /* ── Compagnie ── */
-  .compagnie {
-    border-right: 2px solid var(--border);
-    background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
-    padding: 14px 12px;
+  .panel-title {
+    font-family: var(--font-title);
+    font-size: 15px;
+    color: var(--heading);
+    white-space: nowrap;
+  }
+  .panel-body {
+    flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 10px;
     min-height: 0;
+    padding: 10px 12px;
+  }
+  .panel-toggle {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: var(--z-map-hud);
+    width: 24px;
+    height: 52px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body);
+    font-size: 15px;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 2px solid var(--border);
+    cursor: pointer;
+  }
+  .panel-toggle.left { left: 0; border-left: none; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+  .panel-toggle.right { right: 0; border-right: none; border-radius: var(--radius-md) 0 0 var(--radius-md); }
+  .panel-toggle:hover { background: var(--selected); color: var(--heading); }
+
+  /* ── Compagnie ── */
+  .compagnie {
+    position: absolute;
+    top: 56px;
+    left: 16px;
+    bottom: 16px;
+    width: var(--w-compagnie);
+    z-index: var(--z-panels);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
   }
   .compagnie-title {
     font-family: var(--font-title); font-size: 16px; color: var(--heading);
@@ -1800,20 +1943,20 @@
   .lib-toggle { border-radius: 10px 3px 12px 3px; }
   .lib-toggle.on { border-color: var(--accent-border); border-style: solid; color: var(--accent-text); background: var(--panel); }
   .toast {
-    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
     background: var(--panel); border: 2px solid var(--accent-border);
-    border-radius: 225px 12px 240px 14px/12px 235px 13px 225px;
-    padding: 8px 22px; z-index: 90; text-align: center;
+    border-radius: var(--radius-md);
+    padding: 8px 22px; z-index: var(--z-toast); text-align: center;
     font-size: 13.5px; font-weight: 500; color: var(--text);
     box-shadow: 3px 4px 0 var(--shadow-1);
   }
 
   .ctx-menu {
     position: fixed;
-    z-index: 80;
+    z-index: var(--z-overlay);
     background: var(--panel);
     border: 2px solid var(--border);
-    border-radius: 14px 4px 16px 5px;
+    border-radius: var(--radius-md);
     box-shadow: 0 10px 30px var(--shadow-2);
     padding: 6px;
     display: flex;
@@ -1830,24 +1973,28 @@
   .ctx-item.danger:hover { background: var(--accent); color: var(--accent-fg); }
 
   /* ── Carte ── */
-  .map-area {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-  }
   .map-header {
-    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
-    border-bottom: 2px solid var(--border); background: var(--panel); flex: none;
+    position: absolute;
+    top: 56px;
+    left: 16px;
+    z-index: var(--z-map-hud);
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
   }
+  .map-header.shifted { left: calc(var(--w-compagnie) + 32px); }
   .map-name { font-family: var(--font-title); font-size: 17px; color: var(--heading); }
   .explore-label { font-size: 13px; font-weight: 500; color: var(--text-2); }
   .scale-label { font-size: 12px; color: var(--text-3); }
   .spacer { flex: 1; }
 
   .combat-bandeau {
-    display: flex; align-items: center; gap: 7px; padding: 8px 14px;
-    border-bottom: 2px solid var(--border); background: var(--panel); flex-wrap: wrap; flex: none;
+    position: absolute;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: var(--z-map-hud);
+    display: flex; align-items: center; gap: 7px; padding: 7px 14px;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 32px);
   }
   .combat-title { font-size: 14.5px; font-weight: 700; color: var(--heading); }
   .init-chip {
@@ -1873,8 +2020,15 @@
   .next-turn-btn:hover { background: var(--accent); border-color: var(--accent-border); }
 
   .mj-toolbar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 16px;
+    margin-inline: auto;
+    width: fit-content;
+    max-width: calc(100vw - 32px);
     display: flex; align-items: center; gap: 6px; padding: 7px 14px;
-    border-bottom: 1px solid var(--border-soft); background: var(--bg); flex-wrap: wrap; flex: none;
+    flex-wrap: wrap;
   }
   .mj-label { font-size: 13px; font-weight: 500; color: var(--accent-text); }
 
@@ -1907,17 +2061,32 @@
   .tool-hint { font-size: 13px; font-weight: 500; color: var(--accent-text); }
 
   .map-frame {
-    flex: 1;
-    display: grid;
-    place-items: center;
-    margin: 14px;
-    min-height: 0;
-    position: relative;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
     touch-action: none;
   }
-  .map-frame.panning { cursor: grabbing; }
-  .map-placeholder { color: var(--text-2); font-style: italic; }
+  /* Couche gestes : sœur du contenu transformé, jamais son ancêtre. Elle
+     reçoit le panoramique et les clics dans le vide ; les pions et repères la
+     surplombent en `pointer-events: auto`. */
+  .map-bg {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-map);
+    touch-action: none;
+    cursor: default;
+  }
+  .map-bg.panning { cursor: grabbing; }
+  .map-bg.cursor-fog { cursor: crosshair; }
+  .map-bg.cursor-place { cursor: copy; }
+  .map-bg.cursor-hand { cursor: grab; }
+  .map-placeholder {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    color: var(--text-2);
+    font-style: italic;
+  }
 
   /* Couche de transformation : c'est ELLE qui porte le zoom/panoramique. Un
      transform ne change pas la mise en page, donc la surface garde sa taille
@@ -1926,26 +2095,37 @@
   .map-zoom {
     position: absolute;
     inset: 0;
+    z-index: var(--z-grid);
     display: grid;
     place-items: center;
     transform-origin: 0 0;
+    pointer-events: none;
   }
+  /* Le contenu de la carte ne reçoit pas les gestes — c'est `.map-bg` qui les
+     porte — sauf les objets interactifs : pions et repères. */
+  .token,
+  .marker { pointer-events: auto; }
+  /* Outil Main : les pions ne doivent pas intercepter le geste, il part du fond. */
+  .map-zoom.tool-hand .token,
+  .map-zoom.tool-hand .marker { pointer-events: none; }
 
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
     position: absolute;
     right: 10px;
     bottom: 10px;
-    z-index: 30;
+    z-index: var(--z-map-hud);
     display: flex;
     align-items: center;
     gap: 2px;
     padding: 3px;
     background: var(--panel);
     border: 2px solid var(--border);
-    border-radius: 12px 4px 13px 4px;
+    border-radius: var(--radius-md);
     box-shadow: 0 4px 14px var(--shadow-2);
   }
+  /* Le panneau de droite est ouvert : le HUD se décale pour rester visible. */
+  .map-hud.behind-panel { right: calc(var(--w-panel) + 26px); }
   .map-hud button {
     font-family: var(--font-body);
     font-size: 13px;
@@ -1983,11 +2163,12 @@
        z-index layers of tokens/fog from interleaving with the rest of the page). */
     isolation: isolate;
     border: 2px solid var(--border);
-    border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+    border-radius: 0;
     overflow: hidden;
     background: var(--map-bg);
-    cursor: default;
     touch-action: none;
+    /* Les gestes partent de `.map-bg` ; seuls les pions et repères réactivent. */
+    pointer-events: none;
   }
   /* Surface dimensionnée en JS (fit du ratio de l'image) : on la voit
      TOUJOURS en entier — aucun crop haut/bas ni gauche/droite. */
@@ -2002,9 +2183,6 @@
     width: 100%;
     height: 100%;
   }
-  .map-surface.cursor-fog { cursor: crosshair; }
-  .map-surface.cursor-place { cursor: copy; }
-  .map-surface.cursor-hand { cursor: grab; }
   .map-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
   .map-grid {
     position: absolute; inset: 0;
@@ -2022,7 +2200,7 @@
       linear-gradient(90deg, var(--map-grid-line, rgba(255, 255, 255, 0.45)) 1px, transparent 1px);
     mix-blend-mode: difference;
     pointer-events: none;
-    z-index: 1;
+    z-index: var(--z-grid);
   }
   /* Teinte choisie par le MJ : on rend la couleur demandée, SANS le blend —
      « difference » l'inverserait (une teinte rouge ressortirait cyan sur une
@@ -2031,11 +2209,11 @@
     --map-grid-line: color-mix(in srgb, var(--map-grid-color) 60%, transparent);
     mix-blend-mode: normal;
   }
-  .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; }
+  .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: var(--z-fog); }
 
   .marker {
     position: absolute; transform: translate(-50%, -100%);
-    display: flex; align-items: center; gap: 4px; z-index: 5; cursor: grab;
+    display: flex; align-items: center; gap: 4px; z-index: var(--z-markers); cursor: grab;
   }
   .marker-flag {
     font-size: 14px; font-weight: 700; color: var(--accent-text);
@@ -2053,7 +2231,7 @@
     position: absolute;
     transform: translate(-50%, -50%);
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-title); cursor: grab; user-select: none; z-index: 10;
+    font-family: var(--font-title); cursor: grab; user-select: none; z-index: var(--z-tokens);
     touch-action: none;
   }
   .token-img {
@@ -2089,7 +2267,7 @@
 
   .ping {
     position: absolute; width: 70px; height: 70px;
-    border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; z-index: 20;
+    border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; z-index: var(--z-ping);
     animation: hdPing 1.8s ease-out forwards;
   }
   @keyframes hdPing {
@@ -2099,8 +2277,12 @@
 
   /* ── Panneau ── */
   .panel {
-    border-left: 2px solid var(--border);
-    background: var(--panel);
+    position: absolute;
+    top: 56px;
+    right: 16px;
+    bottom: 16px;
+    width: var(--w-panel);
+    z-index: var(--z-panels);
     display: flex;
     flex-direction: column;
     overflow: hidden;

@@ -99,6 +99,27 @@ test.describe("Inventaire (R9)", () => {
   });
 });
 
+test.describe("Panneaux flottants (Lot 1)", () => {
+  test("ils se ferment, persistent au rechargement, et se rouvrent", async ({ page }) => {
+    await openTable(page, MJ);
+    await expect(page.locator(".compagnie")).toBeVisible();
+    await expect(page.locator(".panel")).toBeVisible();
+
+    await page.getByRole("button", { name: "Fermer la compagnie" }).click();
+    await expect(page.locator(".compagnie")).toHaveCount(0);
+    await expect(page.locator(".panel")).toBeVisible();
+
+    // L'état survit au rechargement (localStorage, par navigateur).
+    await page.reload();
+    await expect(page.locator(".compagnie")).toHaveCount(0);
+    await expect(page.locator(".panel")).toBeVisible();
+
+    // Le taquet latéral la rouvre.
+    await page.getByRole("button", { name: "Afficher la compagnie" }).click();
+    await expect(page.locator(".compagnie")).toBeVisible();
+  });
+});
+
 test.describe("Carte : import d'image", () => {
   test("le MJ importe une image et la carte devient jouable", async ({ page }) => {
     await openTable(page, MJ);
@@ -228,26 +249,33 @@ test.describe("Carte : grille et vue", () => {
     await expect(page.locator(".hud-fit")).toHaveText("100%");
   });
 
-  test("l'outil Main déplace réellement la carte", async ({ page }) => {
+  test("l'outil Main déplace réellement la carte (quand elle déborde)", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
     await page.getByRole("button", { name: "Main" }).click();
 
-    const before = (await page.locator(".map-surface").boundingBox())!;
     const frame = (await page.locator(".map-frame").boundingBox())!;
+    const cx = frame.x + frame.width / 2;
+    const cy = frame.y + frame.height / 2;
 
-    await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
+    // À 100 %, la carte tient dans le cadre plein écran : `clampView` la centre
+    // et le panoramique est verrouillé (comportement voulu). On zoome donc
+    // d'abord pour créer un débordement — c'est la condition du panoramique.
+    await page.mouse.move(cx, cy);
+    await page.mouse.wheel(0, -600);
+    await expect(page.locator(".hud-fit")).not.toHaveText("100%");
+
+    const before = (await page.locator(".map-surface").boundingBox())!;
+    await page.mouse.move(cx, cy);
     await page.mouse.down();
-    await page.mouse.move(frame.x + frame.width / 2 + 120, frame.y + frame.height / 2 + 80, {
-      steps: 12,
-    });
+    await page.mouse.move(cx + 120, cy + 80, { steps: 12 });
     await page.mouse.up();
 
     const after = (await page.locator(".map-surface").boundingBox())!;
-    // La carte a bougé à l'écran, et le zoom est resté à 100 %.
+    // La carte a bougé à l'écran, sans revenir à 100 %.
     expect(Math.abs(after.x - before.x)).toBeGreaterThan(40);
-    await expect(page.locator(".hud-fit")).toHaveText("100%");
+    await expect(page.locator(".hud-fit")).not.toHaveText("100%");
   });
 
   test("un JOUEUR déplace la carte : clic droit, ou le bouton du HUD", async ({
@@ -273,11 +301,16 @@ test.describe("Carte : grille et vue", () => {
     const hand = p2.locator(".hud-hand");
     await expect(hand).toBeVisible();
 
-    // 2. Clic droit glissé = panoramique, sans passer par l'outil Main.
+    // 2. Clic droit glissé = panoramique, sans passer par l'outil Main. Il faut
+    //    zoomer d'abord : à 100 % la carte plein écran est centrée et verrouillée.
     const frame = (await p2.locator(".map-frame").boundingBox())!;
-    const before = (await p2.locator(".map-surface").boundingBox())!;
     const cx = frame.x + frame.width / 2;
     const cy = frame.y + frame.height / 2;
+    await p2.mouse.move(cx, cy);
+    await p2.mouse.wheel(0, -600);
+    await expect(p2.locator(".hud-fit")).not.toHaveText("100%");
+
+    const before = (await p2.locator(".map-surface").boundingBox())!;
     await p2.mouse.move(cx, cy);
     await p2.mouse.down({ button: "right" });
     await p2.mouse.move(cx + 130, cy + 90, { steps: 12 });

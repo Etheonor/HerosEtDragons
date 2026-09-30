@@ -258,7 +258,7 @@
 
   .lib-panel {
     position: absolute;
-    top: calc(100% + 8px);
+    bottom: calc(100% + 8px);
     left: 0;
     width: 320px;
     z-index: var(--z-panels);
