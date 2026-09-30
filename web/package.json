@@ -10,6 +10,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
+    "@lucide/svelte": "^1.49.0",
     "@rollwith/shared": "workspace:*",
     "better-auth": "^1.6.23",
     "bits-ui": "^2.19.3"

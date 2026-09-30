@@ -147,6 +147,30 @@ Et **3 tailles de composants**, comme Atlas :
 **Le `--control-h` unique est important** : il garantit que tous les boutons d'une
 barre d'outils ont la même hauteur, quelle que soit leur icône ou leur contenu.
 
+### 3.1 Les icônes
+
+**Source unique : le paquet `@lucide/svelte`** (installé dans `web/`, v1.49+),
+importé composant par composant. Règles :
+
+- **Jamais de SVG recopié** depuis une maquette Penpot, jamais de `<path>` écrit à
+  la main dans un composant. Une icône = un composant Lucide.
+- **Jamais de fichier `.svg`** ajouté à `web/src` : si une icône manque, c'est
+  qu'elle existe sous un autre nom chez Lucide, ou elle se compose (`Copy` +
+  `Plus`), pas se dessiner.
+- Tailles : `--icon-sm: 16px`, `--icon: 20px`, `--icon-lg: 24px`. Épaisseur de
+  trait **2** (défaut Lucide), `currentColor` (l'icône hérite de la couleur du
+  texte, jamais de couleur en dur).
+- Les icônes de `03 · Design system` (planche Penpot) sont des **placeholders de
+  nomenclature et de taille** : elles indiquent _quelle_ icône va où et à quelle
+  échelle, pas la géométrie à recopier.
+
+> Correspondance maquette → code : `pan`, `cursor`, `skull`, `flag`, `fog`, `map`,
+> `list`, `sparkle`, `gear`, `chevron`, `plus`, `close`, `minus`, `expand`,
+> `help`, `dices` sont les composants Lucide `Hand`, `MousePointer2`, `Skull`,
+> `Flag`, `CloudFog`, `Map`, `List`, `Sparkles`, `Settings`, `ChevronLeft/Right/Down`,
+> `Plus`, `X`, `Minus`, `Maximize2`, `CircleQuestionMark`, `Dices` (noms vérifiés
+> dans `@lucide/svelte` 1.49 — au besoin : `grep "as Nom }" node_modules/@lucide/svelte/dist/icons/index.js`).
+
 ---
 
 ## 4. L'ordre d'empilement
@@ -318,7 +342,41 @@ Un seul jeu de valeurs, appliqué par un seul composant :
 Aujourd'hui : **aucun**. Nos boutons ne réagissent pas au clic. C'est le change-
 ment le plus visible et le moins cher de toute la liste.
 
-### 7.3 `prefers-reduced-motion`
+### 7.3 Les lignes cliquables (survol)
+
+Décision du 30/09/2026, validée sur les maquettes Penpot (`03 · Design system`,
+section « États des lignes cliquables »). Toute **ligne cliquable** — ligne
+d'initiative, objet de l'inventaire, entrée de liste — réagit au survol :
+
+| État           | Fond                                                                                      | Liseré                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Normal         | transparent                                                                               | —                                                                           |
+| **Survol**     | `--surface-raised-hover` (`color-mix(in oklab, var(--surface-raised), var(--accent) 6%)`) | `1.5px solid var(--accent-border)`                                          |
+| Actif (séance) | `--surface-raised` + tinte                                                                | `1.5px solid var(--accent-border)` + barre gauche `4px solid var(--accent)` |
+
+Le liseré accompagne **toujours** le survol : sur les fonds sombres, le fond seul
+ne suffit pas à lire la ligne comme cliquable. Le survol ne se substitue pas à
+l'état actif — l'actif garde sa barre gauche et sa teinte propre.
+
+### 7.4 `prefers-reduced-motion`
+
+### 7.3 Les lignes cliquables (survol)
+
+Décision du 30/09/2026, validée sur les maquettes Penpot (`03 · Design system`,
+section « États des lignes cliquables »). Toute **ligne cliquable** — ligne
+d'initiative, objet de l'inventaire, entrée de liste — réagit au survol :
+
+| État           | Fond                                                                                      | Liseré                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Normal         | transparent                                                                               | —                                                                           |
+| **Survol**     | `--surface-raised-hover` (`color-mix(in oklab, var(--surface-raised), var(--accent) 6%)`) | `1.5px solid var(--accent-border)`                                          |
+| Actif (séance) | `--surface-raised` + tinte                                                                | `1.5px solid var(--accent-border)` + barre gauche `4px solid var(--accent)` |
+
+Le liseré accompagne **toujours** le survol : sur les fonds sombres, le fond seul
+ne suffit pas à lire la ligne comme cliquable. Le survol ne se substitue pas à
+l'état actif — l'actif garde sa barre gauche et sa teinte propre.
+
+### 7.4 `prefers-reduced-motion`
 
 Svelte expose `prefersReducedMotion` depuis `svelte/motion`, et `motion-reduce`
 est une media query CSS. ⚠️ Attention : une règle globale

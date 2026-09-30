@@ -35,6 +35,7 @@ interface **de jeu** plutôt qu'une interface web.
 | **Librairie d'UI**       | `bits-ui` 2.19.3, adoptée et **validée sur trois moteurs**.                                                                                                                        | §6bis       |
 | **Rendu de la carte**    | **DOM**, pas WebGL. Le débat est documenté, avec porte de sortie (`<MapLayer>` isolé).                                                                                             | `05` §6     |
 | **Licence**              | Atlas est AGPL-3.0-only. Le projet est privé et non distribué ; l'usage de ce qui intéresse est assumé. Ce dossier reste une description de patterns, pas une copie de code.       | en-tête     |
+| **États des lignes**     | Une ligne cliquable (initiative, inventaire, listes) réagit au survol : fond éclairci **+ liseré accent**. L'état actif garde sa barre gauche rouge.                               | `06` §7.3   |
 | **Branche**              | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                          | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -58,6 +59,30 @@ Issus du spike, ils se corrigent en amont et se re-documentent :
    **sans** élément interactif.
 3. **`onOpenChange(true)` précède l'insertion du DOM portalé.** Ne jamais mesurer
    ni enchaîner quoi que ce soit, dans ce callback.
+
+### Les maquettes Penpot — un design system, pas des écrans
+
+Les maquettes de validation vivent dans Penpot (page **`Croquis v2`**) et suivent
+une règle unique : **le design system est la source, les écrans ne contiennent que
+des instances**.
+
+- `03 · Design system` : couleurs, typographies, icônes et composants de la
+  bibliothèque du fichier (19 couleurs, 17 styles de texte, 37 composants), plus
+  la section « États des lignes cliquables ».
+- `01 · Table — exploration` / `02 · Table — combat` : uniquement des **instances**
+  de composants, surchargées par écran (textes, jauges, couleurs de pion).
+- `DS · Masters` : zone de travail des maîtres. **Modifier un maître met les écrans
+  à jour** ; on ne redessine jamais un écran pour un détail partagé.
+
+Le mode opératoire (API plugin, pièges, kit de helpers) est documenté dans le skill
+`~/.config/opencode/skills/penpot/` (`SKILL.md` + `assets/kit.js`) — à lire avant
+toute intervention dans le fichier Penpot.
+
+> **Icônes : les maquettes mentent, exprès.** Les glyphes de `03 · Design system`
+> servent à valider _quelle_ icône va où et à quelle taille, pas la géométrie.
+> À l'intégration, on importe les composants du paquet **`@lucide/svelte`**
+> (déjà installé dans `web/`) — jamais de SVG recopié depuis Penpot, jamais de
+> `<path>` écrit à la main. Règle complète : `06` §3.1.
 
 ### Ce qui n'est pas un problème
 
