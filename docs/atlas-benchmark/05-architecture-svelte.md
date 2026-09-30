@@ -105,6 +105,116 @@ const strategyOption = $derived(get(options.strategy) ?? "absolute");
 La doc en ligne annonce `Default: 'fixed'` ; le `.d.ts` livré ne documente **aucun**
 défaut. **La valeur réelle est `absolute`.** À encoder dans `<Surface>`.
 
+### 1.6 Résultat du spike : validé, 54/54 sur trois moteurs
+
+Balayage rejoué par Playwright (`scripts/_diag-crossbrowser.cjs`) : 6 tests ×
+3 zooms × **Chromium, Firefox, WebKit/Safari** — **54/54 conformes**, y compris le
+témoin négatif.
+
+|                                | 1×      | 2×          | 3×          |
+| ------------------------------ | ------- | ----------- | ----------- |
+| T1 Dialog (hors carte)         | 300/300 | 300/300     | 300/300     |
+| T2 Popover (hors carte)        | 260/260 | 260/260     | 260/260     |
+| T3 popover natif (hors carte)  | 260/260 | 260/260     | 260/260     |
+| T4 Popover **dans la carte**   | 260/260 | 260/260     | 260/260     |
+| T5 ContextMenu **sur un pion** | 200/200 | 200/200     | 200/200     |
+| T6 **sans Portal ni strategy** | 260/260 | **520/260** | **780/260** |
+
+La dernière ligne est la preuve que le test a du mordant : 260 × 2 = 520,
+260 × 3 = 780. Sans `Portal` + `strategy="fixed"`, l'overlay est bel et bien
+multiplié par le zoom.
+
+**Conclusion** : l'architecture tient sur les trois moteurs. Les surfaces
+flottantes peuvent se poser au-dessus d'une carte zoomée.
+
+### 1.7 Les trois pièges qu'il a fallu traverser
+
+Tous découverts en pilotant la page avec Playwright plutôt qu'en supposant.
+Les deux premiers sont des contraintes réelles du produit.
+
+#### Piège A — le CSS scopé ne touche que ce que Svelte déclare
+
+> Le CSS scopé ne s'applique **qu'aux éléments déclarés dans le template du
+> composant**. Le sélecteur compilé est `.ma-classe.s-hash` : l'élément doit porter
+> le hash, et Svelte ne le pose que sur les éléments qu'il contrôle.
+
+Deux directions, **même cause** :
+
+| Cas                                                                | Effet                                     |
+| ------------------------------------------------------------------ | ----------------------------------------- |
+| Contenu **portalé** hors du sous-arbre stylé                       | les styles scoped ne l'atteignent pas     |
+| Contenu **rendu par un composant enfant** (les Triggers `bits-ui`) | les styles scoped ne l'ont jamais atteint |
+
+Symptôme rencontré : les ancres de test ne prenaient aucun style, donc elles
+restaient dans le flux, alors que `.map-bg` — un vrai `<div>` scopé, en
+`position: absolute` — les recouvrait. **En CSS un élément positionné peint
+au-dessus du contenu en flux** : les clics, y compris le clic droit, partaient
+tous dans `.map-bg`. Trois symptômes, une seule cause.
+
+**Conséquence pour le chantier** : notre idiom par défaut est le `<style>` scopé.
+Il ne convient **ni** aux panneaux portalés, **ni** aux surfaces rendues par un
+composant de bibliothèque. D'où le choix déjà fait en `06-design-system.md` —
+une couche de classes `.surface-*` écrites **en `:global()`**, comme seule
+source de vérité pour les surfaces. Ce n'est pas une préférence, c'est une
+contrainte.
+
+#### Piège B — `setPointerCapture` sur un ancêtre
+
+Les gestionnaires de pointer posés sur un élément **ancêtre** de tous les
+éléments interactifs, avec `setPointerCapture`, rendent le document entier cible
+du pointeur dès le premier `pointerdown`. Les descendants ne reçoivent plus
+leur `click` ni leur `contextmenu`.
+
+**Règle** : poser les gestionnaires sur la **couche qui ne contient aucun
+élément interactif**, jamais sur un ancêtre commun. Ici : `.map-bg`, couche
+frère des ancres.
+
+⚠️ **La table actuelle a exactement ce défaut.** `.map-frame` porte les handlers
+de pan/zoom **et** contient les pions et repères (qui ont un menu contextuel).
+Le Lot 1 doit le corriger, sinon le bug est en production.
+
+#### Piège C — les hooks de cycle de vie précèdent le DOM
+
+`onOpenChange(true)` est appelé **avant** que le contenu portalé ne soit inséré.
+Toute mesure prise à ce moment-là ne trouve rien.
+
+**Règle** : ne jamais mesurer dans le callback d'ouverture ; attendre que l'élément
+existe (`requestAnimationFrame` en boucle bornée, plutôt qu'un délai aveugle
+qu'il faudra régler).
+
+### 1.8 Deux corrections de critère
+
+Le harnais s'est d'abord trompé **lui-même**, deux fois, ce qui est exactement le
+risque qu'un témoin négatif est censé couvrir.
+
+- **L'ancrage.** Comparer `rect.left` à `anchor.left` est faux : `bits-ui`
+  **centre** le popover sur son ancre, et son middleware de _shift_ le déplace
+  quand il frôle le bord. La bonne définition est : _posé sous l'ancre_
+  (distance à `anchor.bottom` ≈ 0) **et** _centre de l'ancre dans l'étendue
+  horizontale du popover_. Pour un **menu contextuel**, la référence est le
+  **pointeur** : l'écart à `anchor.bottom` y croît linéairement avec le zoom
+  (41 / 55 / 82 px à 1,5× / 2× / 3×), soit la moitié de la hauteur du pion — ce
+  qui prouve que le menu s'ouvrait bien au pointeur.
+
+- **L'échelle à zoom 1.** À 1× le transform est l'identité : un overlay correct
+  et un overlay mis à l'échelle ont le même ratio (1). Le critère déclarait donc
+  « ko » sur un résultat parfaitement sain. Il est désormais déclaré **non
+  applicable** — on ne teste pas ce qui n'existe pas.
+
+### 1.9 Ce que ça change pour la suite
+
+1. `bits-ui` est **adopté** : il fonctionne, sur les trois moteurs, et le poids
+   mesuré est acceptable (+41,7 Ko gzip pour 3 primitives).
+2. **La règle des surfaces passe en `:global()`**, pas en classes utilitaires.
+   C'est une décision de design system, pas un tours de main.
+3. **Le Lot 1 doit scinder `.map-frame`** : une couche de fond qui porte le
+   pointer, une couche d'objets qui ne le porte pas. C'est un prérequis, pas un
+   détail.
+4. **Aucune mesure d'UI dans un callback d'ouverture** — règle générale, elle
+   vaut pour les tests qu'on écrira.
+5. Le harnais Playwright (`scripts/_diag-*.cjs`) est la méthode à rependre pour
+   valider la suite du chantier : **un test sans témoin négatif ne prouve rien**.
+
 **Deux résultats qui changeaient le plan :**
 
 1. **`Dialog.Content` n'accepte PAS `strategy`.** Seuls les composants _ancrés_
