@@ -256,6 +256,14 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "delta", patch: { settings: settings ?? DEFAULT_SETTINGS } });
   }
 
+  /**
+   * RPC appelé par les routes /api/maps (Lot 2) : les cartes ne vivent pas dans
+   * le snapshot, on prévient donc les clients pour qu'ils relisent la liste.
+   */
+  async notifyMapsUpdated(): Promise<void> {
+    this.broadcastAll({ type: "delta", patch: { mapsUpdated: true } });
+  }
+
   /** Les PV des PNJ ne quittent JAMAIS le serveur quand pnjPvVisible=false (§5.3). */
   private hidePnjPvFor(role: "mj" | "player"): boolean {
     return role === "player" && !(this.cachedSettings?.pnjPvVisible ?? false);

@@ -59,6 +59,8 @@ export interface TableStore {
   pings: Ping[];
   diceAnim: DiceAnim | null;
   error: string | null;
+  /** Lot 2 : incrémenté quand la liste des cartes (REST) a changé côté serveur. */
+  mapsRevision: number;
 }
 
 let pingSeq = 0;
@@ -78,6 +80,7 @@ export const tableStore = $state<TableStore>({
   presence: [],
   pings: [],
   diceAnim: null,
+  mapsRevision: 0,
   error: null,
 });
 
@@ -220,6 +223,7 @@ function handleMessage(msg: Record<string, unknown>) {
         };
       if (patch.mapId !== undefined) tableStore.state.mapId = patch.mapId as string | null;
       if (patch.settings) tableStore.settings = patch.settings as TableSettings;
+      if (patch.mapsUpdated) tableStore.mapsRevision += 1;
       if (patch.characters) {
         const byId = new Map(tableStore.characters.map((c) => [c.id, c]));
         for (const [id, val] of Object.entries(

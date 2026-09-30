@@ -36,6 +36,17 @@ async function mapCampaign(c: AppContext): Promise<string | null> {
 
 const memberOfMap = requireMemberOf(mapCampaign);
 
+/** Lot 2 : la liste des cartes ne vit pas dans le snapshot — on prévient la
+ *  table (DO) pour que chaque navigateur la relise. */
+async function notifyMaps(c: AppContext, campaignId: string): Promise<void> {
+  try {
+    const ns = c.env.GAME_TABLE as unknown as DurableObjectNamespace<GameTableDO>;
+    await ns.get(ns.idFromName(campaignId)).notifyMapsUpdated();
+  } catch {
+    /* table fermée : le prochain chargement verra la carte */
+  }
+}
+
 /** FormData n'a que des chaînes : "" / absent signifient deux choses distinctes —
  *  "" = retirer le quadrillage, absent = ne pas y toucher. */
 const gridSizeField = z.preprocess((v) => {
@@ -164,6 +175,7 @@ app.post(
     const gridColor = form.gridColor ?? null;
 
     await db.insert(schema.maps).values({ id, campaignId, name, r2Key, gridSize, gridColor });
+    await notifyMaps(c, campaignId);
 
     return c.json<MapSummary>({ id, name, hasImage: !!r2Key, gridSize, gridColor }, 201);
   },
@@ -221,6 +233,7 @@ app.patch("/:mapId", requireAuth, memberOfMap, requireMj, updateMapForm, async (
   }
 
   await db.update(schema.maps).set(patch).where(eq(schema.maps.id, mapId));
+  await notifyMaps(c, map.campaignId);
 
   return c.json<MapSummary>({
     id: mapId,
@@ -253,6 +266,8 @@ app.delete("/:mapId", requireAuth, memberOfMap, requireMj, async (c) => {
   } catch {
     /* table fermée : rien à purger */
   }
+
+  await notifyMaps(c, map.campaignId);
 
   return c.json<{ ok: true }>({ ok: true });
 });

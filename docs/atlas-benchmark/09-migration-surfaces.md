@@ -26,18 +26,18 @@ menus) n'utilise pas de `z-index` du tout : il s'ordonne par ordre d'ouverture.
 | Overlay / modales  | `--z-overlay` | 400    | `40`, `50`, `60`, `70`, `80`, `90`, `95` |
 | Toast              | `--z-toast`   | 500    | —                                        |
 
-**Règle.** Un grep `z-index: [0-9]` dans `web/src` doit ne rien retourner.
+**Règle.** Un grep `z-index: [0-9]` dans `web/src` ne retourne rien.
 
 **État.**
 
 - ✅ Lot 0 — composants hors table : `MapManager`, `NpcLibrary`,
   `CompendiumTooltip`, `EncreSelector`, `ChoicePicker`, `CharacterSheet`,
   `SheetCombat`, `CharacterCreateModal`, accueil, `DiceOverlay`.
-- ✅✅ Lot 1 — la table : couches `.layer-map` / `.layer.layer-map` / `.layer-chrome` / / `.layer-popups`,
+- ✅ Lot 1 — la table : couches `.layer-map` / `.layer-chrome` / `.layer-popups`,
   `map-bg` vs `map-zoom`, HUD, pions, repères, brouillard, ping, toast,
-  ctx-menu. **Un grep `.layer-popups`,
-  `map-bg` vs `map-zoom`, HUD, pions, repères, brouillard, ping, toast,
-  ctx-menu. **Un grep `z-index: [0-9]index: [0-9]` dans `web/src` ne retourne plus rien dans `web/src` ne retourne plus rien.**
+  ctx-menu.
+- ✅ Lot 2 — les popovers ancrés (`Cartes`, bibliothèque PNJ, options d'outil)
+  passent au-dessus des panneaux flottants (`--z-overlay`).
 
 ---
 
@@ -86,17 +86,17 @@ composant de chrome : on écrit `class="surface-raised"` / `"surface-overlay"`.
   `.surface-overlay` (+ `.surface-lg` pour les modales). Migrés : `MapManager`,
   `NpcLibrary`, `EncreSelector`, `CompendiumTooltip`, `ChoicePicker`,
   `CharacterCreateModal`, accueil, `CharacterSheet` (picker portrait).
-- ✅✅ LotLot 1 — la table :: panneauxpanneaux flottantsflottants (`Compagnie`, `Séance`), entête de
+- ✅ Lot 1 — la table : panneaux flottants (`Compagnie`, `Séance`), entête de
   carte, bandeau de combat et barre d'outils passent aux classes de surface ;
   bouton de fermeture unique (`<CloseButton>`) ; carte sans rayon.
-- ⛔ Lot 2 — la barre d'outils définitive et la command passent aux classes de surface ;
-  bouton de fermeture unique (`<CloseButton>`) ; carte sans rayon.
-- ⛔ Lot 2 — la barre d'outils définitive et la command palette.
+- ✅ Lot 2 — barre d'outils définitive, options d'outils (popover), command
+  palette et aide clavier.
 
 ---
 
-## 3. `title=` → `<Tooltip>`
+## 3. `title=` → libellés + `<kbd>`
 
-⚠️ **Ne pas migrer au Lot 0.** Le composant `<Tooltip>` (bits-ui) sera écrit au
-Lot 2 avec la barre d'outils. Ensuite seulement, la chasse aux `title=` du chrome
-(~82 occurrences) pourra commencer, écran par écran.
+Le chrome **neuf** (barre d'outils, palette, aide) n'utilise pas `title=` : les
+boutons portent leur libellé visible, leur raccourci en `<kbd>` et leur
+`aria-label`. La chasse aux `title=` restants (~80) et le composant `<Tooltip>`
+bits-ui sont repoussés aux finitions (Lot 8), écran par écran.

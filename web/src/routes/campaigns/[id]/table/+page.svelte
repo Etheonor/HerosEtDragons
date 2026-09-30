@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
-  import type { JournalEntry } from '@rollwith/shared/protocol';
+  import { DropdownMenu } from 'bits-ui';
+  import type { JournalEntry, TableSettings } from '@rollwith/shared/protocol';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
@@ -11,6 +12,14 @@
   import CompendiumTooltip from '$lib/components/CompendiumTooltip.svelte';
   import CloseButton from '$lib/ds/CloseButton.svelte';
   import { scrollArea } from '$lib/ds/scroll-area';
+  import { surfaceProps } from '$lib/ds/surface';
+  import HotkeyHelp from '$lib/components/HotkeyHelp.svelte';
+  import CommandPalette from '$lib/table/CommandPalette.svelte';
+  import ToolGroup from '$lib/table/toolbar/ToolGroup.svelte';
+  import { fitToolbar } from '$lib/table/toolbar/toolbarFit';
+  import { TOOL_FACES } from '$lib/table/toolbar/faces';
+  import { hotkeyIdFromEvent } from '$lib/hotkeys';
+  import { commandRegistry, type PaletteCommand } from '$lib/table/commands.svelte';
   import { slugify } from '$lib/slug';
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
@@ -150,6 +159,277 @@
       /* ignore */
     }
   }
+
+  // ── Chrome (Lot 2) : palette, aide, barre d'outils ───────────
+  let paletteOpen = $state(false);
+  let helpOpen = $state(false);
+  let toolbarWidth = $state(1280);
+
+  function onToolbarResize(node: HTMLElement) {
+    const ro = new ResizeObserver((entries) => {
+      toolbarWidth = entries[0]?.contentRect.width ?? 0;
+    });
+    ro.observe(node);
+    return { destroy: () => ro.disconnect() };
+  }
+
+  // ── Réglages (palette) ───────────────────────────────────────
+  const GRID_SIZES = [16, 24, 32, 40, 48, 64];
+  const TOKEN_SIZES = [24, 32, 40, 48, 56];
+  const GRID_COLORS: [string, string][] = [
+    ['', 'du thème'],
+    ['#ffffff', 'blanche'],
+    ['#000000', 'noire'],
+    ['#c0392b', 'rouge'],
+    ['#5e8c61', 'verte'],
+    ['#4a7aa8', 'bleue'],
+  ];
+
+  async function setGridSize(size: number | null) {
+    const mapId = store.state.mapId;
+    if (!isMj || !mapId) return;
+    try {
+      await api.maps.update(mapId, { gridSize: size });
+      await refreshMaps();
+    } catch {
+      toast = 'Réglage de la grille impossible';
+    }
+  }
+
+  async function setGridColor(color: string | null) {
+    const mapId = store.state.mapId;
+    if (!isMj || !mapId) return;
+    try {
+      await api.maps.update(mapId, { gridColor: color });
+      await refreshMaps();
+    } catch {
+      toast = 'Réglage de la grille impossible';
+    }
+  }
+
+  async function setCampaignSetting(patch: Partial<TableSettings>) {
+    if (!isMj) return;
+    try {
+      await api.campaigns.updateSettings(campaignId, patch);
+    } catch {
+      toast = 'Réglage impossible';
+    }
+  }
+
+  /** Commandes exposées à la palette — relues à chaque ouverture. */
+  function buildCommands(): PaletteCommand[] {
+    const cmds: PaletteCommand[] = [
+      {
+        id: 'panel.compagnie',
+        label: panelsOpen.compagnie ? 'Masquer la compagnie' : 'Afficher la compagnie',
+        group: 'Actions',
+        keywords: ['panneau', 'compagnie', 'sidebar'],
+        run: () => setPanelOpen('compagnie', !panelsOpen.compagnie),
+      },
+      {
+        id: 'panel.seance',
+        label: panelsOpen.panel ? 'Masquer le panneau de séance' : 'Afficher le panneau de séance',
+        group: 'Actions',
+        keywords: ['panneau', 'journal', 'dés', 'inventaire'],
+        run: () => setPanelOpen('panel', !panelsOpen.panel),
+      },
+      {
+        id: 'map.reset',
+        label: 'Recadrer la carte',
+        group: 'Actions',
+        keywords: ['caméra', 'zoom', 'centrer'],
+        shortcut: '0',
+        run: resetView,
+      },
+      {
+        id: 'tool.hand',
+        label: 'Outil Main',
+        group: 'Actions',
+        keywords: ['déplacer', 'panoramique'],
+        shortcut: 'H',
+        run: () => toolSelect('hand'),
+      },
+      {
+        id: 'help.open',
+        label: 'Aide clavier',
+        group: 'Aide',
+        keywords: ['raccourcis', 'touches', 'aide'],
+        shortcut: '?',
+        run: () => (helpOpen = true),
+      },
+      {
+        id: 'nav.compendium',
+        label: 'Ouvrir le compendium',
+        group: 'Actions',
+        keywords: ['règles', 'fiches'],
+        run: () => {
+          globalThis.location.href = `/compendium?campaign=${campaignId}`;
+        },
+      },
+    ];
+
+    if (myCharId) {
+      cmds.push({
+        id: 'nav.sheet',
+        label: 'Ouvrir ma feuille de personnage',
+        group: 'Actions',
+        keywords: ['personnage', 'feuille'],
+        run: () => {
+          globalThis.location.href = `/characters/${myCharId}`;
+        },
+      });
+    }
+
+    if (isMj) {
+      cmds.push(
+        {
+          id: 'tool.move',
+          label: 'Outil Déplacer',
+          group: 'Actions',
+          keywords: ['pion', 'sélection'],
+          shortcut: 'V',
+          run: () => toolSelect('move'),
+        },
+        {
+          id: 'tool.pnj',
+          label: 'Outil PNJ',
+          group: 'Actions',
+          keywords: ['créer', 'monstre'],
+          shortcut: 'P',
+          run: () => toolSelect('pnj'),
+        },
+        {
+          id: 'tool.marker',
+          label: 'Outil Repère',
+          group: 'Actions',
+          keywords: ['annotation', 'note'],
+          shortcut: 'R',
+          run: () => toolSelect('marker'),
+        },
+        {
+          id: 'tool.fog',
+          label: 'Outil Brouillard',
+          group: 'Actions',
+          keywords: ['révéler', 'couvrir', 'vision'],
+          shortcut: 'B',
+          run: fogToggle,
+        },
+        {
+          id: 'combat.next',
+          label: 'Tour suivant',
+          group: 'Combat',
+          keywords: ['initiative', 'round'],
+          run: combatNext,
+        },
+        ...([4, 6, 8, 10, 12, 20] as const).map((sides, index) => ({
+          id: `dice.d${sides}`,
+          label: `Lancer 1d${sides}`,
+          group: 'Combat',
+          keywords: ['dé', 'jet', `d${sides}`],
+          shortcut: String(index + 1),
+          run: () => quickRoll(sides),
+        })),
+      );
+
+      if (activeMap) {
+        for (const size of GRID_SIZES) {
+          cmds.push({
+            id: `grid.size.${size}`,
+            label: `Grille : ${size} px`,
+            group: 'Réglages',
+            keywords: ['grille', 'quadrillage', 'taille', String(size)],
+            badge: activeGridSize === size ? 'actuel' : undefined,
+            active: activeGridSize === size,
+            run: () => void setGridSize(size),
+          });
+        }
+        cmds.push({
+          id: 'grid.size.off',
+          label: 'Grille : retirer',
+          group: 'Réglages',
+          keywords: ['grille', 'quadrillage', 'retirer', 'aucune'],
+          badge: activeGridSize === null ? 'actuel' : undefined,
+          run: () => void setGridSize(null),
+        });
+        for (const [color, label] of GRID_COLORS) {
+          const current = (activeGridColor ?? '') === color;
+          cmds.push({
+            id: `grid.color.${color || 'theme'}`,
+            label: `Grille : couleur ${label}`,
+            group: 'Réglages',
+            keywords: ['grille', 'couleur', label],
+            active: current,
+            badge: current ? 'actuel' : undefined,
+            run: () => void setGridColor(color || null),
+          });
+        }
+      }
+
+      cmds.push(
+        {
+          id: 'mode.exploration',
+          label: 'Passer en exploration',
+          group: 'Réglages',
+          keywords: ['mode', 'exploration'],
+          active: store.state.mode === 'exploration',
+          run: () => setMode('exploration'),
+        },
+        {
+          id: 'mode.combat',
+          label: 'Passer en combat',
+          group: 'Réglages',
+          keywords: ['mode', 'combat', 'initiative'],
+          active: store.state.mode === 'combat',
+          run: () => setMode('combat'),
+        },
+        {
+          id: 'fog.cover',
+          label: 'Brouillard : tout recouvrir',
+          group: 'Réglages',
+          keywords: ['brouillard', 'couvrir', 'cacher'],
+          run: fogCover,
+        },
+        {
+          id: 'fog.disable',
+          label: 'Brouillard : dissiper',
+          group: 'Réglages',
+          keywords: ['brouillard', 'dissiper', 'révéler'],
+          run: fogDisable,
+        },
+        ...TOKEN_SIZES.map((size) => ({
+          id: `token.size.${size}`,
+          label: `Pions : taille ${size} px`,
+          group: 'Réglages',
+          keywords: ['pion', 'jeton', 'taille', String(size)],
+          active: store.settings.tokenSize === size,
+          badge: store.settings.tokenSize === size ? 'actuel' : undefined,
+          run: () => void setCampaignSetting({ tokenSize: size }),
+        })),
+        {
+          id: 'campaign.pnjPv',
+          label: 'PNJ : afficher les PV aux joueurs',
+          group: 'Réglages',
+          keywords: ['pnj', 'pv', 'points de vie', 'visibilité'],
+          active: store.settings.pnjPvVisible,
+          badge: store.settings.pnjPvVisible ? 'activé' : 'désactivé',
+          run: () => void setCampaignSetting({ pnjPvVisible: !store.settings.pnjPvVisible }),
+        },
+        {
+          id: 'campaign.sheetsLocked',
+          label: "Feuilles : verrouiller l'édition",
+          group: 'Réglages',
+          keywords: ['feuille', 'verrou', 'édition'],
+          active: store.settings.sheetsLocked,
+          badge: store.settings.sheetsLocked ? 'activé' : 'désactivé',
+          run: () => void setCampaignSetting({ sheetsLocked: !store.settings.sheetsLocked }),
+        },
+      );
+    }
+
+    return cmds;
+  }
+
+  const paletteCommands = $derived(commandRegistry.list(isMj));
 
   // ── Carte ────────────────────────────────────────────────────
   let maps = $state<MapSummary[]>([]);
@@ -496,6 +776,21 @@
   function combatNext() {
     sendWs({ type: 'combat.next' });
   }
+
+  onMount(() => {
+    commandRegistry.register('table', buildCommands);
+    return () => commandRegistry.unregister('table');
+  });
+
+  // Les cartes vivent en REST : le serveur pousse `mapsUpdated` après chaque
+  // mutation, chaque navigateur relit alors la liste (Lot 2).
+  let seenMapsRevision = 0;
+  $effect(() => {
+    const rev = store.mapsRevision;
+    if (rev === seenMapsRevision) return;
+    seenMapsRevision = rev;
+    void refreshMaps();
+  });
 
   onMount(async () => {
     // états pilotés par le compendium (noms officiels DRS)
@@ -977,6 +1272,43 @@
   // ── Pose depuis la bibliothèque de PNJ ───────────────────────
   let pendingPlace = $state<{ templateId: string; name: string; count: number } | null>(null);
 
+  // Largeurs estimées : la sortie est un classement par priorité, pas une
+  // mesure au pixel — seuls les outils y participent, `Cartes` et la
+  // bibliothèque restent toujours visibles.
+  const toolbarItems = $derived([
+    { id: 'hand', width: 86, priority: 90, pinned: tool === 'hand' },
+    { id: 'move', width: 112, priority: 60, pinned: tool === 'move' },
+    { id: 'fog', width: 132, priority: 55, pinned: tool === 'fog' },
+    { id: 'marker', width: 110, priority: 50, pinned: tool === 'marker' },
+    { id: 'pnj', width: 94, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
+  ]);
+  const toolbarAvailable = $derived(
+    Math.max(0, toolbarWidth - (panelsOpen.compagnie ? 316 : 0) - (panelsOpen.panel ? 352 : 0) - 224),
+  );
+  const toolbarFit = $derived(fitToolbar(toolbarItems, toolbarAvailable));
+  const visibleToolIds = $derived(toolbarFit.visible.map((i) => i.id));
+
+  function runToolbarItem(id: string) {
+    switch (id) {
+      case 'hand':
+        toolSelect('hand');
+        break;
+      case 'move':
+        toolSelect('move');
+        break;
+      case 'pnj':
+        toolSelect('pnj');
+        break;
+      case 'marker':
+        toolSelect('marker');
+        break;
+      case 'fog':
+        fogToggle();
+        break;
+    }
+  }
+
+
   // ── Menu contextuel sur les pions (MJ) ───────────────────────
   let ctxMenu = $state<{ x: number; y: number; charId: string; kind: 'pj' | 'pnj' } | null>(null);
   let ctxEl: HTMLDivElement | null = null;
@@ -1025,66 +1357,60 @@
   }
 
   function onWindowKeydown(e: KeyboardEvent) {
-    const t = e.target as HTMLElement | null;
-    if (
-      t &&
-      (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
-    ) {
-      return;
-    }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (k === 'escape') {
+    if (e.key === 'Escape') {
       ctxMenu = null;
       pendingPlace = null;
       if (isMj) tool = 'move';
       return;
     }
-    if (k === '/') {
-      e.preventDefault();
-      focusChat();
-      return;
-    }
-    if (k === '0') {
-      resetView();
-      return;
-    }
-    // L'outil Main sert à TOUT le monde (chaque joueur cadre sa carte) : il est
-    // donc traité avant le garde isMj ci-dessous.
-    if (k === 'h') {
-      toolSelect('hand');
-      return;
-    }
-    if (!isMj) return;
-    switch (k) {
-      case 'v':
-        tool = 'move';
+    const id = hotkeyIdFromEvent(e, { isMj, overlayOpen: paletteOpen || helpOpen });
+    if (!id) return;
+    e.preventDefault();
+    switch (id) {
+      case 'palette.open':
+        paletteOpen = true;
         break;
-      case 'p':
+      case 'help.open':
+        helpOpen = true;
+        break;
+      case 'chat.focus':
+        focusChat();
+        break;
+      case 'map.hand':
+        toolSelect('hand');
+        break;
+      case 'map.reset':
+        resetView();
+        break;
+      case 'tool.move':
+        toolSelect('move');
+        break;
+      case 'tool.pnj':
         toolSelect('pnj');
         break;
-      case 'r':
+      case 'tool.marker':
         toolSelect('marker');
         break;
-      case 'b':
+      case 'tool.fog':
         fogToggle();
         break;
-      case '1':
+      case 'dice.d4':
         quickRoll(4);
         break;
-      case '2':
+      case 'dice.d6':
         quickRoll(6);
         break;
-      case '3':
+      case 'dice.d8':
         quickRoll(8);
         break;
-      case '4':
+      case 'dice.d10':
         quickRoll(10);
         break;
-      case '5':
+      case 'dice.d12':
         quickRoll(12);
         break;
-      case '6':
+      case 'dice.d20':
         quickRoll(20);
         break;
     }
@@ -1243,8 +1569,13 @@
   <header class="session-bar">
     <div class="session-title">
       <span class="campaign-name">{campaignName || '…'}</span>
-      <span class="session-hint">Séance en cours · double-clic sur la carte : ping</span>
+      <span class="session-hint">Séance en cours · Espace : commandes · double-clic : ping</span>
     </div>
+    <button
+      class="palette-btn"
+      aria-label="Command palette (Espace)"
+      onclick={() => (paletteOpen = true)}
+    >⌘ Commandes</button>
     <div class="mode-toggle">
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
@@ -1426,56 +1757,121 @@
         </div>
       {/if}
 
-      {#if isMj}
+      <!-- Barre d'outils ancrée en bas, centrée, sortie par priorité (Lot 2). -->
+      <div class="toolbar-row" use:onToolbarResize>
+        {#if pendingPlace || (isMj && (tool === 'pnj' || tool === 'marker' || (tool === 'fog' && fogOn)))}
+          <div class="tool-hint-chip">
+            {#if pendingPlace}
+              Cliquez sur la carte pour poser {pendingPlace.count > 1 ? `${pendingPlace.count} × ` : ''}{pendingPlace.name} — Échap pour annuler
+            {:else if tool === 'pnj' || tool === 'marker'}
+              Cliquez sur la carte pour placer
+            {:else}
+              Glissez sur la carte pour dévoiler — invisible pour les joueurs
+            {/if}
+          </div>
+        {/if}
         <div class="mj-toolbar surface-raised">
-          <span class="mj-label">Outils du MJ</span>
-          <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
-          <NpcLibrary {campaignId} onPlace={(tpl, count) => {
-            tool = 'move';
-            pendingPlace = { templateId: tpl.id, name: tpl.name, count };
-          }} />
-          <div class="tsep"></div>
-          <button
-            class="tool-btn"
-            class:active={tool === 'hand'}
-            title="Raccourci : H —glisser pour déplacer la carte"
-            onclick={() => toolSelect('hand')}>Main</button
-          >
-          <button class="tool-btn {tool === 'move' ? 'active' : ''}" title="Raccourci : V" onclick={() => toolSelect('move')}>Déplacer</button>
-          <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" title="Raccourci : P" onclick={() => toolSelect('pnj')}>+ PNJ</button>
-          {#if tool === 'pnj'}
-            <input class="npc-input" bind:value={npcName} placeholder="nom" />
-            <input class="npc-input narrow" type="number" bind:value={npcPv} title="PV" />
-            <input class="npc-input narrow" type="number" bind:value={npcCa} title="CA" />
-            <input class="npc-input narrow" type="number" bind:value={npcInit} title="Init" />
-            <button
-              class="ghost-btn lib-toggle"
-              class:on={npcSaveAsTemplate}
-              title="Enregistrer aussi dans la bibliothèque de PNJ"
-              onclick={() => (npcSaveAsTemplate = !npcSaveAsTemplate)}
-            >→ bibliothèque</button>
+          {#if isMj && toolbarFit.overflow.length > 0}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger class="tool-more" aria-label="Autres outils">⋯</DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content {...surfaceProps('overlay', 'tool-overflow')} side="top" sideOffset={8}>
+                  {#each toolbarFit.overflow as item (item.id)}
+                    <DropdownMenu.Item class="tool-overflow-item" onSelect={() => runToolbarItem(item.id)}>
+                      {TOOL_FACES[item.id as keyof typeof TOOL_FACES]?.label ?? item.id}
+                    </DropdownMenu.Item>
+                  {/each}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           {/if}
-          <button class="tool-btn {tool === 'marker' ? 'active' : ''}" title="Raccourci : R" onclick={() => toolSelect('marker')}>Repère</button>
-          {#if tool === 'marker'}
-            <input class="marker-input" bind:value={markerText} placeholder="texte du repère…" />
+
+          {#if visibleToolIds.includes('hand')}
+            <ToolGroup
+              label="Main"
+              icon="✋"
+              hotkeyLabel="H"
+              active={tool === 'hand'}
+              onselect={() => toolSelect('hand')}
+            />
           {/if}
-          <button class="ghost-btn danger" onclick={clearMarkers}>Effacer les repères</button>
-          <div class="tsep"></div>
-          <button class="tool-btn {tool === 'fog' ? 'active' : ''}" title="Raccourci : B" onclick={fogToggle}>Brouillard</button>
-          {#if fogOn}
-            <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
-            <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
+          {#if isMj && visibleToolIds.includes('move')}
+            <ToolGroup
+              label="Déplacer"
+              icon="✥"
+              hotkeyLabel="V"
+              active={tool === 'move'}
+              onselect={() => toolSelect('move')}
+            />
           {/if}
-          {#if pendingPlace}
-            <span class="tool-hint">Cliquez sur la carte pour poser {pendingPlace.count > 1 ? `${pendingPlace.count} × ` : ''}{pendingPlace.name} — Échap pour annuler</span>
-          {:else if tool === 'pnj' || tool === 'marker'}
-            <span class="tool-hint">Cliquez sur la carte pour placer</span>
+          {#if isMj && visibleToolIds.includes('pnj')}
+            <ToolGroup
+              label="PNJ"
+              icon="☠"
+              hotkeyLabel="P"
+              active={tool === 'pnj' || !!pendingPlace}
+              onselect={() => toolSelect('pnj')}
+            >
+              {#snippet options()}
+                <span class="opt-title">Nouveau PNJ</span>
+                <label>Nom <input class="npc-input" bind:value={npcName} placeholder="nom" /></label>
+                <label>PV <input class="npc-input narrow" type="number" bind:value={npcPv} /></label>
+                <label>CA <input class="npc-input narrow" type="number" bind:value={npcCa} /></label>
+                <label>Init <input class="npc-input narrow" type="number" bind:value={npcInit} /></label>
+                <button
+                  class="ghost-btn lib-toggle"
+                  class:on={npcSaveAsTemplate}
+                  onclick={() => (npcSaveAsTemplate = !npcSaveAsTemplate)}
+                >→ bibliothèque</button>
+                <span class="opt-hint">Cliquez sur la carte pour poser.</span>
+              {/snippet}
+            </ToolGroup>
           {/if}
-          {#if tool === 'fog' && fogOn}
-            <span class="tool-hint">Glissez sur la carte pour dévoiler — invisible pour les joueurs</span>
+          {#if isMj && visibleToolIds.includes('marker')}
+            <ToolGroup
+              label="Repère"
+              icon="⚑"
+              hotkeyLabel="R"
+              active={tool === 'marker'}
+              onselect={() => toolSelect('marker')}
+            >
+              {#snippet options()}
+                <span class="opt-title">Repère</span>
+                <label>Texte <input class="marker-input" bind:value={markerText} placeholder="texte du repère…" /></label>
+                <button class="ghost-btn danger" onclick={clearMarkers}>Effacer les repères</button>
+                <span class="opt-hint">Cliquez sur la carte pour poser.</span>
+              {/snippet}
+            </ToolGroup>
+          {/if}
+          {#if isMj && visibleToolIds.includes('fog')}
+            <ToolGroup
+              label="Brouillard"
+              icon="◍"
+              hotkeyLabel="B"
+              active={tool === 'fog'}
+              onselect={fogToggle}
+            >
+              {#snippet options()}
+                <span class="opt-title">Brouillard</span>
+                <div class="opt-row">
+                  <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
+                  <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
+                </div>
+                <span class="opt-hint">Glissez sur la carte pour dévoiler — invisible pour les joueurs.</span>
+              {/snippet}
+            </ToolGroup>
+          {/if}
+
+          {#if isMj}
+            <div class="tsep"></div>
+            <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
+            <NpcLibrary {campaignId} onPlace={(tpl, count) => {
+              tool = 'move';
+              pendingPlace = { templateId: tpl.id, name: tpl.name, count };
+            }} />
           {/if}
         </div>
-      {/if}
+      </div>
 
       {#if !panelsOpen.compagnie}
         <button class="panel-toggle left" aria-label="Afficher la compagnie" onclick={() => setPanelOpen('compagnie', true)}>›</button>
@@ -1699,6 +2095,9 @@
   {/if}
   </div>
 
+  <CommandPalette open={paletteOpen} onOpenChange={(o) => (paletteOpen = o)} commands={paletteCommands} />
+  <HotkeyHelp open={helpOpen} onOpenChange={(o) => (helpOpen = o)} {isMj} />
+
   <!-- Dé animé overlay -->
   <DiceOverlay anim={store.diceAnim} />
 </div>
@@ -1767,6 +2166,13 @@
   .mode-btn:last-child { border-left-width: 1px; border-radius: 0 12px 225px 0 / 0 255px 12px 0; }
   .mode-btn.exp-active { background: var(--selected); color: var(--heading); }
   .mode-btn.combat-active { background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
+
+  .palette-btn {
+    font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+    padding: 4px 12px; color: var(--text-2); background: var(--panel);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .palette-btn:hover { color: var(--heading); background: var(--selected); }
 
   .compendium-link { font-size: 14px; font-weight: 700; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
   .compendium-link:hover { color: var(--accent-link-hover); }
@@ -2019,18 +2425,76 @@
   }
   .next-turn-btn:hover { background: var(--accent); border-color: var(--accent-border); }
 
-  .mj-toolbar {
+  /* Barre d'outils : rangée pleine largeur (mesure disponible) + barre centrée. */
+  .toolbar-row {
     position: absolute;
-    left: 0;
-    right: 0;
+    left: 16px;
+    right: 16px;
     bottom: 16px;
-    margin-inline: auto;
-    width: fit-content;
-    max-width: calc(100vw - 32px);
-    display: flex; align-items: center; gap: 6px; padding: 7px 14px;
-    flex-wrap: wrap;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
   }
-  .mj-label { font-size: 13px; font-weight: 500; color: var(--accent-text); }
+  .toolbar-row > * {
+    pointer-events: auto;
+  }
+  .mj-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    max-width: 100%;
+    flex-wrap: nowrap;
+  }
+  .tool-hint-chip {
+    padding: 4px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--accent-text);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
+  }
+  :global(.tool-more) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-h);
+    height: var(--control-h);
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  :global(.tool-more:hover) {
+    color: var(--heading);
+    background: var(--selected);
+  }
+  :global(.tool-overflow) {
+    min-width: 180px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  :global(.tool-overflow-item) {
+    padding: 6px 10px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    outline: none;
+  }
+  :global(.tool-overflow-item[data-highlighted]) {
+    background: var(--selected);
+    color: var(--heading);
+  }
 
   .ghost-btn {
     font-family: var(--font-body); font-size: 13px; font-weight: 500; padding: 3px 11px;
@@ -2040,13 +2504,6 @@
   .ghost-btn:hover { border-color: var(--text-2); color: var(--text); }
   .ghost-btn.danger:hover { border-color: var(--accent-border); color: var(--accent-text); }
   .tsep { width: 2px; height: 20px; background: var(--border-soft); margin: 0 4px; }
-  .tool-btn {
-    font-family: var(--font-body); font-size: 12px; padding: 4px 11px;
-    border: 2px solid var(--border); border-radius: 225px 8px 220px 8px / 8px 200px 8px 255px;
-    background: var(--panel); color: var(--text-2); cursor: pointer;
-  }
-  .tool-btn:hover { background: var(--selected); color: var(--heading); }
-  .tool-btn.active { background: var(--selected); color: var(--heading); }
   .npc-input {
     font-family: var(--font-body); font-size: 13px; padding: 3px 9px;
     border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;
@@ -2058,7 +2515,7 @@
     border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;
     background: var(--panel); color: var(--accent-text); width: 150px;
   }
-  .tool-hint { font-size: 13px; font-weight: 500; color: var(--accent-text); }
+
 
   .map-frame {
     position: absolute;

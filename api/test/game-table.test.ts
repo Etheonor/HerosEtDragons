@@ -739,4 +739,19 @@ describe("GameTableDO — intégration", () => {
     ).characters;
     expect(plChars["pnj-1"]).toBeNull();
   });
+
+  it("notifyMapsUpdated (RPC) : la table prévient chaque navigateur de relire la liste des cartes", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await tableStub().notifyMapsUpdated();
+
+    const mjDelta = await mj.next("delta");
+    const plDelta = await player.next("delta");
+    expect((mjDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
+    expect((plDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
+  });
 });

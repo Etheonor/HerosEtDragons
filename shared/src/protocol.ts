@@ -360,6 +360,8 @@ export interface TableDeltaPatch {
   fog?: Record<string, FogState>;
   characters?: Record<string, Partial<CharacterCard> | null>;
   settings?: TableSettings;
+  /** Lot 2 : la liste des cartes (REST) a changé — les clients la relisent. */
+  mapsUpdated?: boolean;
 }
 
 export interface DeltaMsg {

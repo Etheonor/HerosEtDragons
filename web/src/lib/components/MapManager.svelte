@@ -457,7 +457,7 @@
     bottom: calc(100% + 8px);
     left: 0;
     width: 300px;
-    z-index: var(--z-panels);
+    z-index: var(--z-overlay);
     padding: 8px;
     display: flex;
     flex-direction: column;

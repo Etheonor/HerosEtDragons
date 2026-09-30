@@ -23,15 +23,19 @@ test.describe("Connexion et table", () => {
     await expect(page.locator(".compagnie")).toContainText("Ragnar");
   });
 
-  test("le MJ voit la barre d'outils, un joueur non", async ({ page, browser }) => {
+  test("le MJ voit la barre d'outils complète, un joueur n'a que la Main", async ({
+    page,
+    browser,
+  }) => {
     await openTable(page, MJ);
-    await expect(page.getByText("Outils du MJ")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Déplacer" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Cartes" })).toBeVisible();
 
     const ctx = await browser.newContext();
     const p2 = await ctx.newPage();
     await openTable(p2, KAELITH);
-    await expect(p2.getByText("Outils du MJ")).toHaveCount(0);
+    await expect(p2.getByRole("button", { name: "Déplacer" })).toHaveCount(0);
+    await expect(p2.getByRole("button", { name: "Main" }).first()).toBeVisible();
     await ctx.close();
   });
 });
@@ -96,6 +100,38 @@ test.describe("Inventaire (R9)", () => {
       return text.includes("12po");
     });
     expect(leaked).toBe(false);
+  });
+});
+
+test.describe("Chrome : palette et aide (Lot 2)", () => {
+  test("Espace ouvre la palette, « grille 48 » règle la taille sur la carte", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    await page.keyboard.press("Space");
+    const input = page.getByPlaceholder(/Rechercher une action/);
+    await expect(input).toBeVisible();
+    await input.fill("grille 48");
+    await page.getByRole("option", { name: /Grille : 48 px/ }).click();
+    await expect(input).toHaveCount(0);
+
+    // Le réglage est RENDU sur la carte, pas seulement stocké.
+    await expect(page.locator(".map-grid--overlay")).toBeVisible();
+    const size = await page
+      .locator(".map-grid--overlay")
+      .evaluate((el) => getComputedStyle(el).backgroundSize);
+    expect(size).toContain("48px");
+  });
+
+  test("? ouvre l'aide clavier générée depuis la table, Échap la ferme", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.keyboard.press("?");
+    await expect(page.locator(".help-title")).toBeVisible();
+    // L'aide est bien générée depuis la table (le raccourci d'ouverture y figure).
+    await expect(page.locator(".help-row kbd", { hasText: "?" })).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".help-title")).toHaveCount(0);
   });
 });
 
