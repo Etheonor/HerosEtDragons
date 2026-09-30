@@ -250,7 +250,7 @@
 
   {#if open}
     <div
-      class="maps-panel"
+      class="maps-panel surface-raised"
       role="group"
       aria-label="Cartes de la campagne"
       class:drag={dragOver}
@@ -457,11 +457,7 @@
     top: calc(100% + 8px);
     left: 0;
     width: 300px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px 5px 16px 5px;
-    box-shadow: 0 10px 34px var(--shadow-2);
-    z-index: 60;
+    z-index: var(--z-panels);
     padding: 8px;
     display: flex;
     flex-direction: column;

@@ -1,0 +1,104 @@
+/* ═══════════════════════════════════════════════════════════
+   RollWith H&D — Surfaces & chrome système
+   Référence : docs/atlas-benchmark/06-design-system.md
+
+   Ces classes vivent en :global() par nature (feuille importée à la
+   racine) : le CSS scopé Svelte ne s'applique ni au contenu portalé, ni
+   aux éléments rendus par un composant de bibliothèque. C'est la seule
+   source de vérité pour les surfaces.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Trois plans de surface, définis une seule fois ────────── */
+.surface-canvas {
+  background: var(--surface-canvas);
+}
+
+.surface-raised {
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.surface-overlay {
+  background: var(--surface-overlay-blur);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* Modales et fenêtres flottantes : un cran au-dessus dans l'échelle. */
+.surface-lg {
+  border-radius: var(--radius-lg);
+}
+
+/* Le contenu des surfaces overlay est peint dans le top layer : les
+   variables héritées cascadent depuis le parent DOM, donc pas de
+   redéclaration de tokens nécessaire ici. */
+
+/* ── Press states globaux ──────────────────────────────────────
+   `scale` (propriété individuelle) et non `transform` : elle se compose
+   avec un transform existant, et ne casse donc pas les éléments déjà
+   translatés (pilules centrées, boutons ancrés…). */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  transition: scale var(--dur-press) var(--ease-out);
+}
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  scale: 0.96;
+}
+
+/* ── Scrollbars à place réservée ───────────────────────────────
+   `scrollbar-gutter: stable` évite le micro-saut du contenu à chaque
+   apparition. Le pouce n'apparaît qu'au scroll (classe posée par
+   l'action `scrollArea`) et s'efface 300 ms après. */
+.scroll-area {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 300ms ease-out;
+}
+.scroll-area[data-scrolling] {
+  scrollbar-color: color-mix(in oklab, var(--border-default), transparent 35%) transparent;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+.scroll-area[data-scrolling]::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--border-default), transparent 35%);
+}
+
+/* ── Accessibilité clavier ─────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Mouvement réduit ───────────────────────────────────────────
+   Une règle globale sur `transition-duration` n'atteint pas les
+   transitions Svelte (pilotées en JS) : celles-ci sont coupées par
+   `prefersReducedMotion` dans les composants. Ici, le CSS. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    scale: none;
+  }
+}

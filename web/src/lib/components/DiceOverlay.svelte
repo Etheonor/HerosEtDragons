@@ -110,7 +110,7 @@
     align-items: center;
     justify-content: center;
     pointer-events: none;
-    z-index: 40;
+    z-index: var(--z-overlay);
   }
   .dice-column {
     display: flex;

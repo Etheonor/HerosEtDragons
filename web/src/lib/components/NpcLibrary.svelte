@@ -135,7 +135,7 @@
   </button>
 
   {#if open}
-    <div class="lib-panel" role="group" aria-label="Bibliothèque de PNJ">
+    <div class="lib-panel surface-raised" role="group" aria-label="Bibliothèque de PNJ">
       {#if templates.length > 3}
         <input class="search" placeholder="Rechercher…" bind:value={search} />
       {/if}
@@ -261,11 +261,7 @@
     top: calc(100% + 8px);
     left: 0;
     width: 320px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px 5px 16px 5px;
-    box-shadow: 0 10px 34px var(--shadow-2);
-    z-index: 60;
+    z-index: var(--z-panels);
     padding: 8px;
     display: flex;
     flex-direction: column;

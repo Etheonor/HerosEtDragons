@@ -492,7 +492,7 @@
   {#if pickerOpen}
     <div class="overlay" role="presentation" onclick={() => (pickerOpen = false)}>
       <div
-        class="picker"
+        class="picker surface-overlay surface-lg"
         role="dialog"
         aria-modal="true"
         aria-label="Choisir un portrait"
@@ -609,17 +609,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: var(--z-overlay);
   }
   .picker {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     width: min(620px, calc(100vw - 48px));
     max-height: min(76vh, 720px);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 16px 50px var(--shadow-2);
   }
   .picker-head {
     display: flex;

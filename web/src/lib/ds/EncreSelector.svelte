@@ -26,7 +26,7 @@
     Encre
   </button>
   {#if open}
-    <div class="encre-menu">
+    <div class="encre-menu surface-overlay">
       {#each ENCRE_KEYS as key (key)}
         {@const p = ENCRE_PALETTES[key]}
         <button class="encre-option" class:selected={key === current} onclick={() => pick(key)}>
@@ -74,15 +74,11 @@
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px 4px 16px 5px;
     padding: 8px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    box-shadow: 0 8px 30px var(--shadow-2);
-    z-index: 70;
+    z-index: var(--z-overlay);
     min-width: 150px;
   }
   .encre-option {

@@ -299,7 +299,7 @@
 />
 
 <div class="overlay" role="presentation" onclick={onClose}>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Créer un personnage" onclick={(e) => e.stopPropagation()}>
+  <div class="modal surface-overlay surface-lg" role="dialog" aria-modal="true" aria-label="Créer un personnage" onclick={(e) => e.stopPropagation()}>
     <div class="head">
       <div>
         <div class="title">Nouveau personnage</div>
@@ -518,13 +518,10 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+  .overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: var(--z-overlay); padding: 24px; }
   .modal {
-    background: var(--panel); border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     width: min(720px, 100%); max-height: min(92vh, 940px); overflow-y: auto;
     padding: 24px 28px 20px; display: flex; flex-direction: column; gap: 16px;
-    box-shadow: 0 16px 50px var(--shadow-2);
   }
   .head .title { font-family: var(--font-title); font-size: 24px; color: var(--heading); }
   .head .sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }

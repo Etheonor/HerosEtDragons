@@ -11,35 +11,19 @@
     level?: 'canvas' | 'raised' | 'overlay';
     children: Snippet;
     class?: string;
+    [key: string]: unknown;
   }
 
-  const { level = 'raised', children, class: className = '' }: Props = $props();
+  const { level = 'raised', children, class: className = '', ...rest }: Props = $props();
 </script>
 
-<div class="surface surface--{level} {className}" data-surface={level}>
+<div class="surface--{level} {className}" data-surface={level} {...rest}>
   {@render children()}
 </div>
 
 <style>
-  .surface {
-    box-sizing: border-box;
-  }
-
-  .surface--canvas {
-    background: var(--bg);
-  }
-
-  .surface--raised {
-    background: var(--panel);
-    border: 2px solid var(--border-soft);
-    border-radius: 12px;
-    box-shadow: 0 6px 20px var(--shadow-2);
-  }
-
+  .surface--raised,
   .surface--overlay {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 16px;
-    box-shadow: 0 12px 40px var(--shadow-2);
+    box-sizing: border-box;
   }
 </style>

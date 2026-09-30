@@ -1,15 +1,99 @@
 /* ═══════════════════════════════════════════════════════════
    RollWith H&D — Design System « Carnet de nuit » — Tokens
    Référence : design V2/THEME-CARNET-DE-NUIT.md
+   Chantier UX : docs/atlas-benchmark/06-design-system.md
    ═══════════════════════════════════════════════════════════ */
+
+/* ── Primitifs de surface (@property) ─────────────────────────
+   Déclarés en propriétés enregistrées : vérification de type, héritage
+   explicite vers les contenus portalés (top layer), et transitions entre
+   plans d'élévation. Les noms historiques (--bg, --panel, --border…)
+   restent des alias pour ne rien casser. */
+@property --surface-canvas {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #26221d;
+}
+@property --surface-raised {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2e2a24;
+}
+@property --surface-overlay {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2e2a24;
+}
+@property --border-subtle {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #3a352d;
+}
+@property --border-default {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #575043;
+}
+@property --scrollbar-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
 
 :root {
   /* ── Fonds & surfaces ─────────────────────────────────────── */
-  --bg: #26221d; /* fond de page */
-  --panel: #2e2a24; /* panneaux, cartes, modales */
-  --border: #575043; /* bordures 2px solid, dashed, éléments inactifs */
-  --border-soft: #3a352d; /* séparateurs discrets */
-  --selected: #575043; /* fond d'élément sélectionné */
+  --bg: var(--surface-canvas); /* fond de page */
+  --panel: var(--surface-raised); /* panneaux, cartes, modales */
+  --border: var(--border-default); /* bordures 2px solid, dashed, éléments inactifs */
+  --border-soft: var(--border-subtle); /* séparateurs discrets */
+  --selected: var(--border-default); /* fond d'élément sélectionné */
+
+  /* Dérivés color-mix : zéro hexadécimal dupliqué. */
+  --surface-raised-hover: color-mix(in oklab, var(--surface-raised), var(--accent) 6%);
+  --surface-overlay-blur: color-mix(in oklab, var(--surface-overlay), transparent 8%);
+  --border-strong: color-mix(in oklab, var(--border-default), var(--text) 22%);
+
+  /* ── Échelle de rayons (chrome système) ───────────────────── */
+  --radius-xs: 4px; /* chips, cases à cocher, petits badges */
+  --radius-sm: 8px; /* boutons, champs, cartes */
+  --radius-md: 12px; /* panneaux, popovers, dropdowns */
+  --radius-lg: 16px; /* modales */
+  --radius-xl: 24px; /* fenêtres flottantes */
+  --radius-full: 9999px; /* pilules */
+
+  /* ── Tailles de contrôles ─────────────────────────────────── */
+  --control-h-sm: 24px;
+  --control-h: 32px;
+  --control-h-lg: 40px;
+  --icon-sm: 16px;
+  --icon: 20px;
+  --icon-lg: 24px;
+
+  /* ── Ordre d'empilement (sémantique) ────────────────────────
+     Le top layer (popovers, dialogs, menus) sort de cette échelle :
+     il s'ordonne par ordre d'ouverture. Ici, seules nos couches DOM. */
+  --z-map: 0;
+  --z-grid: 10;
+  --z-markers: 15;
+  --z-tokens: 18;
+  --z-fog: 20;
+  --z-ping: 30;
+  --z-map-hud: 100;
+  --z-chrome: 200;
+  --z-panels: 300;
+  --z-overlay: 400;
+  --z-toast: 500;
+
+  /* ── Mouvement ────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 160ms;
+  --dur-in: 220ms;
+  --dur-out: 180ms;
+
+  /* ── Ombres de surfaces ───────────────────────────────────── */
+  --shadow-raised: 0 6px 20px var(--shadow-2);
+  --shadow-overlay: 0 12px 40px var(--shadow-2);
 
   /* ── Textes ───────────────────────────────────────────────── */
   --text: #e8e2d4;

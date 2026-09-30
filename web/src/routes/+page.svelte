@@ -223,7 +223,7 @@
       onclick={() => (createOpen = false)}
     >
       <div
-        class="modal"
+        class="modal surface-overlay surface-lg"
         role="dialog"
         aria-modal="true"
         onclick={(e) => e.stopPropagation()}
@@ -557,18 +557,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: var(--z-overlay);
   }
   .modal {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     padding: 32px 38px 28px;
     width: 400px;
     display: flex;
     flex-direction: column;
     gap: 18px;
-    box-shadow: 0 16px 50px var(--shadow-2);
   }
   .modal-head {
     display: flex;

@@ -51,7 +51,7 @@
 <span class="tip-wrap" onpointerenter={open} onpointerleave={() => (show = false)} onfocusin={open} onfocusout={() => (show = false)}>
   {@render children()}
   {#if show && entry}
-    <span class="tip-card" role="tooltip">
+    <span class="tip-card surface-raised" role="tooltip">
       <span class="tip-title">{entry.title}</span>
       <span class="tip-text">{excerpt(entry)}</span>
       <a class="tip-link" href="/compendium?campaign={campaign}&cat={entry.category}&slug={entry.slug}">
@@ -70,15 +70,11 @@
     position: absolute;
     top: calc(100% + 8px);
     left: 0;
-    z-index: 95;
+    z-index: var(--z-overlay);
     width: 280px;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px 4px 16px 5px;
-    box-shadow: 0 10px 30px var(--shadow-2);
     padding: 10px 13px;
     font-family: var(--font-body);
   }

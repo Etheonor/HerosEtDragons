@@ -877,7 +877,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 60;
+    z-index: var(--z-overlay);
     padding: 24px;
   }
   .spell-picker {
