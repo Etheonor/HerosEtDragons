@@ -110,17 +110,18 @@ n'est pas transposable, et la copier serait une faute.
 
 ## 5. Index du dossier
 
-| Fichier                         | Contenu                                                                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `01-etat-des-lieux-atlas.md`    | Atlas en détail : modèle mental, décisions structurantes, les 10 détails qui font la différence                                                  |
-| `02-etat-des-lieux-rollwith.md` | RollWith aujourd'hui, écran par écran, avec chiffres et chemins                                                                                  |
-| `03-axes-ux-ui.md`              | Le différentiel axe par axe (layout, barre d'outils, palette, initiative, dés, widgets, clic droit, raccourcis, onboarding, undo)                |
-| `04-game-feel.md`               | Le « game feel » : pions vivants, liens entre maps, notes dans la map, ambiance                                                                  |
-| `05-architecture-svelte.md`     | Comment on reconstruit ça en Svelte 5 : décomposition, couche de primitives, libs retenues/rejetées, débat DOM vs WebGL                          |
-| `06-design-system.md`           | Le design system de surfaces : mixin unique, échelle de rayons, z-index sémantique, « peau carnet » sur structure Atlas                          |
-| `07-parcours-implémentation.md` | Le backlog ordonné en **10 lots**, avec dépendances, risques,, critères de recette et indicateurs de succès                                      |
-| `08-recherche-stack-ui.md`      | La recherche web qui fonde `05` : versions, dates, URLs (90 sources) — libs Svelte 5 retenues/rejetées, API `popover`, `@property`, DOM vs WebGL |
-| `assets/`                       | Les 3 captures du dépôt Atlas                                                                                                                    |
+| Fichier                         | Contenu                                                                                                                                                                               |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `01-etat-des-lieux-atlas.md`    | Atlas en détail : modèle mental, décisions structurantes, les 10 détails qui font la différence                                                                                       |
+| `02-etat-des-lieux-rollwith.md` | RollWith aujourd'hui, écran par écran, avec chiffres et chemins                                                                                                                       |
+| `03-axes-ux-ui.md`              | Le différentiel axe par axe (layout, barre d'outils, palette, initiative, dés, widgets, clic droit, raccourcis, onboarding, undo)                                                     |
+| `04-game-feel.md`               | Le « game feel » : pions vivants, liens entre maps, notes dans la map, ambiance                                                                                                       |
+| `05-architecture-svelte.md`     | Comment on reconstruit ça en Svelte 5 : décomposition, couche de primitives, libs retenues/rejetées, débat DOM vs WebGL                                                               |
+| `06-design-system.md`           | Le design system de surfaces : mixin unique, échelle de rayons, z-index sémantique, « peau carnet » sur structure Atlas                                                               |
+| `07-parcours-implémentation.md` | Le backlog ordonné en **10 lots**, avec dépendances, risques, critères de recette et indicateurs de succès                                                                            |
+| `07bis-spike-lot1.md`           | **Spike Lot 1 sur la vraie table** : coût du brouillard mesuré (mémoire ×2,25, repeint ×2-3), le popover prisonnier de son parent, et les tests e2e qui encodent l'ancienne géométrie |
+| `08-recherche-stack-ui.md`      | La recherche web qui fonde `05` : versions, dates, URLs (90 sources) — libs Svelte 5 retenues/rejetées, API `popover`, `@property`, DOM vs WebGL                                      |
+| `assets/`                       | Les 3 captures du dépôt Atlas                                                                                                                                                         |
 
 ---
 
@@ -202,16 +203,7 @@ chaque composant.
 - **Pour coder** : `07-parcours-implémentation.md` (les lots), puis `05` (les
   décisions techniques) et `06` (le système de surfaces).
 - **Pour vérifier les affirmations** : `01`, `02`, `03`, `08`.
-
-## 9. Sources
-
-## 8. Where to start reading
-
-- **5 minutes** : ce README (§1, §2, §3, §6).
-- **Une heure** : `04-game-feel.md` — c'est ce que le projet est censé devenir.
-- **Pour coder** : `07-parcours-implémentation.md` (les lots), puis `05` (les
-  décisions techniques) et `06` (le système de surfaces).
-- **Pour vérifier les affirmations** : `01`, `02`, `03`, `08`.
+- **Pour savoir ce qui est déjà risqué** : `07bis-spike-lot1.md`.
 
 ## 9. Sources
 
@@ -220,12 +212,16 @@ chaque composant.
     règles non négociables d'Atlas. **C'est la meilleure source d'intention de
     design du projet** et le meilleur point de départ du chantier.
   - `styles/_tokens.scss`, `styles/_mixins.scss`
-  - `src/app/react/` (UIRoot, BottomToolbarRow, CommandPalette, InitiativeTracker, ResponsiveWidgetBar)
+  - `src/app/react/` (UIRoot, BottomToolbarRow, CommandPalette,
+    InitiativeTracker, ResponsiveWidgetBar)
   - `src/app/packages/components/toolbar/` (ToolGroup, MainToolbar, toolbarFit)
   - `src/app/packages/components/asset-manager/`
   - `src/app/tools/`, `src/app/keyboard/`, `src/app/vision/`
-  - `docs/ObsidianTheming.md`, `docs/css-scoping.md`, `docs/encounter-spawning-system.md`
+  - `docs/ObsidianTheming.md`, `docs/css-scoping.md`,
+    `docs/encounter-spawning-system.md`
 - Captures : `assets/` (copiées depuis `docs/images/` du dépôt Atlas)
 - RollWith : `web/src/routes/**`, `web/src/lib/ds/**`, `web/src/lib/components/**`
+- Mesures du spike Lot 1 : `scripts/_mesure-brouillard.cjs` (relançable)
 - Travaux internes existants : `docs/audit-herosetdragons-2026-09-06-v2.md`,
-  `design V2/THEME-CARNET-DE-NUIT.md`, `design V2/Récapitulatif - Écran de jeu & Design System.md`
+  `design V2/THEME-CARNET-DE-NUIT.md`,
+  `design V2/Récapitulatif - Écran de jeu & Design System.md`
