@@ -22,6 +22,16 @@
   · T6 est un temoin negatif : meme chose que T4 mais SANS Portal et SANS
     strategy="fixed". Il DOIT echouer. S'il passe, le harnais ne teste rien.
 
+  ATTENTION - piege Svelte 3/5 encounter ici et dans le produit reel :
+  le CSS scopé ne s'applique qu'aux elements declares dans le template du
+  composant. Donc :
+    - sur un element rendu par un composant enfant (les Triggers bits-ui),
+      la classe de scope n'est jamais posee -> le selecteur ne matche pas ;
+    - sur du contenu portalé hors du sous-arbre, idem.
+  Les deux sont la meme cause de fond : le selecteur `.x.s-hash` exige que
+  l'element porte le hash, et Svelte ne peut pas le poser sur un element
+  qu'il ne controle pas. D'ou :global() partout ici.
+
   Diagnostic numerique, pas visuel :
     offsetWidth = largeur de mise en page (jamais transformee)
     getBoundingClientRect().width = largeur a l'ecran (transformee)
@@ -48,6 +58,9 @@
   let report = $state<Report | null>(null);
 
   let dragging = $state(false);
+  /* position du dernier clic droit : un menu contextuel doit s'ouvrir AU
+     POINTEUR, pas sous son ancre. */
+  let pointerAt = { x: 0, y: 0 };
   let grab = { px: 0, py: 0, ox: 0, oy: 0 };
 
   const nbFail = $derived(
@@ -92,8 +105,40 @@
     pan = { x: 0, y: 0 };
   }
 
+  /*
+   * `onOpenChange(true)` est appele AVANT que le contenu portalé ne soit insere
+   * dans le document : mesurer a ce moment-la ne trouve rien. On attend donc que
+   * la racine apparaisse, en reinterrogeant le DOM sur quelques frames plutot
+   * qu'avec un delai aveugle qu'il faudrait ensuite regler.
+   */
+  function measureWhenReady(
+    label: string,
+    expected: 'ok' | 'ko',
+    anchorSelector: string | null,
+    note: string,
+    atPoint: boolean = false
+  ): void {
+    let tries = 0;
+    const attempt = (): void => {
+      const ready = document.querySelector('[data-spike="open"]') !== null;
+      if (ready || tries > 30) {
+        measure(label, expected, anchorSelector, note, atPoint);
+      } else {
+        tries += 1;
+        requestAnimationFrame(attempt);
+      }
+    };
+    requestAnimationFrame(attempt);
+  }
+
   /** Mesure l'overlay ouvert (racine portant data-spike) face a son ancre. */
-  function measure(label: string, expected: 'ok' | 'ko', anchorSelector: string | null, note: string): void {
+  function measure(
+    label: string,
+    expected: 'ok' | 'ko',
+    anchorSelector: string | null,
+    note: string,
+    atPoint: boolean = false
+  ): void {
     const root = document.querySelector<HTMLElement>('[data-spike="open"]');
     if (!root) {
       report = null;
@@ -108,23 +153,59 @@
     const escapedTree = root.closest('[data-scaled]') === null ? 'ok' : 'ko';
 
     // 2. Est-il agrandi par le transform ?
+    //    A zoom 1 le transform est l'identite : il n'y a RIEN a detecter, et le
+    //    test confondrait un overlay correct avec un overlay mis a l'echelle
+    //    (ratio 1 des deux cotes). On le declare donc non applicable plutot que
+    //    de le laisser echouer n'importe qui.
     const ratio = layoutW > 0 ? rectW / layoutW : 1;
-    const notScaled = ratio > zoom * 0.85 && ratio < zoom * 1.15 ? 'ko' : 'ok';
+    const scaleCheckable = zoom > 1.05;
+    const notScaled: Verdict = !scaleCheckable
+      ? 'neutre'
+      : ratio > zoom * 0.85 && ratio < zoom * 1.15
+        ? 'ko'
+        : 'ok';
 
-    // 3. Est-il ancre juste sous son declencheur, en coordonnees viewport ?
+    // 3. Est-il ancre a son declencheur, en coordonnees viewport ?
+    //    On ne compare PAS rect.left a anchor.left : bits-ui CENTRE le popover
+    //    sur son ancre, et le middleware de "shift" le deplace quand il frôle
+    //    le bord du viewport. Ce qui caracterise un ancrage correct :
+    //      - le popover est pose SOUS l'ancre (distance a anchor.bottom nulle) ;
+    //      - le centre de l'ancre tombe DANS l'etendue horizontale du popover.
     let anchored: Verdict = 'neutre';
     let fullNote = note;
-    if (anchorSelector) {
+    if (!scaleCheckable) {
+      fullNote += ' - zoom 1x : le transform est l identite, critere d echelle non applicable';
+    }
+
+    if (atPoint) {
+      // Menu contextuel : il doit apparaitre AU POINTEUR. Comparer a
+      // anchor.bottom n'aurait aucun sens : le pointeur est generalement au
+      // CENTRE de l'ancre, donc toujours a moitie de sa hauteur au-dessus de son
+      // bord bas, et l'ecart croit lineairement avec le zoom.
+      const dx = Math.abs(rect.left - pointerAt.x);
+      const dy = Math.abs(rect.top - pointerAt.y);
+      anchored = dx < 26 && dy < 26 ? 'ok' : 'ko';
+      fullNote += ' - decalage au pointeur : ' + dx.toFixed(0) + ' px horiz / ' + dy.toFixed(0) + ' px vert';
+    } else if (anchorSelector) {
       const el = document.querySelector<HTMLElement>(anchorSelector);
       if (!el) {
         anchored = 'ko';
         fullNote += ' - ancre introuvable';
       } else {
         const a = el.getBoundingClientRect();
-        const dx = Math.abs(rect.left - a.left);
+        const aCenter = a.left + a.width / 2;
         const dy = Math.abs(rect.top - a.bottom);
-        anchored = dx < 14 && dy < 26 ? 'ok' : 'ko';
-        fullNote += ' - ecart a l ancre : ' + dx.toFixed(0) + ' px horiz / ' + dy.toFixed(0) + ' px vert';
+        const contains = aCenter >= rect.left - 2 && aCenter <= rect.right + 2;
+        const overlap = Math.max(0, Math.min(rect.right, a.right) - Math.max(rect.left, a.left));
+        anchored = contains && dy < 26 ? 'ok' : 'ko';
+        fullNote +=
+          ' - vertical ' +
+          dy.toFixed(0) +
+          ' px, centre de l ancre dans le popover : ' +
+          (contains ? 'oui' : 'non') +
+          ', recouvrement ' +
+          overlap.toFixed(0) +
+          ' px';
       }
     }
 
@@ -180,7 +261,7 @@
     <div class="chrome-bar">
       <span class="tag">groupe 1 · hors carte</span>
 
-      <Dialog.Root onOpenChange={(o) => o && measure('T1 · Dialog', 'ok', null, 'modal centré, 300 px')}>
+      <Dialog.Root onOpenChange={(o) => o && measureWhenReady('T1 · Dialog', 'ok', null, 'modal centré, 300 px')}>
         <Dialog.Trigger class="tbtn">T1 · Dialog</Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Overlay style="position:fixed;inset:0;background:var(--overlay);" />
@@ -195,7 +276,7 @@
         </Dialog.Portal>
       </Dialog.Root>
 
-      <Popover.Root onOpenChange={(o) => o && measure('T2 · Popover', 'ok', '[data-anchor="t2"]', 'hors carte')}>
+      <Popover.Root onOpenChange={(o) => o && measureWhenReady('T2 · Popover', 'ok', '[data-anchor="t2"]', 'hors carte')}>
         <Popover.Trigger data-anchor="t2" class="tbtn">T2 · Popover</Popover.Trigger>
         <Popover.Portal>
           <Popover.Content data-spike="open" strategy="fixed" style={PANEL}>
@@ -209,7 +290,7 @@
         data-anchor="t3"
         class="tbtn"
         popovertarget="t3pop"
-        onclick={() => setTimeout(() => measure('T3 · popover natif', 'ok', '[data-anchor="t3"]', 'top layer par la spec'), 30)}
+        onclick={() => measureWhenReady('T3 · popover natif', 'ok', '[data-anchor="t3"]', 'top layer par la spec')}
         >T3 · popover natif</button
       >
 
@@ -246,7 +327,7 @@
 
           <Popover.Root
             onOpenChange={(o) =>
-              o && measure('T4 · Popover dans la carte', 'ok', '[data-anchor="t4"]', 'ancré dans la carte transformée')
+              o && measureWhenReady('T4 · Popover dans la carte', 'ok', '[data-anchor="t4"]', 'ancré dans la carte transformée')
             }
           >
             <Popover.Trigger data-anchor="t4" class="tbtn inmap" style="left: 10%; top: 20%;">
@@ -260,9 +341,18 @@
           </Popover.Root>
 
           <ContextMenu.Root
-            onOpenChange={(o) => o && measure('T5 · ContextMenu sur un pion', 'ok', '[data-anchor="t5"]', 'pion B')}
+            onOpenChange={(o) =>
+              o && measureWhenReady('T5 · ContextMenu sur un pion', 'ok', null, 'ouvert au pointeur', true)
+            }
           >
-            <ContextMenu.Trigger data-anchor="t5" class="tok tok--live">B</ContextMenu.Trigger>
+            <ContextMenu.Trigger
+              data-anchor="t5"
+              class="tok tok--live"
+              oncontextmenu={(e) => {
+                pointerAt = { x: e.clientX, y: e.clientY };
+              }}
+              >B</ContextMenu.Trigger
+            >
             <ContextMenu.Portal>
               <ContextMenu.Content data-spike="open" strategy="fixed" style={MENU}>
                 <ContextMenu.Item style={ITEM}>Apparaître</ContextMenu.Item>
@@ -274,7 +364,7 @@
 
           <Popover.Root
             onOpenChange={(o) =>
-              o && measure('T6 · Popover SANS Portal (temoin)', 'ko', '[data-anchor="t6"]', 'ce test doit echouer')
+              o && measureWhenReady('T6 · Popover SANS Portal (temoin)', 'ko', '[data-anchor="t6"]', 'ce test doit echouer')
             }
           >
             <Popover.Trigger data-anchor="t6" class="tbtn inmap" style="left: 10%; top: 34%;">
@@ -426,7 +516,7 @@
     line-height: 1.5;
   }
 
-  .muted {
+  :global(.muted) {
     color: var(--text-2);
   }
 
@@ -439,7 +529,7 @@
     font-size: 11px;
   }
 
-  .tag {
+  :global(.tag) {
     font: 700 10px var(--font-body);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -450,12 +540,12 @@
     white-space: nowrap;
   }
 
-  .tag--inmap {
+  :global(.tag--inmap) {
     color: var(--accent-text);
     border-color: var(--accent-border);
   }
 
-  .tag--ko {
+  :global(.tag--ko) {
     color: #e06c60;
     border-color: #c0392b;
   }
@@ -474,13 +564,13 @@
     flex-wrap: wrap;
   }
 
-  .sp {
+  :global(.sp) {
     margin-left: auto;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
 
-  .tbtn {
+  :global(.tbtn) {
     padding: 5px 11px;
     border: 2px solid var(--border);
     border-radius: 8px;
@@ -490,11 +580,11 @@
     cursor: pointer;
   }
 
-  .tbtn:hover {
+  :global(.tbtn):hover {
     background: var(--selected);
   }
 
-  .zbtn {
+  :global(.zbtn) {
     padding: 4px 10px;
     border: 2px solid var(--border);
     border-radius: 8px;
@@ -504,7 +594,7 @@
     cursor: pointer;
   }
 
-  .zbtn.on {
+  :global(.zbtn).on {
     background: var(--accent);
     color: var(--accent-fg);
     border-color: var(--accent-border);
@@ -553,7 +643,7 @@
     cursor: grabbing;
   }
 
-  .fake-token {
+  :global(.fake-token) {
     position: absolute;
     width: 40px;
     height: 40px;
@@ -567,17 +657,17 @@
     transform: translate(-50%, -50%);
   }
 
-  .inmap {
+  :global(.inmap) {
     position: absolute;
     transform: translate(-50%, -50%);
   }
 
-  .inmap-label {
+  :global(.inmap-label) {
     left: 10%;
     top: 10%;
   }
 
-  .tok--live {
+  :global(.tok--live) {
     position: absolute;
     left: 42%;
     top: 26%;
@@ -706,7 +796,7 @@
     font-size: 11px;
   }
 
-  .clear {
+  :global(.clear) {
     margin-top: 8px;
   }
 
