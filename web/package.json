@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@rollwith/shared": "workspace:*",
-    "better-auth": "^1.6.23"
+    "better-auth": "^1.6.23",
+    "bits-ui": "^2.19.3"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.9",
