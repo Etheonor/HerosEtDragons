@@ -8,7 +8,7 @@ surface serveur touchée, les risques et un critère de recette.
 ## Règles du chantier
 
 1. **`pnpm check` vert à chaque commit.** Jamais de commit sans.
-2. **`pnpm e2e` vert** (12 tests Playwright, fixture `dev-camp`) avant chaque lot
+2. **`pnpm e2e` vert** (20 tests Playwright, fixture `dev-camp`) avant chaque lot
    qui touche au layout. Le filet existe, il faut s'en servir.
 3. **Pas de commit sans demande explicite.**
 4. **Un lot = une branche, une PR, une revue.** Le lot 1 change beaucoup de
@@ -333,5 +333,5 @@ Plus trois indicateurs chiffrés :
 | Éléments en `position: fixed`/`absolute` hors carte | 2                | > 8 (les panneaux) — **et c'est le but** |
 | Valeurs de `border-radius` distinctes               | 56               | 9 (l'échelle)                            |
 | Valeurs de `z-index` littérales                     | 13               | 0                                        |
-| `title=` dans le frontfront                         | 6565             | 0                                        |
+| `title=` dans le front                              | 6565             | 0                                        |
 | Moyenne de lignes par fichier `.svelte`             | ~290 (max 2 285) | < 300 (max < 400)                        |

@@ -16,11 +16,66 @@ interface **de jeu** plutôt qu'une interface web.
 
 > **Cible d'usage : PC de bureau, grand écran, clavier-souris.** Décidé le
 > 30/09/2026. Il n'y a **aucun chantier responsive** dans ce dossier, et aucune
-> recommandation n'est faite pour le tactile. Conséquence directe et mesurée : les
-> écrans de bureau sont souvent en Retina (`devicePixelRatio` 2), ce qui **double**
-> le coût du brouillard par rapport à une mesure faite en 1280×720 `dpr` 1. Voir
-> `07bis-spike-lot1.md` §2 bis, où le relevé à 2560×1440 `dpr` 2 atteint
-> **105 ms et 73 Mo** par repeint.
+> recommandation n'est faite pour le tactile. Voir `07-parcours-implémentation.md`
+> §Lot 9.
+
+---
+
+## 0. Où on en est — résumé des décisions et des validations
+
+> À lire avant tout le reste. Cette section est la **synthèse de ce qui a été
+> décidé et vérifié** depuis l'ouverture du dossier. Le reste du README détaille.
+
+### Les décisions
+
+| Décision                 | Contenu                                                                                                                                                                            | Où          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| **Direction artistique** | Hybride : **structure Atlas, peau carnet**. On prend la densité, la hiérarchie et les patterns d'Atlas ; on garde l'identité encre/papier, les rayons organic et la typo Vidaloka. | §3          |
+| **Cible d'usage**        | PC de bureau, grand écran, clavier-souris. **Aucun chantier responsive.** Le seul point conservé est la hauteur (`100vh` → `100dvh`), qui mord même sur un 1440p.                  | `07` §Lot 9 |
+| **Librairie d'UI**       | `bits-ui` 2.19.3, adoptée et **validée sur trois moteurs**.                                                                                                                        | §6bis       |
+| **Rendu de la carte**    | **DOM**, pas WebGL. Le débat est documenté, avec porte de sortie (`<MapLayer>` isolé).                                                                                             | `05` §6     |
+| **Licence**              | Atlas est AGPL-3.0-only. Le projet est privé et non distribué ; l'usage de ce qui intéresse est assumé. Ce dossier reste une description de patterns, pas une copie de code.       | en-tête     |
+| **Branche**              | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                          | §6bis       |
+
+### Ce qui a été validé par des mesures, pas par des avis
+
+| Question posée                                                | Réponse                                                              | Preuve                                 |
+| ------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------- |
+| Peut-on poser un menu flottant au-dessus d'une carte zoomée ? | **Oui**, sur Chromium, Firefox et Safari                             | 54 tests (6 cas × 3 zooms × 3 moteurs) |
+| `bits-ui` tient-il dans le budget ?                           | **+41,7 Ko gzip** pour 3 primitives ; tree-shaking correct           | 2 builds comparés                      |
+| Le CSS scopé Svelte convient-il aux surfaces ?                | **Non** — contrainte de conception, pas un bug                       | 3 directions documentées               |
+| Que coûte la bascule plein écran ?                            | Les 6 tests qui cassent ont tous une cause identifiée et corrigeable | spike Lot 1                            |
+
+### Les trois pièges à ne pas refaire
+
+Issus du spike, ils se corrigent en amont et se re-documentent :
+
+1. **Le CSS scopé ne touche que les éléments déclarés dans le template.** Donc ni
+   le contenu portalé, ni les éléments rendus par un composant de bibliothèque.
+   `:global()` partout pour les surfaces.
+2. **`setPointerCapture` sur un ancêtre** rend tout le document cible du pointeur :
+   les descendants ne reçoivent plus rien. Les gestionnaires vont sur une couche
+   **sans** élément interactif.
+3. **`onOpenChange(true)` précède l'insertion du DOM portalé.** Ne jamais mesurer
+   ni enchaîner quoi que ce soit, dans ce callback.
+
+### Ce qui n'est pas un problème
+
+- **Réécrire ce qui marche est le principe de la tâche**, pas un risque.
+- **Le nombre d'utilisateurs est de 5** : pas de risque de migration, pas de
+  compatibilité ascendante à préserver.
+- **Le brouillard n'est pas un risque de la refonte.** C'est un bug
+  préexistant — 58 ms et 32 Mo par repeint dès aujourd'hui en 2560×1440 Retina —
+  dont la refonte n'aggrave le coût que de **26 %**. Il est traité dans un ticket
+  séparé : [`docs/brouillard-optimisation.md`](../brouillard-optimisation.md).
+- **PixiJS n'est pas la réponse.** Il ne résout aucun des problèmes réels et en
+  créerait quatre autres. Voir `05` §6.
+
+### État du chantier
+
+**9 lots, 36-45 jours.** Les lots 0, 1 et 2 forment la séquence critique : c'est
+là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
+techniquement, et c'est aussi le plus cher en usage réel.
 
 ---
 
@@ -38,7 +93,7 @@ pas, et ces deux-là produisent **tout** l'effet « jeu vidéo » :
    **command palette** et un **asset manager**. Notre table, elle, a ~40 contrôles
    permanents à l'écran en permanence.
 
-Nous avons l'inversel'inverse : beaucoup de surface permanente, presque pas de surface
+Nous avons l'inverse : beaucoup de surface permanente, presque pas de surface
 temporaire. C'est la définition exacte d'une interface web.
 
 **Le chiffre qui résume l'écart.** Atlas : 2 barres permanentes + 1 overlay à la
@@ -59,7 +114,7 @@ Chacune est démontrée dans un fichier du dossier, avec le détail et le correc
 | **C2** | **Les surfaces ne sont pas une famille.** 56 valeurs de `border-radius` distinctes, dont des quasi-doublons qui diffèrent d'1 px. 13 `box-shadow` distincts. Aucun mixin partagé. | `06-design-system.md` §1 | Perte immédiate de l'impression de « système ».                   |
 | **C3** | **La barre MJ est dans le flux.** `flex-wrap: wrap`, des inputs qui se déplient dedans, un `.tool-hint` dont la longueur change la largeur de la barre à chaque outil.            | `03-axes-ux-ui.md` §2    | La barre grossit et rétrécit. Instable, pas « outillé ».          |
 | **C4** | **Pas de command palette, pas d'aide clavier.** Le `session-bar` est une rangée de `<a href>` — le signal le plus fort de « site web ».                                           | `03-axes-ux-ui.md` §3    | Tout requiert la souris et la mémoire.                            |
-| **C5** | **Rien ne flotte.** 2 seuls éléments en surimpression sur la carte : `.map-hud` et `.dice-overlay`. Pas de panneau déplaçable, pas de dashboard.                                  | `03-axes-ux-ui.md` §1    | On ne peut pas réorganiserréorganiser son espace de travail.      |
+| **C5** | **Rien ne flotte.** 2 seuls éléments en surimpression sur la carte : `.map-hud` et `.dice-overlay`. Pas de panneau déplaçable, pas de dashboard.                                  | `03-axes-ux-ui.md` §1    | On ne peut pas réorganiser son espace de travail.                 |
 | **C6** | **Les pions n'ont pas de vie.** Pas de barre de PV sur le pion — elle vit dans la sidebar.                                                                                        | `04-game-feel.md` §1     | Le MJ doit scanner la sidebar pour savoir qui va mal.             |
 | **C7** | **Le clic droit n'est pas un langage.** Un seul context menu existe (pion, MJ) : 3 actions.                                                                                       | `03-axes-ux-ui.md` §6    | Les actions sont donc étalées en boutons permanents.              |
 
@@ -107,7 +162,7 @@ n'est pas transposable, et la copier serait une faute.
 | Atlas                                              | Pourquoi ça ne marche pas chez nous                                                                                                                                                                                                           |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Fenêtre joueur sur un 2ᵉ écran (`LocalPlayerView`) | Nos joueurs sont sur d'autres navigateurs, souvent d'autres appareils. Le « player view » est une personne, pas une fenêtre.                                                                                                                  |
-| Undo/redo local (zundo)                            | Notre undo est une action serveur → journal → broadcast. Il doitdoit êtreêtre conçu transactionnellementconçu transactionnellement côté client.                                                                                               |
+| Undo/redo local (zundo)                            | Notre undo est une action serveur → journal → broadcast. Il doit être conçu **transactionnellement côté client**.                                                                                                                             |
 | Fichiers `.atlasmap` en local                      | D1 + R2 + Durable Object.                                                                                                                                                                                                                     |
 | Settings locaux par joueur                         | Nos `TableSettings` sont **partagés de campagne**. Une palette doit savoir qui elle est et quoi persister.                                                                                                                                    |
 | Pas de secrets (tout est dans le fichier)          | On a une règle de sécurité dure : **un PNJ n'est visible que s'il a un pion révélé**. Toute nouvelle voie de diffusion (`snapshot`, broadcast, palette) doit respecter ce filtre, sinon on réintroduit la fuite de noms (cf. `AGENTS.md` §9). |
@@ -118,18 +173,18 @@ n'est pas transposable, et la copier serait une faute.
 
 ## 5. Index du dossier
 
-| Fichier                         | Contenu                                                                                                                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `01-etat-des-lieux-atlas.md`    | Atlas en détail : modèle mental, décisions structurantes, les 10 détails qui font la différence                                                                                       |
-| `02-etat-des-lieux-rollwith.md` | RollWith aujourd'hui, écran par écran, avec chiffres et chemins                                                                                                                       |
-| `03-axes-ux-ui.md`              | Le différentiel axe par axe (layout, barre d'outils, palette, initiative, dés, widgets, clic droit, raccourcis, onboarding, undo)                                                     |
-| `04-game-feel.md`               | Le « game feel » : pions vivants, liens entre maps, notes dans la map, ambiance                                                                                                       |
-| `05-architecture-svelte.md`     | Comment on reconstruit ça en Svelte 5 : décomposition, couche de primitives, libs retenues/rejetées, débat DOM vs WebGL                                                               |
-| `06-design-system.md`           | Le design system de surfaces : mixin unique, échelle de rayons, z-index sémantique, « peau carnet » sur structure Atlas                                                               |
-| `07-parcours-implémentation.md` | Le backlog ordonné en **10 lots**, avec dépendances, risques, critères de recette et indicateurs de succès                                                                            |
-| `07bis-spike-lot1.md`           | **Spike Lot 1 sur la vraie table** : coût du brouillard mesuré (mémoire ×2,25, repeint ×2-3), le popover prisonnier de son parent, et les tests e2e qui encodent l'ancienne géométrie |
-| `08-recherche-stack-ui.md`      | La recherche web qui fonde `05` : versions, dates, URLs (90 sources) — libs Svelte 5 retenues/rejetées, API `popover`, `@property`, DOM vs WebGL                                      |
-| `assets/`                       | Les 3 captures du dépôt Atlas                                                                                                                                                         |
+| Fichier                         | Contenu                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `01-etat-des-lieux-atlas.md`    | Atlas en détail : modèle mental, décisions structurantes, les 10 détails qui font la différence                                                                                                                                                                                                                         |
+| `02-etat-des-lieux-rollwith.md` | RollWith aujourd'hui, écran par écran, avec chiffres et chemins                                                                                                                                                                                                                                                         |
+| `03-axes-ux-ui.md`              | Le différentiel axe par axe (layout, barre d'outils, palette, initiative, dés, widgets, clic droit, raccourcis, onboarding, undo)                                                                                                                                                                                       |
+| `04-game-feel.md`               | Le « game feel » : pions vivants, liens entre maps, notes dans la map, ambiance                                                                                                                                                                                                                                         |
+| `05-architecture-svelte.md`     | Comment on reconstruit ça en Svelte 5 : décomposition, couche de primitives, libs retenues/rejetées, débat DOM vs WebGL                                                                                                                                                                                                 |
+| `06-design-system.md`           | Le design system de surfaces : mixin unique, échelle de rayons, z-index sémantique, « peau carnet » sur structure Atlas                                                                                                                                                                                                 |
+| `07-parcours-implémentation.md` | Le backlog ordonné en **9 lots**, avec dépendances, risques, critères de recette et indicateurs de succès                                                                                                                                                                                                               |
+| `07bis-spike-lot1.md`           | **Spike Lot 1 sur la vraie table** : le popover prisonnier de son parent, les tests e2e qui encodent l'ancienne géométrie, et le relevé du brouillard — **corrigé depuis**, il s'agissait d'un bug préexistant, pas d'un risque de la refonte (voir [`docs/brouillard-optimisation.md`](../brouillard-optimisation.md)) |
+| `08-recherche-stack-ui.md`      | La recherche web qui fonde `05` : versions, dates, URLs (90 sources) — libs Svelte 5 retenues/rejetées, API `popover`, `@property`, DOM vs WebGL                                                                                                                                                                        |
+| `assets/`                       | Les 3 captures du dépôt Atlas                                                                                                                                                                                                                                                                                           |
 
 ---
 
@@ -204,14 +259,33 @@ chaque composant.
 
 ---
 
-## 8. Where to start reading
+## 8. Par où commencer
 
-- **5 minutes** : ce README (§1, §2, §3, §6).
+### Pour prendre le dossier en main
+
+- **5 minutes** : ce README, §0 (état du chantier), puis §1 et §6.
 - **Une heure** : `04-game-feel.md` — c'est ce que le projet est censé devenir.
-- **Pour coder** : `07-parcours-implémentation.md` (les lots), puis `05` (les
-  décisions techniques) et `06` (le système de surfaces).
-- **Pour vérifier les affirmations** : `01`, `02`, `03`, `08`.
-- **Pour savoir ce qui est déjà risqué** : `07bis-spike-lot1.md`.
+- **Pour coder** : `07-parcours-implémentation.md` (les 9 lots), puis `05`
+  (les décisions techniques) et `06` (le système de surfaces).
+- **Pour vérifier une affirmation** : `01`, `02`, `03`, `08`.
+
+### Pour implémenter
+
+Les lots sont dans `07`. Trois choses à savoir avant d'ouvrir le premier :
+
+1. **Le filet de test est déjà en place.** 309 tests unitaires, 20 tests e2e
+   Playwright sur la fixture `dev-camp`. `pnpm check` doit être vert à chaque
+   commit — c'est la seule condition à ne pas négocier.
+2. **Les pièces déjà validées sont en place** : `bits-ui` est dans
+   `web/package.json`, `web/src/lib/ds/Surface.svelte` existe ; la table de
+   raccourcis et la command palette restent à écrire.
+3. **Les trois pièges du §0** sont à respecter dès la première ligne de code,
+   pas découverts en chemin.
+
+### Pour reprendre un ticket isolé
+
+`../brouillard-optimisation.md` — optimisation du brouillard. **Indépendant du
+chantier d'UX**, à faire sur `main`.
 
 ## 9. Sources
 
@@ -229,7 +303,9 @@ chaque composant.
     `docs/encounter-spawning-system.md`
 - Captures : `assets/` (copiées depuis `docs/images/` du dépôt Atlas)
 - RollWith : `web/src/routes/**`, `web/src/lib/ds/**`, `web/src/lib/components/**`
-- Mesures du spike Lot 1 : `scripts/_mesure-brouillard.cjs` (relançable)
+- Mesures du brouillard : `scripts/_mesure-fogscale.cjs`,
+  `scripts/_mesure-brouillard.cjs`, `scripts/_rapport-fog.cjs` (relançables)
+- Validation des overlays : `scripts/_diag-crossbrowser.cjs` (3 moteurs)
 - Travaux internes existants : `docs/audit-herosetdragons-2026-09-06-v2.md`,
   `design V2/THEME-CARNET-DE-NUIT.md`,
   `design V2/Récapitulatif - Écran de jeu & Design System.md`

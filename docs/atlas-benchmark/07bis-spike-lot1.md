@@ -263,5 +263,5 @@ node scripts/_mesure-brouillard.cjs
 ```
 
 Les sondes ad hoc (`_probe-*.cjs`) ont été supprimées : elles ont fait leur
-travail, et un dossier `scripts/` qui accumulates des scripts de debug jetables
+travail, et un dossier `scripts/` qui accumule des scripts de debug jetables
 devient un piège dans six mois.

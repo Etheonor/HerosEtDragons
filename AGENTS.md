@@ -83,7 +83,7 @@ Sans `DEV_AUTH`, **toutes** les routes `/api/dev/*` renvoient 404 et le cookie
 ne vaut rien. Ne jamais définir `DEV_AUTH` en production.
 
 ```bash
-pnpm e2e              # 12 tests navigateur (Playwright) — démarre 8787 si besoin
+pnpm e2e              # 20 tests navigateur (Playwright) — démarre 8787 si besoin
 pnpm e2e:ui           # mode interactif
 pnpm e2e:headed       # navigateur visible
 pnpm dev:seed         # réinitialise la fixture (campagne dev-camp)
@@ -100,17 +100,19 @@ utilisent l'hôte `localhost`.
 
 ## 5. Documentation existante (`docs/`)
 
-| Document                                      | Contenu                                           | État                               |
-| --------------------------------------------- | ------------------------------------------------- | ---------------------------------- |
-| `requirements.md`                             | Spec fonctionnelle R1–R14                         | référence                          |
-| `design.md`                                   | Architecture §1–§10 (schéma D1, protocole WS, DS) | référence                          |
-| `tasks.md`                                    | Plan d'implémentation phases 0–10                 | **périmé** (juil. 2026) — voir §6  |
-| `HANDOFF-2026-09-05.md`                       | État complet au 05/09, pièges, reste à faire      | historique                         |
-| `audit-2026-08-30.md` / `audit-2026-09-05.md` | Audits successifs                                 | historiques                        |
-| `audit-herosetdragons-2026-09-06-v2.md`       | **Audit de référence** (celui traité en sept.)    | §6 non mis à jour après correctifs |
-| `compendium-mapping.md`                       | Mapping DRS → catégories                          | référence                          |
+| Document                                      | Contenu                                              | État                               |
+| --------------------------------------------- | ---------------------------------------------------- | ---------------------------------- |
+| `requirements.md`                             | Spec fonctionnelle R1–R14                            | référence                          |
+| `design.md`                                   | Architecture §1–§10 (schéma D1, protocole WS, DS)    | référence                          |
+| `tasks.md`                                    | Plan d'implémentation phases 0–10                    | **périmé** (juil. 2026) — voir §6  |
+| `HANDOFF-2026-09-05.md`                       | État complet au 05/09, pièges, reste à faire         | historique                         |
+| `audit-2026-08-30.md` / `audit-2026-09-05.md` | Audits successifs                                    | historiques                        |
+| `audit-herosetdragons-2026-09-06-v2.md`       | **Audit de référence** (celui traité en sept.)       | §6 non mis à jour après correctifs |
+| `compendium-mapping.md`                       | Mapping DRS → catégories                             | référence                          |
+| `atlas-benchmark/`                            | **Benchmark Atlas + plan de refonte UX/UI** (9 lots) | chantier à faire — voir §10        |
+| `brouillard-optimisation.md`                  | Ticket d'optimisation du brouillard, **indépendant** | à faire sur `main`                 |
 
-## 6. ÉcartsKnown entre `tasks.md` et la réalité
+## 6. Écarts connus entre `tasks.md` et la réalité
 
 `tasks.md` date de juillet 2026 et **n'a pas été mis à jour** : il présente des
 phases comme non faites qui le sont en réalité. Ne pas s'y fier pour l'état
@@ -172,3 +174,39 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
   respecter ce filtre, sinon on réintroduit la fuite de noms.
 - **CSP (S3)** volontairement permissive (`'unsafe-inline'`) pour ne pas casser
   le bootstrap SvelteKit ; c'est un garde-fou, pas une politique dure.
+
+## 10. Chantier d'UX/UI v2 — branche `feat/uiv2`
+
+Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
+refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
+jeu » plutôt que « web ». **Rien n'est implémenté à ce jour** — le dossier est un
+plan, pas un chantier entamé.
+
+| Document                                             | Contenu                                                         |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| `docs/atlas-benchmark/README.md`                     | **Point d'entrée.** §0 = décisions et validations, §1 = verdict |
+| `docs/atlas-benchmark/07-parcours-implémentation.md` | Les 9 lots, dépendances, risques, recette                       |
+| `docs/atlas-benchmark/05-architecture-svelte.md`     | Décisions techniques, dont DOM vs WebGL                         |
+| `docs/atlas-benchmark/06-design-system.md`           | Le système de surfaces (`<Surface>`, rayons, z-index)           |
+| `docs/brouillard-optimisation.md`                    | Ticket **indépendant**, à faire sur `main`                      |
+
+Règles du chantier :
+
+1. **`main` reste intacte.** Tout le chantier d'UX vit sur `feat/uiv2`.
+2. **Un lot = une branche.** Le plan le demande explicitement.
+3. **Cible : PC de bureau, grand écran, clavier-souris.** Aucun travail
+   responsive, aucun travail tactile.
+4. **`pnpm check` et `pnpm e2e` verts à chaque commit.**
+
+Déjà en place sur `feat/uiv2` : `bits-ui@2.19.3` dans `web/package.json`,
+`web/src/lib/ds/Surface.svelte`, deux spikes validés (overlays 54/54 sur
+Chromium/Firefox/Safari ; Lot 1 sur la vraie table).
+
+⚠️ **`web/src/routes/dev/overlays/` est un harnais jetable de spike.**
+`adapter-static` le déploierait tel quel. Le supprimer avant toute mise en prod.
+
+Trois pièges de développement, à respecter dès la première ligne (détaillés dans
+`docs/atlas-benchmark/README.md` §0) : le CSS scopé Svelte ne s'applique pas au
+contenu portalé ni aux éléments rendus par un composant de bibliothèque ; un
+`setPointerCapture` sur un ancêtre capture tout le document ; `onOpenChange(true)`
+précède l'insertion du DOM portalé.

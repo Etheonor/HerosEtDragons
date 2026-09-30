@@ -322,7 +322,7 @@ décide pas.
 | 4     | Extraire `.mj-toolbar` → `<ToolbarRow>` en `position: fixed`, **à côté** de `.map-frame` et non au-dessus  | On gagne le centrage + la stabilité sans toucher au layout de la carte |
 | 5     | Passer `.map-area` + `.map-frame` en `position: absolute; inset: 0`, et les sidebars en panneaux flottants | **Le seul vrai basculement** — à faire avec les e2e verts              |
 
-⚠️ Les 12 tests Playwright (`pnpm e2e`) sont le filet. Ils utilisent
+⚠️ Les 20 tests Playwright (`pnpm e2e`) sont le filet. Ils utilisent
 `dev-camp` (campagne `mj` / `kaelith` / `ragnar`). Voir `AGENTS.md` §4bis.
 
 ---
@@ -381,7 +381,7 @@ en même temps** — seuls ceux déplacés le sont.
    par shader, lumières, `filter: blur()` sur le brouillard, transitions de
    parallaxe.
 3. **Une carte vraiment grande** (500+ objets interactifs) deviendrait possible.
-4. Cohérence avec l'industrie → unun transfert futur de map / assets assets plus simple.
+4. Cohérence avec l'industrie → unun transfert futur de map / assets plus simple.
 5. `hitTest` et le rendu seraient à écrire nous-mêmes (~300 lignes), donc **pas
    gratuit**.
 

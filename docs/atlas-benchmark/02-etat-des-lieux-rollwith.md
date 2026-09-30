@@ -400,7 +400,7 @@ près.
 
 **13 `box-shadow` distincts**, dont l'ombre « dure » `2px 3px 0 rgba(0,0,0,.2)`.
 
-Et le `z-index` est une sériesérie de nombres arbitraires dispersés : `1, 5, 10, 15, 20, 30, 40, 50, 60,
+Et le `z-index` est une série de nombres arbitraires dispersés : `1, 5, 10, 15, 20, 30, 40, 50, 60,
 70, 80, 90, 95` répartis sur 9 fichiers, sans nommage sémantique.
 
 **C'est la cause racine C2 du README.** Ce n'est pas un problème de goût, c'est un
@@ -565,7 +565,7 @@ bon chez nous** et qu'Atlas n'a pas :
    propager partout.
 10. **Le `Editable.svelte`** : édition in-place avec tampon `buf` qui ne se
     resynchronise pas pendant la saisie — exactement le bon pattern.
-11. **Les tests e2e** (12 tests Playwright) et la fixture `dev-camp` : on peut
+11. **Les tests e2e** (20 tests Playwright) et la fixture `dev-camp` : on peut
     refondre en gardant un filet.
 12. **Le wizard de création de perso**, bien fiché.e en gardant un filet.
 13. **Le wizard de création de perso**, bien fiché.
