@@ -94,9 +94,68 @@ effort/résultat :
    un petit canvas 14×14 en motif `createPattern`. Divise le coût des hachures
    par un ordre de grandeur.
 
-⚠️ **À revalider sur un vrai téléphone.** ×4 de throttling CPU sur un Mac de 2026
-n'est pas un iPhone. C'est le seul chiffre du dossier qui demande une
-vérification physique avant d'être considéré comme acquis.
+⚠️ **Ces chiffres sont mesurés en 1280×720 `dpr` 1** — la référence la plus
+prudente. La cible étant un grand écran souvent **Retina**, le coût réel est
+**bien pire** : voir `07bis` §2 bis, où le même relevé à 2560×1440 `dpr` 2 donne
+105 ms de repeint et 73 Mo par passe.
+
+## 2 bis. Le même relevé sur la cible réelle : c'est pire
+
+La section 2 ci-dessus mesure en 1280×720 `dpr` 1. C'est la référence la plus
+prudente — **et la moins représentative**. La cible est un PC de bureau avec un
+grand écran, et ces écrans sont très souvent en **Retina** (`devicePixelRatio` 2).
+
+Or la formule du produit est `fogScale = min(3, zoom × dpr)`. **Sur un Retina,
+le canvas de brouillard double dès le zoom 1.** Relevé en plein écran, CPU ralenti
+×4, surface 1681×1261 à 2560×1440 :
+
+| `fogScale`               | backing store | Mpx   | mémoire     | repeint médian | max          | vs budget image (16,7 ms) |
+| ------------------------ | ------------- | ----- | ----------- | -------------- | ------------ | ------------------------- |
+| **1,0**                  | 1681×1261     | 2,12  | 8,1 Mo      | **5,8 ms**     | 12,7 ms      | **×0,3**                  |
+| 1,5                      | 2522×1892     | 4,77  | 18,2 Mo     | 28,5 ms        | 42,5 ms      | ×1,7                      |
+| 2,0                      | 3362×2522     | 8,48  | 32,3 Mo     | 53,9 ms        | 74,1 ms      | ×3,2                      |
+| **3,0 — le code actuel** | 5043×3783     | 19,08 | **72,8 Mo** | **105,5 ms**   | **167,4 ms** | **×6,3**                  |
+
+En 1920×1080 `dpr` 1, on est déjà à 54,8 ms et 37,2 Mo en `fogScale` 3.
+
+**Sur la machine d'un joueur Retina en 1440p, le repeint complet du brouillard
+dure 105 ms et coûte 73 Mo par passe — six budgets d'image, dix au pic.** C'est
+le pire qui arrive au changement de carte, au redimensionnement et au passage
+d'un palier de zoom. Ce n'est pas un gel, mais c'est très visible.
+
+Le levier est net : **`fogScale` à 1,0 coûte 5,8 ms pour 8,1 Mo.** Le brouillard
+est un voile sombre à dégradés radiaux : à `fogScale` 1 il reste parfaitement
+lisible, juste légèrement adouci quand on zoome.
+
+### La correction recommandée
+
+Plafonner la backing store **par nombre de pixels**, pas par un multiplicateur —
+une seule règle qui tient sur toutes les résolutions et tous les écrans :
+
+```ts
+const MAX_PX = 2.5e6; // ≈ 10 Mo
+const parPixels = Math.sqrt(MAX_PX / (w * h));
+const fogScale = Math.min(3, Math.max(1, viewZoom * dpr), parPixels);
+```
+
+À 2560×1440 `dpr` 2, ça donne `fogScale` ≈ 1,1 : le repeint repasse sous les
+10 ms sur toutes les résolutions. Et le plafond `min(3, zoom × dpr)` reste
+applicatif sur les petits écrans, où il ne mord pas.
+
+Alternative si la netteté du voile est jugée importante : **tupler les hachures**
+avec `createPattern` (un canvas 14×14 reproduit en motif). Ça ne touche pas au
+`fillRect`, qui domine le coût, donc le gain est limité — mais c'est gratuit à
+faire par-dessus.
+
+`node scripts/_mesure-fogscale.cjs` rejoue ce tableau et permet de vérifier le
+correctif.
+
+### Pourquoi ce n'était pas visible avant
+
+Le premier relevé a été fait en 1280×720 `dpr` 1, où `fogScale` plafonne à 3
+sans jamais atteindre 2×. La conclusion « ×2,25, c'est gérable » était **juste à
+cette résolution-là** et fausse partout ailleurs. Mesurer la répartition des
+écrans cibles avant de conclure, pas après.
 
 ## 3. Constat n°1 — un popover ne peut pas sortir de son parent
 
@@ -184,9 +243,10 @@ Casse, et pourquoi :
    c'est la condition du §3.
 2. **Réécrire les 2 tests de panoramique** pour zoomer d'abord et créer un
    débordement.
-3. **Plafonner `fogScale` à 2**, ou tupler les hachures. Le ×2,25 de mémoire et le
-   pic à 46 ms ne sont pas acceptables sur mobile sans filet.
-4. **Instrumenter sur un vrai téléphone** avant de valider.
+3. **Plafonner la backing store du brouillard par nombre de pixels** (§2 bis).
+   En 2560×1440 `dpr` 2, le code actuel coûte 105 ms et 73 Mo par repeint.
+4. **Vérifier sur la résolution cible.** Le tableau ci-dessus est à 2560×1440
+   `dpr` 2. Rejouer `scripts/_mesure-fogscale.cjs` sur la machine de référence.
 5. **`.map-frame` doit être scindé** (cf. `05-architecture-svelte.md` §1.7
    piège B) : une couche qui porte le pointeur, une couche d'objets qui ne le
    porte pas. Le spike ne l'a pas fait et les tests de panoramique sont passés

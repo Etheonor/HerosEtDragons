@@ -262,25 +262,22 @@ le `<a href>` du `session-bar`**, qui est le signal « web » le plus fort du pr
 
 ---
 
-## Lot 9 — Responsive · 3-4 j
+## Lot 9 — Supprimé
 
-> Dépend **complètement** du lot 1. C'est un argument de plus pour le faire.
+Il était prévu un lot « responsive » (feuilles bottom, pinch-zoom, long-press).
+**La cible du produit est un PC de bureau avec un grand écran, joué au
+clavier-souris.** Il n'y a donc rien à faire.
 
-| #   | Tâche                                                                                                                                       | E     |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| 9.1 | Breakpoints + `container queries` par panneau.                                                                                              | 0,5 j |
-| 9.2 | Sous 768 px : les panneaux deviennent des **bottom sheets**, une seule à la fois. La barre d'outils se réduit (l'overflow prend le relais). | 1 j   |
-| 9.3 | Pinch-zoom 2 doigts sur la carte (`<Camera>` le gère).                                                                                      | 0,5 j |
-| 9.4 | **Long-press = clic droit** sur mobile (le clic droit n'existe pas).                                                                        | 0,5 j |
-| 9.5 | Passe e2e sur viewport mobile.                                                                                                              | 0,5 j |
+Ce qui en subsiste, et qui est resté ailleurs :
 
-**Pourquoi c'est dans le scope.** La génération de `CharacterCreateModal` est déjà
-responsive — le produit **se veut** mobile — mais la table ne l'est pas du tout, et
-notre cible (un groupe qui se réunit le soir) est majoritairement sur téléphone.
-Et le lot 1 rend ce travail **naturel** : carte plein écran + panneaux flottants
-s'adaptent sanslutte.
-
----
+- la **hauteur** — `height: 100vh` ignore la barre des tâches Windows et le Dock
+  macOS, qui rognent la table même sur un grand écran. Passer en `100dvh` ou en
+  hauteur calculée. C'est une ligne, et c'est au Lot 1.
+- la **largeur minimale de table** (≈ 1180 px) : en dessous, la barre d'outils se
+  réduit par la priorité, pas par un media query. C'est déjà couvert par le
+  mécanisme du Lot 2.
+- le **pincement au trackpad** reste un besoin réel sur Mac, mais il n'est pas un
+  chantier : c'est deux branches de plus dans le contrôleur de caméra (Lot 3).
 
 ## Récapitulatif
 
@@ -295,8 +292,7 @@ s'adaptent sanslutte.
 | **6** | Le monde : liens de map, pins, aperçu                          | 4-5 j       | 3, 5      |
 | **7** | Les autres écrans                                              | 4-5 j       | 0, 1, 5   |
 | **8** | Finitions : toasts, squelettes, a11y, dés, widgets             | 4-6 j       | 0, 1      |
-| **9** | Responsive                                                     | 3-4 j       | 1, 5      |
-|       | **Total**                                                      | **40-50 j** |           |
+|       | **Total (lots 0 à 8)**                                         | **36-45 j** |           |
 
 **Séquence critique : 0 → 1 → 2.** C'est là qu'est le basculement de paradigme.
 Le lot 4 (undo) est le plus risqué techniquement ; s'il doit être décalé, c'est
@@ -309,6 +305,7 @@ lot 1** si possible, parce que c'est le moment où le DO est encore frais.
 
 | Exclu                                              | Pourquoi                                                                                                          |
 | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Responsive / multi-usage                           | **Hors cible assumée** : PC de bureau, grand écran, clavier-souris. Voir `07` §Lot 9.                             |
 | Vision / murs / lumières                           | Fonctionnalité de jeu, pas d'UX. Ouvre le débat canvas (`05` §6).                                                 |
 | Audio / ambiance                                   | Hébergement R2 + licences.                                                                                        |
 | Collections / tags façon Atlas                     | À notre échelle (10 cartes, 20 PNJ), complexité sans usage.                                                       |

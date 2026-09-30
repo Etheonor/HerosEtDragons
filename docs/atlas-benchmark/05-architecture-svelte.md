@@ -45,7 +45,7 @@ Et la [Popover API est Baseline 2025](https://developer.mozilla.org/en-US/docs/W
 Trois conséquences :
 
 1. **Le `popover` natif est la solution de référence pour les cas simples**
-   (bulles, sheets mobile, menus) — zéro dépendance, light-dismiss et `Escape`
+   (bulles, menus, panneaux) — zéro dépendance, light-dismiss et `Escape`
    fournis par le navigateur.
 2. **L'ordre d'empilement n'est plus `z-index`** mais l'ordre du top layer : le
    dernier ouvert est au-dessus. C'est pile le modèle « docking » d'un VTT.
@@ -273,8 +273,7 @@ risque qu'un témoin négatif est censé couvrir.
 
 **Pourquoi « maison » plutôt qu'une lib ?** Parce que le pan/zoom doit **composer
 avec la couche carte** : il faut calculer un `offsetX/offsetY` à partir de la
-matrice `transform` (`getBoundingClientRect()` seul ne suffit pas quand le pointeur
-est capturé hors de l'élément), et le pinch mobile exige de suivre **plusieurs
+matrice `transform` (`getBoundingClientRect()` seul ne suffit pas quand le pointeur 3. **Le pincement au trackpad** exige de suivre **plusieurs
 `pointerId`**. Toute abstraction de drag qui cache ça est un frein. Zéro
 dépendance, et testable avec les outils Playwright déjà en place.
 

@@ -210,18 +210,59 @@ async function mesurer(page, label) {
   }
   console.log("canvas de brouillard present :", await page.locator("canvas.fog-canvas").count());
 
-  // On veut le coût sur un téléphone, pas sur un Mac de 2026.
+  // On veut le coût sur une machine modeste, pas sur un poste de 2026.
   const cdp = await ctx.newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
 
   console.log("CPU ralenti x4. drawFogBase() reproduit a l identique, mediane sur 7 repetitions.");
   console.log("fogScale = min(3, max(1, zoom x devicePixelRatio)) — la formule du produit.");
+  console.log("");
 
-  const plein = await mesurer(page, "LAYOUT PLEIN ECRAN (le spike)");
+  // La cible est un PC fixe avec un GROS ecran, et ces ecrans sont tres souvent
+  // en Retina (dpr 2). Or fogScale = zoom x dpr plafonne a 3 : sur un Retina,
+  // le canvas de brouillard est deja 2x plus grand des le zoom 1. C'est donc
+  // la que le cout est le plus eleve — bien plus qu'en 1280x720 dpr 1.
+  const SCENARIOS = [
+    { nom: "1280x720  dpr 1", w: 1280, h: 720, dpr: 1 },
+    { nom: "1920x1080 dpr 1", w: 1920, h: 1080, dpr: 1 },
+    { nom: "2560x1440 dpr 1", w: 2560, h: 1440, dpr: 1 },
+    { nom: "1512x982  dpr 2  (Retina)", w: 1512, h: 982, dpr: 2 },
+    { nom: "2560x1440 dpr 2  (Retina 4K)", w: 2560, h: 1440, dpr: 2 },
+  ];
+
+  for (const sc of SCENARIOS) {
+    await page.setViewportSize({ width: sc.w, height: sc.h });
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: sc.w,
+      height: sc.h,
+      deviceScaleFactor: sc.dpr,
+      mobile: false,
+    });
+    await page.waitForTimeout(900);
+    const r = await mesurer(page, "PLEIN ECRAN — " + sc.nom);
+    if (r) {
+      console.log(
+        "        fogScale par zoom : " +
+          r.lignes.map((l) => l.zoom + "x=" + l.fogScale.toFixed(1)).join("   "),
+      );
+    }
+  }
+
+  console.log("\n================ COMPARAISON AVEC/APRES (1280x720 dpr 1) ================");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 720,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await page.waitForTimeout(900);
+
+  const plein = await mesurer(page, "PLEIN ECRAN (reference)");
 
   await page.addStyleTag({ content: RESTAURER_GRILLE });
   await page.waitForTimeout(1000);
-  const grille = await mesurer(page, "LAYOUT GRILLE (l actuel)");
+  const grille = await mesurer(page, "GRILLE (l actuel)");
 
   console.log("\n================ RAPPORT ================");
   if (plein && grille) {

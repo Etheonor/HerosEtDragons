@@ -15,7 +15,7 @@
 | Langue        | 100 % français (labels, messages, commentaires)                                                               |
 | Volume        | `+page.svelte` de la table = **2 285 lignes** (20 % du front)                                                 |
 | Thème         | « Carnet de nuit », **sombre uniquement**, 4 accents sélectionnables localement                               |
-| Responsive    | **1 seul media query** dans tout `web/src`                                                                    |
+| Cible         | **Bureau + clavier/souris, grand écran.** Un seul media query dans `web/src` — assumé                         |
 | Accessibilité | Les rôles ARIA existent ; le focus trap, `aria-live`, `:focus-visible`, `prefers-reduced-motion` sont absents |
 
 ## 1. Les routes
@@ -488,7 +488,7 @@ Le reste est sommaire :
 | **Confirmation**       | Pas de modale : pattern « armement » inline (`pendingDeleteId` → « Supprimer ? Oui / Annuler » dans `MapManager`).                                                                  |
 | **Perte de connexion** | Toast « Connexion perdue » (4 s), **mais la table reste visible et cliquable** — aucun bandeau hors ligne, aucune dégradation des envois (et les envois sont perdus, cf. §3.2).     |
 
-## 7. Responsive
+## 7. Grand écran
 
 **1 seul media query** dans tout `web/src` :
 
@@ -504,13 +504,16 @@ Pas de breakpoints définis, pas de `prefers-reduced-motion`. La table est
 **explicitement desktop** : grille à 3 colonnes de largeurs fixes, `height: 100vh`,
 `overflow: hidden`.
 
-Un indice d'intention tactile existe : `touch-action: none` sur `.map-frame`,
-`.map-surface` et `.token`, et `flex-wrap: wrap` sur `.quick-dice` / `.mj-toolbar`.
+**Ce n'est pas un manque, c'est la cible assumée.** Le produit se joue au
+clavier-souris sur un PC de bureau avec un grand écran. Il n'y a donc **aucun
+chantier responsive à prévoir**, et le seul media query ci-dessus ainsi que les
+`touch-action: none` sont des scories d'une époque où le produit se voulait
+utilisable au doigt : ils peuvent disparaître sans conséquence.
 
-⚠️ **C'est un problème de fond, pas de détail.** La générationgénérationgénérationgénération de
-`CharacterCreateModal` est explicitement responsive — donc le produit **se veut**
-mobile — mais la table ne l'est pas du tout. Et notre cible (petit groupe qui se
-réunit le soir, souvent souvent souvent souvent sur mobile) rend ça prioritaire.
+Le point de vigilance restant n'est pas la largeur, c'est la **hauteur** :
+`height: 100vh` sur un grand écran laisse passer la barre du système sous
+Windows ou le Dock macOS, qui rognent la table. `100dvh` ou une hauteur calculée
+résolvent le cas.
 
 ## 8. Accessibilité
 

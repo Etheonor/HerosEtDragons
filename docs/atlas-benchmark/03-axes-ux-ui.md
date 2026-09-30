@@ -84,7 +84,6 @@ Corollaires :
 - impossible d'«habiter» la carte : les sidebars sont toujours là ;
 - impossible de faire surgir un panneau à côté d'un objet **dans** la carte ;
 - le `.mj-toolbar` (flex-wrap) réduit encore la hauteur disponible ;
-- sur mobile, la grille à 3 colonnes fixes est inutilisable.
 
 ### Reco — P0 #1
 
@@ -834,7 +833,7 @@ d'un `Rect`.
 
 ---
 
-## 14. Responsive et accessibilité
+## 14. Grand écran et accessibilité
 
 ### Atlas
 
@@ -848,7 +847,9 @@ la fenêtre), parce que Obsidian met `contain: strict`.
 ### Nous
 
 **1 seul media query** dans tout `web/src`. La table est
-`height: 100vh` + grille à largeurs fixes → inutilisable sur téléphone.
+`height: 100vh` + grille à largeurs fixes. La cible est un bureau, donc ce n'est pas
+un défaut — mais `100vh` ignore la barre des tâches Windows et le Dock macOS, qui
+rognent la table.
 
 Accessibilité : les rôles existent, mais **pas de focus trap, pas de retour de
 focus, pas d'`aria-live` sur le journal, pas de `:focus-visible`, pas de
@@ -857,19 +858,19 @@ carte).
 
 ### Écart
 
-🔴 **Sur mobile, la table est inutilisable.** Et notre cible (un groupe qui se réunit
-le soir) est majoritairement sur téléphone.
+⚪ **Hors cible, donc pas un écart.** Le produit se joue au clavier-souris sur un PC
+de bureau avec un grand écran. Le seul point à corriger reste la hauteur.
 
 🟡 Le canvas de brouillard n'a aucun équivalent accessible, les pions ne sont pas
 focusables : un joueur qui utilise un clavier ne peut pas jouer.
 
 ### Reco
 
-- **Responsive** : c'est une conséquence directe du §1. Une couche map plein écran +
-  des panneaux flottants est **naturellement** adaptatif : sur petit écran, les
-  panneaux deviennent des feuilles qui montent du bas (bottom sheet), la barre
-  d'outils se réduit au strict nécessaire. C'est un argument de plus pour faire le
-  §1 — pas un chantier séparé.
+- **Grand écran** : c'est le seul scénario de largeur à traiter, et c'est une
+  conséquence directe du §1. Une couche map plein écran + des panneaux flottants
+  rend de la place au MJ sans rogner le monde. À faire : fixer une **largeur
+  minimale de table** (≈ 1180 px) et, en dessous, réduire la barre d'outils **par
+  la priorité** — le mécanisme du §2 — plutôt que par un media query.
 - **Accessibilité** : focus trap + retour de focus dans les modales (P0, car on va
   en créer beaucoup), `aria-live="polite"` sur le journal, `:focus-visible` global,
   `prefers-reduced-motion` global, pions focusables avec déplacement au clavier
@@ -879,19 +880,19 @@ focusables : un joueur qui utilise un clavier ne peut pas jouer.
 
 ## 15. Récapitulatif des écarts
 
-| Axe                   | Gravité            | Reco                             |
-| --------------------- | ------------------ | -------------------------------- |
-| §1 Layout / couches   | 🔴 P0              | #1 carte plein écran             |
-| §2 Barre d'outils     | 🔴 P0              | #3 barre ancrée + fit            |
-| §3 Command palette    | 🔴 P0              | #4 palette                       |
-| §6 Clic droit         | 🔴 P0              | #6 clic droit partout            |
-| §12 Undo              | 🔴 P1              | transactionnel                   |
-| §4 Surfaces           | 🔴 P1              | `<Surface>` + `<Panel>`          |
-| §5 Asset manager      | 🟡 P1              | grille + spawn par double-clic   |
-| §7 Initiative         | 🟡 P1              | panneau vertical + barres de vie |
-| §11 Raccourcis        | 🟡 P1              | table déclarative + aide `?`     |
-| §8 Dés                | 🟡 P2              | toast au lieu du plein écran     |
-| §10 Brouillard        | 🟡 P2              | undo d'abord, lasso ensuite      |
-| §9 Widgets            | 🟡 P2              | barre de widgets                 |
-| §13 Onboarding        | 🟡 P2              | tutoriel ciblé                   |
-| §14 Responsive / a11y | 🔴 P0 (responsive) | conséquence du §1                |
+| Axe                    | Gravité              | Reco                             |
+| ---------------------- | -------------------- | -------------------------------- |
+| §1 Layout / couches    | 🔴 P0                | #1 carte plein écran             |
+| §2 Barre d'outils      | 🔴 P0                | #3 barre ancrée + fit            |
+| §3 Command palette     | 🔴 P0                | #4 palette                       |
+| §6 Clic droit          | 🔴 P0                | #6 clic droit partout            |
+| §12 Undo               | 🔴 P1                | transactionnel                   |
+| §4 Surfaces            | 🔴 P1                | `<Surface>` + `<Panel>`          |
+| §5 Asset manager       | 🟡 P1                | grille + spawn par double-clic   |
+| §7 Initiative          | 🟡 P1                | panneau vertical + barres de vie |
+| §11 Raccourcis         | 🟡 P1                | table déclarative + aide `?`     |
+| §8 Dés                 | 🟡 P2                | toast au lieu du plein écran     |
+| §10 Brouillard         | 🟡 P2                | undo d'abord, lasso ensuite      |
+| §9 Widgets             | 🟡 P2                | barre de widgets                 |
+| §13 Onboarding         | 🟡 P2                | tutoriel ciblé                   |
+| §14 Grand écran / a11y | 🟡 hauteur + 🟡 a11y | `100dvh`, focus, clavier         |

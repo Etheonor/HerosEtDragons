@@ -228,8 +228,8 @@ dans le panneau de notes. Simple et très « jeu ».
 
 ### Écart
 
-🟡 Un saut de zoom, c'est une désorientation. Sur une petite table sur téléphone,
-c'est le geste le plus fréquent → le plus désagréable.
+🟡 Un saut de zoom, c'est une désorientation — et c'est le geste le plus fréquent
+de la partie, donc le plus désagréable.
 
 🟡 Charger une carte nous met à 100 % : on perd le cadrage.
 

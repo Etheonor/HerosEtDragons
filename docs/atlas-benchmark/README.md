@@ -14,6 +14,14 @@ interface **de jeu** plutôt qu'une interface web.
 > pas en copie de code : c'est plus utile pour la suite (on réécrit dans notre
 > idiome Svelte) et ça évite d'accrocher une dépendance insoutenable.
 
+> **Cible d'usage : PC de bureau, grand écran, clavier-souris.** Décidé le
+> 30/09/2026. Il n'y a **aucun chantier responsive** dans ce dossier, et aucune
+> recommandation n'est faite pour le tactile. Conséquence directe et mesurée : les
+> écrans de bureau sont souvent en Retina (`devicePixelRatio` 2), ce qui **double**
+> le coût du brouillard par rapport à une mesure faite en 1280×720 `dpr` 1. Voir
+> `07bis-spike-lot1.md` §2 bis, où le relevé à 2560×1440 `dpr` 2 atteint
+> **105 ms et 73 Mo** par repeint.
+
 ---
 
 ## 1. Le verdict en une page

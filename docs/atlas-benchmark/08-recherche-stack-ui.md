@@ -189,7 +189,7 @@ Sources : [melt-ui/next-gen](https://github.com/melt-ui/next-gen), [docs next.me
 
 ### 3.3 `svelte-command-palette` — pourquoi ne pas le choisir
 
-- Avantages : ~2,1 KB min / ~700 B gzip, `fuse.js`, runes (`$props`/`$state`/`$effect`), `shortcut` configurable, `onOpen`/`onClose`/`onActionSelect`, groupes, `emptyState` en snippet, bottom-sheet sur mobile.
+- Avantages : ~2,1 KB min / ~700 B gzip, `fuse.js`, runes (`$props`/`$state`/`$effect`), `shortcut` configurable, `onOpen`/`onClose`/`onActionSelect`, groupes, `emptyState` en snippet.
 - Inconvénients :
   - **Embarque son propre overlay** (`lucide-svelte` en dépendance) → **pas de portail vers `document.body`** → même problème de parent transformé que nous cherchons à résoudre.
   - Version **2.0.x** seulement (réécriture complète depuis la 1.x), 220 ★, 6 issues.
@@ -221,15 +221,15 @@ Chaque commande : `{ id, label, group, keywords, when?: () => boolean, run: () =
 
 ### 4.1 État de l'art des librairies
 
-| Librairie                                                                               | Version | Date           | Rôle                                        | Note                                                              |
-| --------------------------------------------------------------------------------------- | ------- | -------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| `svelte-panzoom`                                                                        | —       | —              | —                                           | **N'existe pas** sur npm                                          |
-| `svelte-pan-zoom` ([captaincodeman](https://github.com/CaptainCodeman/svelte-pan-zoom)) | 0.1.0   | 2026-09-11     | pan/zoom                                    | peer `svelte ^5.29`, **0.x**, créé en 2023                        |
-| [`@neodrag/svelte`](https://www.neodrag.dev/docs/svelte)                                | 2.3.3   | 2026-08-10     | **drag** (pas resize)                       | 2 452 ★, **1,68 KB** min+brotli, action Svelte, options réactives |
-| [`svelte-gestures`](https://github.com/Rezi/svelte-gestures)                            | 5.2.2   | 2025-09-21     | pan/pinch/press/rotate/swipe/tap/multitouch | basé sur les **attachments** Svelte 5                             |
-| `interactjs`                                                                            | 1.10.28 | 2026-08-01     | drag + resize + inertia                     | mature, mais ~200 KB et impératif                                 |
-| `@atlaskit/pragmatic-drag-and-drop`                                                     | 4.0.0   | 2026-09-24     | drag & drop de listes                       | pas du bon cas d'usage                                            |
-| `paneforge`                                                                             | 1.0.2   | **2025-08-02** | panneaux **redimensionnables en split**     | 658 ★, peer svelte ^5.29, **~14 mois d'inactivité**               |
+| Librairie                                                                               | Version | Date           | Rôle                                    | Note                                                              |
+| --------------------------------------------------------------------------------------- | ------- | -------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| `svelte-panzoom`                                                                        | —       | —              | —                                       | **N'existe pas** sur npm                                          |
+| `svelte-pan-zoom` ([captaincodeman](https://github.com/CaptainCodeman/svelte-pan-zoom)) | 0.1.0   | 2026-09-11     | pan/zoom                                | peer `svelte ^5.29`, **0.x**, créé en 2023                        |
+| [`@neodrag/svelte`](https://www.neodrag.dev/docs/svelte)                                | 2.3.3   | 2026-08-10     | **drag** (pas resize)                   | 2 452 ★, **1,68 KB** min+brotli, action Svelte, options réactives |
+| [`svelte-gestures`](https://github.com/Rezi/svelte-gestures)                            | 5.2.2   | 2025-09-21     | pan/pinch/press/rotate/swipe/tap        | basé sur les **attachments** Svelte 5                             |
+| `interactjs`                                                                            | 1.10.28 | 2026-08-01     | drag + resize + inertia                 | mature, mais ~200 KB et impératif                                 |
+| `@atlaskit/pragmatic-drag-and-drop`                                                     | 4.0.0   | 2026-09-24     | drag & drop de listes                   | pas du bon cas d'usage                                            |
+| `paneforge`                                                                             | 1.0.2   | **2025-08-02** | panneaux **redimensionnables en split** | 658 ★, peer svelte ^5.29, **~14 mois d'inactivité**               |
 
 ### 4.2 Une librairie est-elle nécessaire ? **Non.**
 
@@ -255,11 +255,11 @@ function onGripUp(e: PointerEvent) { start = null; /* pointercancel aussi */ }
 **Pourquoi le natif est préférable ici, spécifiquement :**
 
 1. **Le pan/zoom de la carte doit composer avec la position du pointeur.** Il faut un `offsetX/offsetY` calculé à partir de la matrice `transform` de la couche carte (`getBoundingClientRect()` seul ne suffit pas quand le pointeur est capturé hors de l'élément). Toute abstraction de drag qui cache ça est un frein.
-2. **Le pin pinch-zoom mobile** exige de suivre **plusieurs `pointerId` simultanément** et de calculer une distance. C'est ~40 lignes ; une lib le fait, mais on perdrait le contrôle du momentum et du clamp.
+2. **Le pincement au trackpad** exige de suivre **plusieurs `pointerId` simultanément** et de calculer une distance. C'est ~40 lignes ; une lib le fait, mais on perdrait le contrôle du momentum et du clamp.
 3. **Les coordonnées de la souris sont en `clientX/Y` (viewport)** — donc _déjà_ hors du repère transformé. Il n'y a pas de piège : la conversion vers les coordonnées carte est un simple `(client - rect.origin) / scale`.
 4. Zéro dépendance, zéro poids, testable avec les outils Playwright déjà en place.
 
-**Recommandation :** écrire maison le contrôleur de pan/zoom et le shell de panneau. Évaluer `@neodrag/svelte` **seulement** si le drag de panneaux devient pénible (il ne gère pas le resize de toute façon, donc il ne nous fait gagner que ~30 % du travail). Pour le mobile, `svelte-gestures` est un raccourci raisonnable mais son dernier commit date de septembre 2025 — à tester.
+**Recommandation :** écrire maison le contrôleur de pan/zoom et le shell de panneau. Évaluer `@neodrag/svelte` **seulement** si le drag de panneaux devient pénible (il ne gère pas le resize de toute façon, donc il ne nous fait gagner que ~30 % du travail).
 
 ---
 
@@ -345,7 +345,7 @@ Aucun candidat Svelte n'est à la fois mature et adapté. Le périmètre réel e
 4. **z-order** — un compteur monotone ; `pointerdown` sur un panneau → `z = ++top`. **Pas de `z-index` pour les panneaux flottants eux-mêmes** s'ils sont dans le top layer (`popover`) : l'ordre de la pile suffit. Si on reste en DOM classique, un `z-index` croissant suffit aussi — il n'y a pas de conflit avec les popups si on garde les popups **au-dessus** via le top layer.
 5. **Snap** — à l'ouverture et au drop : si le panneau est à moins de N px d'un bord du viewport, aimanter. Simple clamp sur `x/y/w/h`.
 6. **Persistance** — `localStorage`, **coordonnées normalisées en fraction du viewport** (sinon le layout est cassé sur un autre écran) + version du schéma + migration.
-7. **Responsive mobile** — sous un breakpoint, les panneaux deviennent des feuilles bottom-sheet pleine largeur (une seule à la fois). C'est une exigence de design, pas une fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalitéune fonctionnalité de lib.
+7. **Adaptation à la largeur** — sous un breakpoint, les panneaux deviennent des feuilles pleine largeur. **Sans objet ici** : la cible est un PC de bureau (cf. `07` §Lot 9), la seule contrainte est de tenir dans ≈ 1180 px.
 
 Total : **~200-250 lignes**, testable, sans dépendance. Une lib vous aurait coûté plus de temps à intégrer qu'à écrire.
 
@@ -471,7 +471,7 @@ DeuxSevils d'optimisation à garder en tête pour le DOM :
 | `<BitsConfig defaultPortalTo="body">` global                                   | Un seul point de configuration pour que **tous** les contenus flottants échappent au parent transformé                                                                                                                                    | [BitsConfig](https://www.bits-ui.com/docs/utilities/bits-config)                                                                                 |
 | `strategy="fixed"` sur chaque contenu flottant                                 | **Obligatoire** — le défaut réel du code est `absolute`                                                                                                                                                                                   | [Popover.Content API](https://www.bits-ui.com/docs/components/popover)                                                                           |
 | `bits-ui/Command` + `Dialog`                                                   | Command palette complète (scoring cmdk) sans lib supplémentaire                                                                                                                                                                           | [Command](https://www.bits-ui.com/docs/components/command)                                                                                       |
-| **`popover` natif** (top layer)                                                | La seule solution qui résout le `transform: scale()` _nativement_ etAccording à la spec. Zéro dépendance. Zéro `z-index` à gérer. Utiliser en complément de bits-ui pour les cas simples (bulles d'aide, indications, sheets mobile)      | [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API), [css-position-4 §3.1](https://drafts.csswg.org/css-position-4/#top-styling) |
+| **`popover` natif** (top layer)                                                | La seule solution qui résout le `transform: scale()` _nativement_ etselon la spec. Zéro dépendance. Zéro `z-index` à gérer. Utiliser en complément de bits-ui pour les cas simples (bulles d'aide, indications)                           | [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API), [css-position-4 §3.1](https://drafts.csswg.org/css-position-4/#top-styling) |
 | **`@property` + `color-mix()` + `light-dark()` + container queries + nesting** | Design system de surfaces 100 % CSS, Baseline 2024, animation des transitions d'élévation possible                                                                                                                                        | [MDN @property](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@property)                                                   |
 | `runed` (transitif)                                                            | Déjà une dépendance de bits-ui — gratuit ; `useResizeObserver` etc.                                                                                                                                                                       | [svecosystem/runed](https://github.com/svecosystem/runed)                                                                                        |
 
@@ -480,7 +480,7 @@ DeuxSevils d'optimisation à garder en tête pour le DOM :
 | Quoi                              | Condition d'adoption                                                                                                 | Réf.                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `@neodrag/svelte` 2.3.3           | Si le drag de panneau devient pénible. 1,68 KB, mais **ne fait pas le resize** → on n'économise que ~30 % du travail | [neodrag.dev](https://www.neodrag.dev/docs/svelte)                                        |
-| `svelte-gestures` 5.2.2           | Si le pinch-zoom mobile mérite un raccourci. Attention : dernier commit 2025-09                                      | [GitHub](https://github.com/Rezi/svelte-gestures)                                         |
+| `svelte-gestures` 5.2.2           | Si le pincement au trackpad mérite un raccourci. Attention : dernier commit 2025-09                                  | [GitHub](https://github.com/Rezi/svelte-gestures)                                         |
 | `@humanspeak/svelte-motion` 1.4.6 | **Uniquement** si on a besoin de FLIP/shared-layout ou de spring entre panneaux. 102 ★ → risque                      | [motion.svelte.page](https://motion.svelte.page/)                                         |
 | `corner-shape`                    | **Derrière `@supports`**, pour les coins « organiques » de l'UI de jeu. Jamais en dépendance dure                    | [MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/properties/corner-shape) |
 
@@ -506,7 +506,7 @@ DeuxSevils d'optimisation à garder en tête pour le DOM :
 | ------------------------------------------------------------------------------------------------------------ | --------------- | ---------------------------------------------------------------------------------------------- |
 | **`<Surface>` / `<Layer>`** — wrapper maison au-dessus de bits-ui                                            | ~40 lignes      | Centralise `strategy="fixed"` + `Portal` + `data-*` → impossible d'oublier le garde-fou        |
 | **Shell de panneau flottant** — drag, 8 resize handles, z-order, snap, persistance `localStorage` normalisée | ~200-250 lignes | Aucune lib mature en Svelte ; besoin de contrôle du z-index croisé avec le top layer           |
-| **Contrôleur de pan/zoom de la carte** — pointer capture, wheel, pinch 2 doigts, clamp, inertie optionnelle  | ~120 lignes     | Composition avec la couche carte + coordonnées ; une lib masque exactement ce dont on a besoin |
+| **Contrôleur de pan/zoom de la carte** — pointer capture, wheel, pincement, clamp, inertie optionnelle       | ~120 lignes     | Composition avec la couche carte + coordonnées ; une lib masque exactement ce dont on a besoin |
 | **Registre de commandes** — `register()`/`unregister()`, `when()` par rôle (MJ vs joueur)                    | ~40 lignes      | Les commandes doivent venir de partout ; `when()` centralise les commandes MJ-only             |
 | **Couche de tokens CSS** — primitifs `@property` + dérivés `color-mix` + classes `.surface-*`                | ~150 lignes     | Le « design system de surfaces » demandé ; cohérent par construction                           |
 
@@ -527,7 +527,6 @@ DeuxSevils d'optimisation à garder en tête pour le DOM :
 - ⚠️ **Le top layer gère l'ordre, pas `z-index`.** Un popover ouvert après un autre le recouvre. C'est le bon modèle pour un VTT, mais il faut le documenter : plus de tweaking de `z-index` entre panneaux et popups.
 - ⚠️ **Les propriétés CSS héritées cascadent toujours** depuis le parent DOM d'un élément en top layer (`font-size`, `color`, variables de thème). Porter les tokens sur `:root` **et** sur le conteneur `document.body` du portail, sinon les popups n'auront pas les bonnes couleurs.
 - ⚠️ **`popover` n'a pas de collision detection.** Pour un context menu, il faut un clamp simple vers le viewport (5-10 lignes). C'est acceptable ; Floating UI en fait plus mais au prix du problème de parent transformé.
-- ⚠️ **`contextmenu` sur mobile** : le clic droit n'existe pas. Prévoir un appui long (long-press) ou une poignée explicite. `bits-ui/ContextMenu` gère le long-press pour le tactile d'après son code interne, mais à vérifier sur appareil réel.
 - ⚠️ **Svelte n'a toujours pas de `<Portal>` natif** — [sveltejs/svelte#7082](https://github.com/sveltejs/svelte/issues/7082), **ouvert**, dernière activité 2026-07-16. Ne pas compter dessus.
 
 ---
