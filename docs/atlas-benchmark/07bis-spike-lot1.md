@@ -50,82 +50,78 @@ Une surcharge CSS de ~40 lignes en fin de feuille, posée sur
 Tout est mesuré dans les **deux layouts**, en basculant à chaud par une seconde
 surcharge qui neutralise la première — donc sans jamais réécrire le produit.
 
-## 2. Le brouillard — la mesure principale
+## 2. Le brouillard — mesure, et mise au point
 
-`drawFogBase()` reproduit **à l'identique** dans la page, sur un canvas jetable
-aux dimensions réelles (`mapContainer.offsetWidth/Height`, la même source que le
-produit), avec un `getImageData(1×1)` pour forcer la rasterisation — sans quoi on
-ne chronomètre que la soumission des commandes et on obtient 0,0 ms.
+> **Mise au point (30/09, après re-mesure).** Le premier relevé comparait
+> 1280×720 grille contre 1280×720 plein écran, et concluait « ×2,25 ». C'est
+> **faux pour la cible**. En dessous de ~1500 px de large, la grille à 3 colonnes
+> (288 + 324 px fixes) écrase la carte ; au-delà, elle lui laisse déjà presque
+> toute la place. Le vrai rapport, mesuré à la résolution cible, est **×1,26**.
+> Voir §2 bis.
 
-Viewport 1280×720, `devicePixelRatio` 1, 7 répétitions, médiane.
+Le brouillard dimensionne sa backing store ainsi :
 
-| zoom          | fogScale | backing store | Mpx  | mémoire     | traits | repeint médian | max  |
-| ------------- | -------- | ------------- | ---- | ----------- | ------ | -------------- | ---- |
-| **grille** 1× | 1,00     | 640×480       | 0,31 | 1,2 Mo      | 80     | **1,8 ms**     | 3,0  |
-| **plein** 1×  | 1,00     | 960×720       | 0,69 | **2,6 Mo**  | 120    | **5,6 ms**     | 14,4 |
-| **grille** 2× | 2,00     | 1280×960      | 1,23 | 4,7 Mo      | 80     | **9,2 ms**     | 12,2 |
-| **plein** 2×  | 2,00     | 1920×1440     | 2,76 | **10,5 Mo** | 120    | **17,3 ms**    | 35,2 |
-| **grille** 3× | 3,00     | 1920×1440     | 2,76 | 10,5 Mo     | 80     | **14,9 ms**    | 28,9 |
-| **plein** 3×  | 3,00     | 2880×2160     | 6,22 | **23,7 Mo** | 120    | **30,0 ms**    | 46,2 |
+```js
+bw = mapContainer.offsetWidth * fogScale;
+bh = mapContainer.offsetHeight * fogScale; // fogScale = min(3, zoom * dpr)
+```
 
-**Bilan.**
+CPU ralenti ×4, `devicePixelRatio` 1, 1280×720, médiane sur 7 répétitions :
 
-- **Mémoire ×2,25**, exactement le rapport de surface (960×720 contre 640×480).
-- **Repeint ×2 à ×3,1.**
-- Le pic à **46 ms** dépasse **trois budgets de frame** (16,7 ms).
+| zoom      | fogScale | backing store | mémoire | traits | repeint médian | max  |
+| --------- | -------- | ------------- | ------- | ------ | -------------- | ---- |
+| grille 1× | 1,00     | 640×480       | 1,2 Mo  | 80     | 1,8 ms         | 3,0  |
+| plein 1×  | 1,00     | 960×720       | 2,6 Mo  | 120    | 5,6 ms         | 14,4 |
+| grille 3× | 3,00     | 1920×1440     | 10,5 Mo | 80     | 14,9 ms        | 28,9 |
+| plein 3×  | 3,00     | 2880×2160     | 23,7 Mo | 120    | 30,0 ms        | 46,2 |
 
-### Ce que ça veut dire — et ce que ça ne veut pas dire
+Le repeint complet ne survient qu'au changement de carte, au redimensionnement
+et au changement de `fogScale` (debouncé à 140 ms). Pendant le jeu c'est le chemin
+incrémental qui tourne, pour quelques microsecondes.
 
-Ce n'est pas un blocage. Un repeint complet ne se produit qu'au **changement de
-carte**, au **redimensionnement** et au **changement de `fogScale`** (debouncé à
-140 ms). Pendant le jeu, le chemin utilisé est l'incrémental : on ne découpe que
-les nouveaux points, ce qui coûte quelques µs.
+## 2 bis. Le vrai rapport avant/après, à la résolution cible
 
-En revanche la marge est mince, et trois leviers existent, par ordre de rapport
-effort/résultat :
+Le même jour, sur un 2560×1440 **Retina** (`dpr` 2), zoom 1 → `fogScale` 2,
+CPU ralenti ×4 :
 
-1. **Plafonner `fogScale` à 2 au lieu de 3.** Divise par ~2,2 la mémoire et le
-   repeint. Le brouillard reste net jusqu'à 200 % de zoom, ce qui couvre
-   l'usage réel. Une ligne à changer.
-2. **Ne pas redessiner quand seule la taille change à la marge.** Le debounce de
-   140 ms existe déjà ; ajouter un seuil sur le rapport de taille évite des
-   repeints à chaque micro-resize.
-3. **Tupler le motif de hachures** au lieu de tracer 120 lignes à chaque fois :
-   un petit canvas 14×14 en motif `createPattern`. Divise le coût des hachures
-   par un ordre de grandeur.
+|                         | grille **actuelle** | plein écran **après** | rapport   |
+| ----------------------- | ------------------- | --------------------- | --------- |
+| zone carte              | 1920×1261           | 2560×1440             |           |
+| `map-surface`           | 1681×1261           | 1920×1440             |           |
+| surface                 | 2,12 Mpx            | 2,76 Mpx              | **×1,30** |
+| **mémoire par repeint** | **32,3 Mo**         | **42,2 Mo**           | **×1,30** |
+| **durée du repeint**    | **58,1 ms**         | **73,0 ms**           | **×1,26** |
 
-⚠️ **Ces chiffres sont mesurés en 1280×720 `dpr` 1** — la référence la plus
-prudente. La cible étant un grand écran souvent **Retina**, le coût réel est
-**bien pire** : voir `07bis` §2 bis, où le même relevé à 2560×1440 `dpr` 2 donne
-105 ms de repeint et 73 Mo par passe.
+| écran             | rapport mémoire | rapport durée |
+| ----------------- | --------------- | ------------- |
+| 2560×1440 `dpr` 2 | ×1,30           | ×1,26         |
+| 1920×1080 `dpr` 1 | ×1,44           | ×1,46         |
+| 1280×720 `dpr` 1  | ×2,25           | ×2,22         |
 
-## 2 bis. Le même relevé sur la cible réelle : c'est pire
+### Les deux conclusions qui en découlent
 
-La section 2 ci-dessus mesure en 1280×720 `dpr` 1. C'est la référence la plus
-prudente — **et la moins représentative**. La cible est un PC de bureau avec un
-grand écran, et ces écrans sont très souvent en **Retina** (`devicePixelRatio` 2).
+**1. Ce n'est pas un risque de la refonte.** Le brouillard coûte déjà **58 ms et
+32 Mo par repeint aujourd'hui**, à 2560×1440 Retina, zoom 1, sans aucune
+refonte. La refonte l'aggrave de **26 %**. C'est un **bug préexistant**, pas une
+conséquence du chantier.
 
-Or la formule du produit est `fogScale = min(3, zoom × dpr)`. **Sur un Retina,
-le canvas de brouillard double dès le zoom 1.** Relevé en plein écran, CPU ralenti
-×4, surface 1681×1261 à 2560×1440 :
+**2. C'est un ticket séparé, à traiter séparément.** Le correctif ne dépend
+absolument pas de l'UX, du layout, ni de la position de la carte. C'est une
+ligne dans `drawFog()`. Il peut — et doit — être fait **sur `main`, dans son
+propre commit, avant la refonte**. Le mélanger au chantier d'UX n'aurait aucun
+sens : on livrerait 40 jours de travail d'interface pour un gain de 26 % sur un
+bug qui en vaut 100 % tout seul.
 
-| `fogScale`               | backing store | Mpx   | mémoire     | repeint médian | max          | vs budget image (16,7 ms) |
-| ------------------------ | ------------- | ----- | ----------- | -------------- | ------------ | ------------------------- |
-| **1,0**                  | 1681×1261     | 2,12  | 8,1 Mo      | **5,8 ms**     | 12,7 ms      | **×0,3**                  |
-| 1,5                      | 2522×1892     | 4,77  | 18,2 Mo     | 28,5 ms        | 42,5 ms      | ×1,7                      |
-| 2,0                      | 3362×2522     | 8,48  | 32,3 Mo     | 53,9 ms        | 74,1 ms      | ×3,2                      |
-| **3,0 — le code actuel** | 5043×3783     | 19,08 | **72,8 Mo** | **105,5 ms**   | **167,4 ms** | **×6,3**                  |
+### Le coût réel du brouillard, par valeur de `fogScale`
 
-En 1920×1080 `dpr` 1, on est déjà à 54,8 ms et 37,2 Mo en `fogScale` 3.
+Relevé à 2560×1440 `dpr` 2, surface 1681×1261 (budget d'image 60 Hz = 16,7 ms) :
 
-**Sur la machine d'un joueur Retina en 1440p, le repeint complet du brouillard
-dure 105 ms et coûte 73 Mo par passe — six budgets d'image, dix au pic.** C'est
-le pire qui arrive au changement de carte, au redimensionnement et au passage
-d'un palier de zoom. Ce n'est pas un gel, mais c'est très visible.
-
-Le levier est net : **`fogScale` à 1,0 coûte 5,8 ms pour 8,1 Mo.** Le brouillard
-est un voile sombre à dégradés radiaux : à `fogScale` 1 il reste parfaitement
-lisible, juste légèrement adouci quand on zoome.
+| `fogScale`               | backing store | mémoire | repeint médian | max      | vs budget |
+| ------------------------ | ------------- | ------- | -------------- | -------- | --------- |
+| **1,0**                  | 1681×1261     | 8,1 Mo  | **5,8 ms**     | 12,7 ms  | **×0,3**  |
+| 1,5                      | 2522×1892     | 18,2 Mo | 28,5 ms        | 42,5 ms  | ×1,7      |
+| 2,0                      | 3362×2522     | 32,3 Mo | 53,9 ms        | 74,1 ms  | ×3,2      |
+| **3,0 — le code actuel** | 5043×3783     | 72,8 Mo | **105,5 ms**   | 167,4 ms | ×6,3      |
 
 ### La correction recommandée
 
@@ -243,8 +239,10 @@ Casse, et pourquoi :
    c'est la condition du §3.
 2. **Réécrire les 2 tests de panoramique** pour zoomer d'abord et créer un
    débordement.
-3. **Plafonner la backing store du brouillard par nombre de pixels** (§2 bis).
-   En 2560×1440 `dpr` 2, le code actuel coûte 105 ms et 73 Mo par repeint.
+3. **Le brouillard n'est pas un chantier de la refonte.** C'est un bug
+   préexistant : 58 ms et 32 Mo par repeint dès aujourd'hui en 2560×1440 Retina.
+   La refonte l'aggrave de 26 %, pas plus. Le corriger dans un ticket séparé, sur
+   `main`, avant la refonte (§2 bis).
 4. **Vérifier sur la résolution cible.** Le tableau ci-dessus est à 2560×1440
    `dpr` 2. Rejouer `scripts/_mesure-fogscale.cjs` sur la machine de référence.
 5. **`.map-frame` doit être scindé** (cf. `05-architecture-svelte.md` §1.7
