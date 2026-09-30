@@ -57,12 +57,26 @@
     report ? (nbFail === 0 ? report.expected === 'ok' : report.expected === 'ko') : false
   );
 
-  /* panoramique : la carte doit rester atteignable quel que soit le zoom */
+  /*
+   * Panoramique : les gestionnaires sont sur le FOND de la carte, pas sur un
+   * ancetre. Les ancres (pions, boutons) sont des freres de `.map-bg`, donc
+   * leurs evenements ne bubbling-ont jamais jusqu'ici.
+   *
+   * C'est la correction du defaut v2 : avec `setPointerCapture` pose sur
+   * `.map-window`, tout le document devenait la cible du pointeur des le premier
+   * pointerdown, et les ancres ne recevaient plus leur click ni leur
+   * `contextmenu`.
+   *
+   * Seuls les clics sur le fond deplacent donc la carte. C'est aussi le
+   * comportement voulu dans le vrai produit : on tire un pion pour le bouger,
+   * on tire le fond pour deplacer la vue.
+   */
   function panDown(e: PointerEvent): void {
-    if ((e.target as HTMLElement).closest('[data-no-pan]')) return;
+    if (e.button !== 0) return;
     dragging = true;
     grab = { px: e.clientX, py: e.clientY, ox: pan.x, oy: pan.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
   }
   function panMove(e: PointerEvent): void {
     if (!dragging) return;
@@ -70,6 +84,9 @@
   }
   function panUp(): void {
     dragging = false;
+  }
+  function noNativeMenu(e: MouseEvent): void {
+    e.preventDefault();
   }
   function resetPan(): void {
     pan = { x: 0, y: 0 };
@@ -204,23 +221,23 @@
       {/each}
     </div>
 
-    <div
-      class="map-window"
-      class:grabbing={dragging}
-      role="application"
-      aria-label="Carte simulée — glisser pour déplacer"
-      onpointerdown={panDown}
-      onpointermove={panMove}
-      onpointerup={panUp}
-      onpointercancel={panUp}
-    >
+    <div class="map-window" class:grabbing={dragging}>
       <div
         class="map-frame"
         data-scaled
         style="transform: translate({pan.x}px, {pan.y}px) scale({zoom}); transform-origin: 0 0;"
       >
         <div class="map-surface">
-          <div class="map-bg"></div>
+          <div
+            class="map-bg"
+            role="application"
+            aria-label="Fond de carte — glisser pour déplacer la vue"
+            onpointerdown={panDown}
+            onpointermove={panMove}
+            onpointerup={panUp}
+            onpointercancel={panUp}
+            oncontextmenu={noNativeMenu}
+          ></div>
 
           <div class="fake-token" style="left: 74%; top: 26%;">A</div>
           <div class="fake-token" style="left: 82%; top: 74%;">C</div>
@@ -232,7 +249,7 @@
               o && measure('T4 · Popover dans la carte', 'ok', '[data-anchor="t4"]', 'ancré dans la carte transformée')
             }
           >
-            <Popover.Trigger data-anchor="t4" data-no-pan class="tbtn inmap" style="left: 10%; top: 20%;">
+            <Popover.Trigger data-anchor="t4" class="tbtn inmap" style="left: 10%; top: 20%;">
               T4 · Popover
             </Popover.Trigger>
             <Popover.Portal>
@@ -245,7 +262,7 @@
           <ContextMenu.Root
             onOpenChange={(o) => o && measure('T5 · ContextMenu sur un pion', 'ok', '[data-anchor="t5"]', 'pion B')}
           >
-            <ContextMenu.Trigger data-anchor="t5" data-no-pan class="tok tok--live">B</ContextMenu.Trigger>
+            <ContextMenu.Trigger data-anchor="t5" class="tok tok--live">B</ContextMenu.Trigger>
             <ContextMenu.Portal>
               <ContextMenu.Content data-spike="open" strategy="fixed" style={MENU}>
                 <ContextMenu.Item style={ITEM}>Apparaître</ContextMenu.Item>
@@ -260,7 +277,7 @@
               o && measure('T6 · Popover SANS Portal (temoin)', 'ko', '[data-anchor="t6"]', 'ce test doit echouer')
             }
           >
-            <Popover.Trigger data-anchor="t6" data-no-pan class="tbtn inmap" style="left: 10%; top: 34%;">
+            <Popover.Trigger data-anchor="t6" class="tbtn inmap" style="left: 10%; top: 34%;">
               T6 · sans Portal
             </Popover.Trigger>
             <Popover.Content data-spike="open" style={PANEL}>
@@ -500,12 +517,9 @@
     border: 2px solid var(--border);
     border-radius: 8px;
     min-height: 0;
-    cursor: grab;
-    touch-action: none;
-  }
-
-  .map-window.grabbing {
-    cursor: grabbing;
+    /* sans ca, glisser sur la carte selectionne tout le texte qu elle contient */
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .map-frame {
@@ -521,13 +535,22 @@
     overflow: hidden;
   }
 
+  /* Le fond porte les gestionnaires de panoramique : c'est la SEULE couche
+     survolable qui contienne des elements cliquables, et elle est sous les
+     ancres (ordre du document). */
   .map-bg {
     position: absolute;
     inset: 0;
+    cursor: grab;
+    touch-action: none;
     background-image:
       linear-gradient(to right, var(--map-line) 1px, transparent 1px),
       linear-gradient(to bottom, var(--map-line) 1px, transparent 1px);
     background-size: var(--map-grid-size) var(--map-grid-size);
+  }
+
+  .map-window.grabbing .map-bg {
+    cursor: grabbing;
   }
 
   .fake-token {
