@@ -73,17 +73,23 @@ test.describe("Compendium", () => {
     const total = await categoryTotal(page, /Grimoire/);
     await page.getByRole("button", { name: /Grimoire/ }).click();
     const list = page.locator(".list .row");
-    const cible = Math.min(400, total);
-    if ((await list.count()) < cible) {
-      await page.getByRole("button", { name: /^Afficher plus/ }).click();
-      await expect(list).toHaveCount(cible);
+
+    // On charge TOUTE la catégorie avant de juger le tri : le compteur de liste
+    // affiche encore la catégorie précédente pendant le rechargement, et un
+    // `count()` lu trop tôt rendait ce test instable (flake préexistant).
+    const plus = page.getByRole("button", { name: /^Afficher plus/ });
+    while (await plus.isVisible().catch(() => false)) {
+      const avant = await list.count();
+      await plus.click();
+      await expect.poll(() => list.count()).toBeGreaterThan(avant);
     }
+    await expect(list).toHaveCount(total);
 
     await expect(list.filter({ hasText: "Éclat de bois" })).toHaveCount(1);
     // La liste se termine bien par un titre au-delà de « Z » : plus aucun tas
     // de titres accentués collés après « Z ».
     const dernier = await list
-      .nth((await list.count()) - 1)
+      .nth(total - 1)
       .locator(".row-title")
       .innerText();
     expect(dernier.localeCompare("Z", "fr")).toBeGreaterThanOrEqual(0);
