@@ -102,6 +102,12 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
+**Livrés au 01/10/2026 : lots 0, 1 et 2** — fondations de surfaces ; carte plein
+écran, panneaux flottants ; barre d'outils, command palette et raccourcis. Le
+design system Penpot est la source (19 couleurs, 17 typographies,
+37 composants) ; ses écrans `01`/`02` décrivent la suite, en commençant par le
+**lot 3** (vie sur la carte : PV et états des pions, caméra).
+
 ---
 
 ## 1. Le verdict en une page
@@ -298,12 +304,13 @@ chaque composant.
 
 Les lots sont dans `07`. Trois choses à savoir avant d'ouvrir le premier :
 
-1. **Le filet de test est déjà en place.** 309 tests unitaires, 20 tests e2e
-   Playwright sur la fixture `dev-camp`. `pnpm check` doit être vert à chaque
-   commit — c'est la seule condition à ne pas négocier.
-2. **Les pièces déjà validées sont en place** : `bits-ui` est dans
-   `web/package.json`, `web/src/lib/ds/Surface.svelte` existe ; la table de
-   raccourcis et la command palette restent à écrire.
+1. **Le filet de test est déjà en place.** 323 tests (dont 31 d'intégration
+   API), 23 tests e2e Playwright sur la fixture `dev-camp`. `pnpm check` doit
+   être vert à chaque commit — c'est la seule condition à ne pas négocier.
+2. **Les lots 0, 1 et 2 sont livrés** : `bits-ui` et `@lucide/svelte` dans
+   `web/package.json`, surfaces et tokens en place, carte plein écran, panneaux
+   flottants, barre d'outils, command palette et raccourcis. La suite est le
+   lot 3, puis l'undo.
 3. **Les trois pièges du §0** sont à respecter dès la première ligne de code,
    pas découverts en chemin.
 

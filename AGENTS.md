@@ -83,7 +83,7 @@ Sans `DEV_AUTH`, **toutes** les routes `/api/dev/*` renvoient 404 et le cookie
 ne vaut rien. Ne jamais définir `DEV_AUTH` en production.
 
 ```bash
-pnpm e2e              # 20 tests navigateur (Playwright) — démarre 8787 si besoin
+pnpm e2e              # 23 tests navigateur (Playwright) — démarre 8787 si besoin
 pnpm e2e:ui           # mode interactif
 pnpm e2e:headed       # navigateur visible
 pnpm dev:seed         # réinitialise la fixture (campagne dev-camp)
@@ -179,8 +179,9 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
 
 Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
 refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
-jeu » plutôt que « web ». **Rien n'est implémenté à ce jour** — le dossier est un
-plan, pas un chantier entamé.
+jeu » plutôt que « web ». **Lots 0 à 2 livrés** (fondations de surfaces, carte
+plein écran, chrome : barre d'outils, palette, raccourcis) ; le **lot 3** (vie
+sur la carte) est le prochain.
 
 | Document                                             | Contenu                                                         |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
@@ -198,8 +199,9 @@ Règles du chantier :
    responsive, aucun travail tactile.
 4. **`pnpm check` et `pnpm e2e` verts à chaque commit.**
 
-Déjà en place sur `feat/uiv2` : `bits-ui@2.19.3` dans `web/package.json`,
-`web/src/lib/ds/Surface.svelte`, deux spikes validés (overlays 54/54 sur
+Déjà en place sur `feat/uiv2` : les lots 0 à 2, `bits-ui@2.19.3` et
+`@lucide/svelte` dans `web/package.json`, le design system Penpot comme source
+(`web/src/lib/ds/`) et deux spikes validés (overlays 54/54 sur
 Chromium/Firefox/Safari ; Lot 1 sur la vraie table).
 
 ⚠️ **`web/src/routes/dev/overlays/` est un harnais jetable de spike.**
