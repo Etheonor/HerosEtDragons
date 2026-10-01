@@ -1,12 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { CAMPAIGN, login, seed } from "./helpers";
 
-/** Le compendium est paginé côté client (plafond API : 200 par requête).
- *  Régression : la liste s'arrêtait à la 200ᵉ fiche — le grimoire (361 entrées)
- *  s'affichait donc jusqu'à « Lumière du jour », et rien au-delà. */
+/** Plafond de l'API : une requête ne rend jamais plus de 200 fiches. */
+const PAGE_LIMIT = 200;
+
 test.describe("Compendium", () => {
   test.beforeEach(async ({ page }) => {
-    await seed(page.request);
+    // Pas de purge du Durable Object : le compendium ne lit que du D1 seedé, et
+    // le purge effacerait la table d'un test joueur dans un autre worker.
+    await seed(page.request, { reset: false });
     await login(page, "mj");
     await page.goto(`/compendium?campaign=${CAMPAIGN}`);
   });
@@ -18,6 +20,39 @@ test.describe("Compendium", () => {
     return Number(await page.getByRole("button", { name }).locator(".rail-count").innerText());
   }
 
+  /** Le bouton « Afficher plus » change de libellé (« Chargement… ») pendant la
+   *  requête : on le cible par sa classe, sinon le clic peut être perdu en plein
+   *  re-rendu (flake historique du test de tri). */
+  const moreBtn = (page: Page) => page.locator(".list-more .more-btn");
+
+  /**
+   * Charge TOUTE une catégorie, page par page, et attend la liste complète.
+   *
+   * Le piège qu'elle évite : boucler sur `await moreBtn.isVisible()` teste la
+   * visibilité AVANT que la 1re page ne soit arrivée. Le bouton n'existe que si
+   * `entries.length < total`, donc pendant le rechargement de catégorie il est
+   * absent — la boucle ne s'exécute jamais, aucun clic n'est fait, et le test
+   * échoue sur 200/361 en moins d'une seconde. D'où l'attente explicite de la
+   * page 1 avant de boucler, puis une attente d'état sur le bouton.
+   */
+  async function loadAllPages(page: Page, total: number) {
+    const list = page.locator(".list .row");
+    await expect(list).toHaveCount(Math.min(PAGE_LIMIT, total));
+    for (let pageNo = 1; pageNo < 20; pageNo++) {
+      const plus = moreBtn(page);
+      const gone = await plus
+        .waitFor({ state: "detached", timeout: 2_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (gone) break;
+      const avant = await list.count();
+      if (avant >= total) break;
+      await plus.click();
+      await expect.poll(() => list.count(), { timeout: 10_000 }).toBeGreaterThan(avant);
+    }
+    await expect(list).toHaveCount(total);
+  }
+
   test("toutes les fiches d'une catégorie sont atteignables, pas les 200 premières", async ({
     page,
   }) => {
@@ -27,67 +62,46 @@ test.describe("Compendium", () => {
 
     await grimoire.click();
     const list = page.locator(".list .row");
-    // Une seule page n'est pas tout : le compteur et le bouton le signalent.
-    await expect(list).toHaveCount(200);
-    await expect(page.locator(".list-count")).toHaveText(`200 / ${total}`);
-    await expect(page.getByRole("button", { name: /^Afficher plus/ })).toBeVisible();
+    await expect(list).toHaveCount(PAGE_LIMIT);
+    await expect(page.locator(".list-count")).toHaveText(`${PAGE_LIMIT} / ${total}`);
+    await expect(moreBtn(page)).toBeVisible();
 
-    // Au clic, la 2ᵉ page s'ajoute (ou le reste si la catégorie est plus petite).
     const cible = Math.min(400, total);
-    await page.getByRole("button", { name: /^Afficher plus/ }).click();
+    await moreBtn(page).click();
     await expect(list).toHaveCount(cible);
 
-    // La dernière fiche de la 2ᵉ page est atteignable et s'ouvre — c'est
-    // exactement la plage qui était invisible avant le correctif.
     const derniere = list.nth(cible - 1);
     await expect(derniere).toBeVisible();
     await derniere.click();
     await expect(page.locator(".entry-col")).not.toHaveText(/introuvable|Impossible/i);
 
-    // Le bouton ne reste que s'il reste une page ; une fois tout chargé il
-    // disparaît (sinon l'utilisateur croit qu'il reste des fiches).
     if (total > cible) {
-      await page.getByRole("button", { name: /^Afficher plus/ }).click();
+      await moreBtn(page).click();
       await expect(list).toHaveCount(total);
     }
-    await expect(page.getByRole("button", { name: /^Afficher plus/ })).toHaveCount(0);
+    await expect(moreBtn(page)).toHaveCount(0);
   });
 
   test("changer de catégorie repart de la première page", async ({ page }) => {
     const historiques = await categoryTotal(page, /Historiques/);
+    const grimoire = await categoryTotal(page, /Grimoire/);
 
     await page.getByRole("button", { name: /Grimoire/ }).click();
-    await page.getByRole("button", { name: /^Afficher plus/ }).click();
-    await expect(page.locator(".list .row")).toHaveCount(361);
+    await loadAllPages(page, grimoire);
 
-    // Une autre catégorie repart à zéro : pas de mélange des deux listes.
     await page.getByRole("button", { name: /Historiques/ }).click();
     await expect(page.locator(".list .row")).toHaveCount(historiques);
     await expect(page.locator(".list-count")).toHaveCount(0);
   });
 
   test("un titre accenté est à son rang alphabétique, pas à la fin", async ({ page }) => {
-    // Régression : SQLite ordonne par OCTETS, donc « É » (0xC3 0x89, après Z)
-    // plaçait « Éclat de bois » en 354ᵉ sur 361 — invisible, et introuvable
-    // pour l'utilisateur qui le cherchait vers les E.
     const total = await categoryTotal(page, /Grimoire/);
     await page.getByRole("button", { name: /Grimoire/ }).click();
     const list = page.locator(".list .row");
 
-    // On charge TOUTE la catégorie avant de juger le tri : le compteur de liste
-    // affiche encore la catégorie précédente pendant le rechargement, et un
-    // `count()` lu trop tôt rendait ce test instable (flake préexistant).
-    const plus = page.getByRole("button", { name: /^Afficher plus/ });
-    while (await plus.isVisible().catch(() => false)) {
-      const avant = await list.count();
-      await plus.click();
-      await expect.poll(() => list.count()).toBeGreaterThan(avant);
-    }
-    await expect(list).toHaveCount(total);
+    await loadAllPages(page, total);
 
     await expect(list.filter({ hasText: "Éclat de bois" })).toHaveCount(1);
-    // La liste se termine bien par un titre au-delà de « Z » : plus aucun tas
-    // de titres accentués collés après « Z ».
     const dernier = await list
       .nth(total - 1)
       .locator(".row-title")

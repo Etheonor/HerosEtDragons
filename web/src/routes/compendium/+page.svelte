@@ -43,23 +43,26 @@
       const deepSlug = page.url.searchParams.get('slug');
       if (deepCat && deepSlug) {
         activeCategory = deepCat;
-        await loadEntries();
         selected = await api.compendium.entry(campaign, deepCat, deepSlug).catch(() => null);
         return;
       }
       if (!categories.find((c) => c.category === activeCategory)) {
         activeCategory = categories[0]?.category ?? '';
       }
-      await loadEntries();
     } catch (e) {
       listError = e instanceof Error ? e.message : 'Compendium indisponible';
     }
   });
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  /* Clé de la dernière page 1 chargée (catégorie + recherche). Le `$effect` ne
+   * relance pas ce qui a déjà été chargé par `selectCategory`, et le `onMount`
+   * ne double plus le premier chargement. */
+  let lastLoadedKey = '';
   $effect(() => {
-    void search;
+    const key = `${activeCategory}|${search.trim()}`;
     if (!campaign) return;
+    if (key === lastLoadedKey) return;
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(() => void loadEntries(), 250);
     return () => {
@@ -73,9 +76,24 @@
    *  le grimoire à la lettre « L ». */
   const PAGE_SIZE = 200;
   let loadingMore = $state(false);
+  /* Numéro de la dernière requête : une réponse obsolète (recherche modifiée,
+   * catégorie changée) est ignorée au lieu d'écraser la liste — c'est ce qui
+   * faisait disparaître les pages ajoutées par « Afficher plus ». */
+  let loadSeq = 0;
 
   async function loadEntries(append = false) {
-    if (!campaign || loadingMore) return;
+    if (!campaign) return;
+    if (append && loadingMore) return;
+    const seq = ++loadSeq;
+    if (!append) {
+      lastLoadedKey = `${activeCategory}|${search.trim()}`;
+      // Un chargement part : le timer de debounce encore en vol ferait un
+      // doublon qui écraserait les pages ajoutées entre-temps.
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
+    }
     listError = '';
     if (append) loadingMore = true;
     try {
@@ -85,6 +103,7 @@
         limit: PAGE_SIZE,
         offset: append ? entries.length : 0,
       });
+      if (seq !== loadSeq) return;
       if (append) {
         // Dédoublonnage : la clé du each est category/slug, et le compendium
         // pourrait bouger entre deux requêtes (recherche en cours).
