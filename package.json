@@ -23,8 +23,10 @@
     "db:migrate:remote": "pnpm --filter api db:migrate:remote",
     "ingest": "pnpm --filter ingest ingest",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:rebuild": "node scripts/e2e.mjs --rebuild",
     "e2e:ui": "node scripts/e2e.mjs --ui",
     "e2e:headed": "node scripts/e2e.mjs --headed",
+    "web:build": "node scripts/web-build.mjs",
     "dev:seed": "curl -s -X POST -H 'Content-Type: application/json' -d '{\"reset\":true}' http://localhost:8787/api/dev/seed"
   },
   "devDependencies": {

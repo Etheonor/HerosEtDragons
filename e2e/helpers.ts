@@ -14,9 +14,15 @@ export const MAP_IMAGE = "map-image";
  * Re-seed la fixture déterministe, en purgeant au passage l'état du Durable
  * Object (journal, carte active, pions) — sans ça l'état survit d'un run à
  * l'autre et les tests deviennent ordonnés-par-hasard.
+ *
+ * `reset: false` pour les specs qui ne touchent PAS à la table (le compendium,
+ * par exemple) : le purge est un effet de bord global, et il entrerait en
+ * collision avec une table ouverte dans un autre worker. L'upsert des users,
+ * de la campagne et des maps reste idempotent, donc la fixture est tout aussi
+ * disponible.
  */
-export async function seed(request: APIRequestContext) {
-  const res = await request.post("/api/dev/seed", { data: { reset: true } });
+export async function seed(request: APIRequestContext, { reset = true } = {}) {
+  const res = await request.post("/api/dev/seed", { data: { reset } });
   expect(res.ok(), "seed dev : la variable DEV_AUTH=1 doit être dans .dev.vars").toBeTruthy();
   return res.json();
 }
