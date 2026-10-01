@@ -9,11 +9,14 @@ export type ToolId = "hand" | "move" | "pnj" | "marker" | "fog";
 
 export type ToolFamily = "hand" | "move" | "token" | "marker" | "fog";
 
+import type { IconKey } from "$lib/ds/icons";
+
 export interface ToolFace {
   id: ToolId;
   family: ToolFamily;
   label: string;
-  icon: string;
+  /** Clé d'icône — voir `$lib/ds/icons` (jamais de glyphe écrit à la main). */
+  icon: IconKey;
   /** Id dans la table `HOTKEYS` (affiché en <kbd>). */
   hotkey?: string;
   /** Destination : les options de l'outil, dans un popover ancré. */
@@ -22,12 +25,12 @@ export interface ToolFace {
 }
 
 export const TOOL_FACES: Record<ToolId, ToolFace> = {
-  hand: { id: "hand", family: "hand", label: "Main", icon: "✋", hotkey: "map.hand" },
+  hand: { id: "hand", family: "hand", label: "Main", icon: "hand", hotkey: "map.hand" },
   move: {
     id: "move",
     family: "move",
     label: "Déplacer",
-    icon: "✥",
+    icon: "move",
     hotkey: "tool.move",
     mjOnly: true,
   },
@@ -35,7 +38,7 @@ export const TOOL_FACES: Record<ToolId, ToolFace> = {
     id: "pnj",
     family: "token",
     label: "PNJ",
-    icon: "☠",
+    icon: "npc",
     hotkey: "tool.pnj",
     options: true,
     mjOnly: true,
@@ -44,7 +47,7 @@ export const TOOL_FACES: Record<ToolId, ToolFace> = {
     id: "marker",
     family: "marker",
     label: "Repère",
-    icon: "⚑",
+    icon: "marker",
     hotkey: "tool.marker",
     options: true,
     mjOnly: true,
@@ -53,7 +56,7 @@ export const TOOL_FACES: Record<ToolId, ToolFace> = {
     id: "fog",
     family: "fog",
     label: "Brouillard",
-    icon: "◍",
+    icon: "fog",
     hotkey: "tool.fog",
     options: true,
     mjOnly: true,

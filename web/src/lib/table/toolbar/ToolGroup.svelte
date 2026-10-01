@@ -2,10 +2,12 @@
   import type { Snippet } from 'svelte';
   import { Popover } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';
+  import { ICONS, type IconKey } from '$lib/ds/icons';
 
   interface Props {
     label: string;
-    icon: string;
+    /** Clé d'icône Lucide — voir `$lib/ds/icons`. */
+    icon: IconKey;
     active?: boolean;
     /** Raccourci affiché dans le bouton (déjà formaté : « V », « B »…). */
     hotkeyLabel?: string;
@@ -26,6 +28,8 @@
     options,
     class: className = '',
   }: Props = $props();
+
+  const Icon = $derived(ICONS[icon]);
 </script>
 
 <div class="tool-group {active ? 'is-active' : ''} {className}">
@@ -38,7 +42,7 @@
     aria-label={label}
     onclick={onselect}
   >
-    <span class="tg-icon" aria-hidden="true">{icon}</span>
+    <span class="tg-icon" aria-hidden="true"><Icon size={15} strokeWidth={2} /></span>
     <span class="tg-label">{label}</span>
     {#if hotkeyLabel}<kbd class="tg-kbd">{hotkeyLabel}</kbd>{/if}
   </button>
@@ -98,7 +102,8 @@
     cursor: default;
   }
   .tg-icon {
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
     line-height: 1;
   }
   .tg-kbd {

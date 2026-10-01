@@ -1789,7 +1789,7 @@
           {#if visibleToolIds.includes('hand')}
             <ToolGroup
               label="Main"
-              icon="✋"
+              icon="hand"
               hotkeyLabel="H"
               active={tool === 'hand'}
               onselect={() => toolSelect('hand')}
@@ -1798,7 +1798,7 @@
           {#if isMj && visibleToolIds.includes('move')}
             <ToolGroup
               label="Déplacer"
-              icon="✥"
+              icon="move"
               hotkeyLabel="V"
               active={tool === 'move'}
               onselect={() => toolSelect('move')}
@@ -1807,7 +1807,7 @@
           {#if isMj && visibleToolIds.includes('pnj')}
             <ToolGroup
               label="PNJ"
-              icon="☠"
+              icon="npc"
               hotkeyLabel="P"
               active={tool === 'pnj' || !!pendingPlace}
               onselect={() => toolSelect('pnj')}
@@ -1830,7 +1830,7 @@
           {#if isMj && visibleToolIds.includes('marker')}
             <ToolGroup
               label="Repère"
-              icon="⚑"
+              icon="marker"
               hotkeyLabel="R"
               active={tool === 'marker'}
               onselect={() => toolSelect('marker')}
@@ -1846,7 +1846,7 @@
           {#if isMj && visibleToolIds.includes('fog')}
             <ToolGroup
               label="Brouillard"
-              icon="◍"
+              icon="fog"
               hotkeyLabel="B"
               active={tool === 'fog'}
               onselect={fogToggle}

@@ -8,11 +8,20 @@
    Déclarés en propriétés enregistrées : vérification de type, héritage
    explicite vers les contenus portalés (top layer), et transitions entre
    plans d'élévation. Les noms historiques (--bg, --panel, --border…)
-   restent des alias pour ne rien casser. */
+   restent des alias pour ne rien casser.
+
+   ⚠️ Palette alignée sur la bibliothèque Penpot (`03 · Design system`, page
+   « Croquis v2 ») : les 19 couleurs y sont la source, ce fichier les reflète.
+   Toute nouvelle couleur doit d'abord exister dans Penpot. */
 @property --surface-canvas {
   syntax: "<color>";
   inherits: true;
-  initial-value: #26221d;
+  initial-value: #1b1917;
+}
+@property --surface-sunken {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #141210;
 }
 @property --surface-raised {
   syntax: "<color>";
@@ -32,7 +41,7 @@
 @property --border-default {
   syntax: "<color>";
   inherits: true;
-  initial-value: #575043;
+  initial-value: #4a443a;
 }
 @property --scrollbar-thumb {
   syntax: "<color>";
@@ -44,14 +53,16 @@
   /* ── Fonds & surfaces ─────────────────────────────────────── */
   --bg: var(--surface-canvas); /* fond de page */
   --panel: var(--surface-raised); /* panneaux, cartes, modales */
-  --border: var(--border-default); /* bordures 2px solid, dashed, éléments inactifs */
+  --sunken: var(--surface-sunken); /* creux : champs, historique, cartes de jet */
+  --border: var(--border-default); /* bordures des panneaux et fenêtres */
   --border-soft: var(--border-subtle); /* séparateurs discrets */
-  --selected: var(--border-default); /* fond d'élément sélectionné */
+  --border-strong-2: #575043; /* « Bordure 2 » Penpot : contours de contrôles */
+  --selected: var(--surface-raised); /* fond d'élément sélectionné */
 
   /* Dérivés color-mix : zéro hexadécimal dupliqué. */
   --surface-raised-hover: color-mix(in oklab, var(--surface-raised), var(--accent) 6%);
   --surface-overlay-blur: color-mix(in oklab, var(--surface-overlay), transparent 8%);
-  --border-strong: color-mix(in oklab, var(--border-default), var(--text) 22%);
+  --border-strong: var(--border-strong-2);
 
   /* ── Échelle de rayons (chrome système) ───────────────────── */
   --radius-xs: 4px; /* chips, cases à cocher, petits badges */
@@ -95,11 +106,21 @@
   --shadow-raised: 0 6px 20px var(--shadow-2);
   --shadow-overlay: 0 12px 40px var(--shadow-2);
 
-  /* ── Textes ───────────────────────────────────────────────── */
+  /* ── Textes (Penpot : Texte, Blanc cassé, Texte 2, Texte 3) ─ */
   --text: #e8e2d4;
-  --heading: #f2ede0;
-  --text-2: #9c947f;
+  --heading: #f5f1e6;
+  --text-2: #a79d88;
   --text-3: #6e6759;
+
+  /* ── Sémantique de jeu (Penpot : PV ok/moyen/bas, Or, Eau, Parchemin) ── */
+  --hp-ok: #6fa073;
+  --hp-mid: #c9a227;
+  --hp-low: #c0392b;
+  --presence-on: var(--hp-ok);
+  --presence-off: var(--hp-low);
+  --or: #d4a73c;
+  --eau: #8fb6c9;
+  --parchemin: #e7e0ce;
 
   /* ── Overlay & ombres ─────────────────────────────────────── */
   --overlay: rgba(15, 13, 10, 0.6);
@@ -124,9 +145,10 @@
   --coin-pa: #9c947f;
   --coin-pc: #b07d54;
 
-  /* ── Typographie (2 familles seulement) ───────────────────── */
+  /* ── Typographie (3 familles : titre, texte, interface) ───── */
   --font-title: "Vidaloka", Georgia, serif;
   --font-body: "Alegreya Sans", sans-serif;
+  --font-ui: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
 
   /* ── Layout (écran de jeu) ────────────────────────────────── */
   --w-compagnie: 288px;
