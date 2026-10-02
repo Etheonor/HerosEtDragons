@@ -15,7 +15,7 @@ import type {
   NpcTemplate,
 } from "@rollwith/shared/dto";
 import type { CharacterSheet } from "@rollwith/shared/sheet";
-import type { TableSettings } from "@rollwith/shared/protocol";
+import type { HistoryState, TableSettings } from "@rollwith/shared/protocol";
 import type { NpcTemplateInput } from "@rollwith/shared/sheet";
 
 export { ARMOR_KINDS, ARMOR_KIND_LABELS } from "@rollwith/shared/armor";
@@ -84,6 +84,8 @@ export const api = {
       }),
     join: (token: string) =>
       fetchJson<JoinResult>(`/api/campaigns/join/${token}`, { method: "POST" }),
+    undo: (id: string) => fetchJson<HistoryState>(`/api/campaigns/${id}/undo`, { method: "POST" }),
+    redo: (id: string) => fetchJson<HistoryState>(`/api/campaigns/${id}/redo`, { method: "POST" }),
     journalPage: (campaignId: string, before?: number, limit = 50) => {
       const qs = new URLSearchParams({ limit: String(limit) });
       if (before !== undefined) qs.set("before", String(before));

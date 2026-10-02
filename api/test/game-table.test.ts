@@ -202,6 +202,21 @@ function pnjCards(snapshot: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/** Position d'un pion dans un patch delta, si présente. */
+function tokenAt(m: Record<string, unknown>, id: string): { x: number; y: number } | undefined {
+  const tokens = (m.patch as { tokens?: Record<string, { x: number; y: number }> } | undefined)
+    ?.tokens;
+  return tokens?.[id];
+}
+
+/** Révélations de brouillard du premier patch fog, si présent. */
+function fogReveals(m: Record<string, unknown>): { x: number; y: number }[] | undefined {
+  const fog = (m.patch as { fog?: Record<string, { reveals: { x: number; y: number }[] }> })?.fog;
+  if (!fog) return undefined;
+  const key = Object.keys(fog)[0];
+  return key ? fog[key]?.reveals : undefined;
+}
+
 describe("GameTableDO — intégration", () => {
   it("snapshot initial : le MJ voit tous les personnages, un joueur ne reçoit pas les PNJ non révélés (B5)", async () => {
     await setupWorld();
@@ -543,7 +558,11 @@ describe("GameTableDO — intégration", () => {
 
     const id = Object.keys((delta.patch as { characters: Record<string, unknown> }).characters)[0]!;
     mj.send({ type: "npc.remove", charId: id });
-    const removeDelta = await mj.next("delta");
+    // waitFor : le DO émet aussi un delta d'historique (lot 4) après la carte.
+    const removeDelta = await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, unknown> } | undefined)?.characters !== undefined,
+    );
     expect(
       (removeDelta.patch as { characters: Record<string, unknown> }).characters[id],
     ).toBeNull();
@@ -790,5 +809,149 @@ describe("GameTableDO — intégration", () => {
     const plDelta = await player.next("delta");
     expect((mjDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
     expect((plDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
+  });
+
+  it("undo/redo (lot 4) : un drag de pion = un pas, l'annulation est diffusée aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+
+    mj.send({ type: "token.put", charId: "pj-1", x: 40, y: 40 });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1") !== undefined);
+
+    // Drag en TROIS messages : le premier ouvre le pas, les suivants complètent.
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 42, y: 41, begin: true });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1")?.x === 42);
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 44, y: 43 });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1")?.x === 44);
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 46, y: 45 });
+    await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 46);
+
+    // UN Mod+Z annule tout le drag (et pas seulement le dernier message).
+    const stub = tableStub();
+    const afterUndo = await stub.undo();
+    expect(afterUndo).toEqual({ canUndo: true, canRedo: true });
+    const back = await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 40);
+    expect(tokenAt(back, "pj-1")!.y).toBe(40);
+
+    // Redo : retour à la fin du geste.
+    const afterRedo = await stub.redo();
+    expect(afterRedo).toEqual({ canUndo: true, canRedo: false });
+    await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 46);
+  });
+
+  it("undo (lot 4) : une suppression de PNJ est restaurée pour le MJ sans révéler son nom au joueur (B5)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    // pnj-1 n'a pas de pion : jamais visible par les joueurs.
+    mj.send({ type: "npc.remove", charId: "pnj-1" });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, unknown> } | undefined)?.characters?.["pnj-1"] ===
+        null,
+    );
+
+    const stub = tableStub();
+    const h = await stub.undo();
+    expect(h).toEqual({ canUndo: false, canRedo: true });
+
+    // Le MJ reçoit la fiche restaurée (PV, nom)…
+    const mjBack = await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, { name?: string }> } | undefined)?.characters?.[
+          "pnj-1"
+        ]?.name === "Gobelin",
+    );
+    expect(
+      (mjBack.patch as { characters: Record<string, { pv: number }> }).characters["pnj-1"]!.pv,
+    ).toBe(7);
+
+    // …le joueur ne reçoit jamais la carte, seulement le retrait (null).
+    await new Promise((r) => setTimeout(r, 100));
+    for (const msg of player.messages.filter((m) => m.type === "delta")) {
+      const chars = (msg.patch as { characters?: Record<string, unknown> }).characters ?? {};
+      if ("pnj-1" in chars) expect(chars["pnj-1"]).toBeNull();
+    }
+
+    // La fiche est bien revenue en D1 ; le redo la resupprime.
+    const rows = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .all();
+    expect(rows[0]?.name).toBe("Gobelin");
+    await stub.redo();
+    const gone = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .all();
+    expect(gone.length).toBe(0);
+  });
+
+  it("undo (lot 4) : une passe de brouillard = un pas ; une nouvelle action vide le redo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "fog.enable" });
+    await mj.nextWhere((m) => fogReveals(m) !== undefined);
+
+    // Un trait de TROIS points (begin sur le premier).
+    mj.send({ type: "fog.reveal", x: 20, y: 20, begin: true });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 1);
+    mj.send({ type: "fog.reveal", x: 25, y: 20 });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 2);
+    mj.send({ type: "fog.reveal", x: 30, y: 20 });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 3);
+
+    const stub = tableStub();
+    await stub.undo(); // annule le trait ENTIER
+    await mj.nextWhere((m) => fogReveals(m)?.length === 0);
+
+    await stub.redo();
+    await mj.nextWhere((m) => fogReveals(m)?.length === 3);
+
+    // Une nouvelle action jette la branche redo.
+    mj.send({ type: "fog.reveal", x: 60, y: 60, begin: true });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 4);
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { history?: { canRedo?: boolean } } | undefined)?.history?.canRedo === false,
+    );
+  });
+
+  it("undo (lot 4) : la pile est plafonnée à 50 pas, et le snapshot expose canUndo/canRedo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    // 52 pas : 2 doivent tomber du bas de la pile.
+    for (let i = 0; i < 52; i += 1) {
+      mj.send({ type: "marker.set", x: 10 + (i % 20), y: 10, text: `repère ${i}` });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+
+    const stub = tableStub();
+    for (let i = 0; i < 50; i += 1) await stub.undo();
+
+    // Un nouveau MJ relit l'état : 2 repères (les plus anciens) restent posés.
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    expect((snap.state as { markers: unknown[] }).markers.length).toBe(2);
+    expect(snap.history).toEqual({ canUndo: false, canRedo: true });
   });
 });

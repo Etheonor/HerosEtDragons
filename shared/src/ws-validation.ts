@@ -56,6 +56,7 @@ export const tokenMoveSchema = z.object({
   tokenId: id,
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
 });
 
 export const tokenPutSchema = z.object({
@@ -122,6 +123,7 @@ export const markerMoveSchema = z.object({
   id: id,
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
 });
 
 export const markerRemoveSchema = z.object({
@@ -139,6 +141,7 @@ export const fogRevealSchema = z.object({
   type: z.literal("fog.reveal"),
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
 });
 
 export const pingSchema = z.object({

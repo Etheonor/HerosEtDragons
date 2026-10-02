@@ -53,6 +53,15 @@ describe("hotkeys — table déclarative", () => {
     expect(hotkeyIdFromEvent(ev("v", { repeat: true }), { isMj: true })).toBeNull();
   });
 
+  it("résout les raccourcis à modificateur (undo/redo) et les filtre par rôle", () => {
+    expect(hotkeyIdFromEvent(ev("z", { ctrlKey: true }), { isMj: true })).toBe("undo");
+    expect(hotkeyIdFromEvent(ev("z", { metaKey: true }), { isMj: true })).toBe("undo");
+    expect(hotkeyIdFromEvent(ev("Z", { metaKey: true, shiftKey: true }), { isMj: true })).toBe(
+      "redo",
+    );
+    expect(hotkeyIdFromEvent(ev("z", { ctrlKey: true }), { isMj: false })).toBeNull();
+  });
+
   it("est muet dans un champ de saisie et sous un overlay", () => {
     expect(hotkeyIdFromEvent(ev("v", {}, { tagName: "INPUT" }), { isMj: true })).toBeNull();
     expect(hotkeyIdFromEvent(ev("v", {}, { isContentEditable: true }), { isMj: true })).toBeNull();

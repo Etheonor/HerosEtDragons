@@ -505,3 +505,64 @@ test.describe("Pions vivants (Lot 3)", () => {
     await ctx.close();
   });
 });
+
+test.describe("Historique (Lot 4)", () => {
+  test("les boutons undo/redo ramènent un pion posé, puis le remettent", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const undoBtn = page.getByRole("button", { name: "Annuler" });
+    const redoBtn = page.getByRole("button", { name: "Rétablir" });
+    await expect(undoBtn).toBeDisabled();
+    await expect(redoBtn).toBeDisabled();
+
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await expect(token).toBeVisible();
+    await expect(undoBtn).toBeEnabled();
+
+    await undoBtn.click();
+    await expect(token).toHaveCount(0);
+    await expect(undoBtn).toBeDisabled();
+    await expect(redoBtn).toBeEnabled();
+
+    await redoBtn.click();
+    await expect(page.locator(".token", { hasText: "Kaelith" })).toBeVisible();
+    await expect(redoBtn).toBeDisabled();
+  });
+
+  test("un drag complet est UN pas : Ctrl+Z annule tout le geste", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await expect(token).toBeVisible();
+    const before = (await token.boundingBox())!;
+
+    // Drag de pion : plusieurs messages token.move, UN seul pas d'undo.
+    await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(before.x + before.width / 2 + 140, before.y + before.height / 2 + 70, {
+      steps: 14,
+    });
+    await page.mouse.up();
+    await expect
+      .poll(async () => Math.abs((await token.boundingBox())!.x - before.x))
+      .toBeGreaterThan(40);
+
+    // Ctrl+Z : le geste entier revient à sa position initiale.
+    await page.keyboard.press("Control+z");
+    await expect
+      .poll(async () => Math.abs((await token.boundingBox())!.x - before.x))
+      .toBeLessThan(2);
+  });
+});

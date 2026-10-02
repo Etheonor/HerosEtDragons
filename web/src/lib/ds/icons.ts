@@ -25,10 +25,12 @@ import {
   Minus,
   MousePointer2,
   Plus,
+  Redo2,
   Settings,
   Skull,
   Sparkles,
   Swords,
+  Undo2,
   X,
 } from "@lucide/svelte";
 
@@ -51,6 +53,9 @@ export const ICONS = {
   plus: Plus,
   minus: Minus,
   close: X,
+  /** Historique (lot 4). */
+  undo: Undo2,
+  redo: Redo2,
   expand: Maximize2,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,

@@ -188,10 +188,11 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
 
 Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
 refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
-jeu » plutôt que « web ». **Lots 0 à 3 livrés** (fondations de surfaces, carte
-plein écran, chrome : barre d'outils, palette, raccourcis ; puis vie sur la
-carte : caméra animée, PV/états des pions, échelle en cases) ; le **lot 4**
-(undo) est le prochain.
+jeu » plutôt que « web ». **Lots 0 à 4 livrés** (fondations de surfaces, carte
+plein écran, chrome : barre d'outils, palette, raccourcis ; vie sur la carte :
+caméra animée, PV/états des pions, échelle en cases ; undo/redo transactionnel
+dans le DO). Le **lot 5** (panneaux, context menus, initiative verticale, asset
+manager) est le prochain.
 
 | Document                                             | Contenu                                                         |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
@@ -209,11 +210,12 @@ Règles du chantier :
    responsive, aucun travail tactile.
 4. **`pnpm check` et `pnpm e2e` verts à chaque commit.**
 
-Déjà en place sur `feat/uiv2` : les lots 0 à 3, `bits-ui@2.19.3` et
+Déjà en place sur `feat/uiv2` : les lots 0 à 4, `bits-ui@2.19.3` et
 `@lucide/svelte` dans `web/package.json`, le design system Penpot comme source
-(`web/src/lib/ds/`), la caméra dans `web/src/lib/table/camera.svelte.ts` et deux
-spikes validés (overlays 54/54 sur Chromium/Firefox/Safari ; Lot 1 sur la vraie
-table).
+(`web/src/lib/ds/`), la caméra dans `web/src/lib/table/camera.svelte.ts`,
+l'undo/redo dans le DO (`shared/src/undo.ts`, RPC `undo()`/`redo()` +
+`POST /api/campaigns/:id/undo|redo`) et deux spikes validés (overlays 54/54 sur
+Chromium/Firefox/Safari ; Lot 1 sur la vraie table).
 
 ⚠️ **La règle de visibilité PNJ (AGENTS §9) couvre les PV des pions** : le DO
 envoie `pv/pvMax = null` à un joueur quand `pnjPvVisible=false` et filtre les

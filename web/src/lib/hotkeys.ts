@@ -16,6 +16,12 @@ export interface HotkeyDef {
   group: HotkeyGroup;
   /** `e.key` attendu, en minuscules (layout-aware : on lit le caractère produit). */
   key: string;
+  /** Raccourci à modificateur (Ctrl/⌘) — c'est le cas de l'undo/redo. */
+  mod?: boolean;
+  /** Avec `mod`, exige aussi Shift (ex. Mod+Shift+Z = rétablir). */
+  shift?: boolean;
+  /** Rendu du raccourci dans l'aide (défaut : la touche brute). */
+  display?: string;
   mjOnly?: boolean;
   /** Ne se déclenche pas tant qu'une sélection de texte est active. */
   yieldsToTextSelection?: boolean;
@@ -47,6 +53,28 @@ export const HOTKEYS: readonly HotkeyDef[] = [
   { id: "dice.d10", label: "Lancer 1d10", group: "Combat", key: "4", mjOnly: true },
   { id: "dice.d12", label: "Lancer 1d12", group: "Combat", key: "5", mjOnly: true },
   { id: "dice.d20", label: "Lancer 1d20", group: "Combat", key: "6", mjOnly: true },
+
+  {
+    id: "undo",
+    label: "Annuler la dernière action",
+    group: "Édition",
+    key: "z",
+    mod: true,
+    mjOnly: true,
+    display: "Ctrl/⌘ Z",
+    keywords: ["undo", "annuler", "retour"],
+  },
+  {
+    id: "redo",
+    label: "Rétablir",
+    group: "Édition",
+    key: "z",
+    mod: true,
+    shift: true,
+    mjOnly: true,
+    display: "Ctrl/⌘ ⇧ Z",
+    keywords: ["redo", "rétablir", "refaire"],
+  },
 ];
 
 /** Groupes dans l'ordre d'affichage de l'aide. */
@@ -70,13 +98,13 @@ export interface HotkeyContext {
  * Identifie le raccourci déclenché par un événement clavier, ou `null`.
  *
  * Contrat :
- * - les modificateurs (Ctrl/Cmd/Alt) désactivent la table — ils sont réservés
- *   aux raccourcis navigateur et aux futurs raccourcis d'édition ;
+ * - Ctrl/Cmd n'est reconnu QUE pour les entrées `mod: true` (undo/redo) ;
+ *   Alt désactive la table (réservé au navigateur) ;
  * - les champs de saisie et les overlays sont ignorés ;
  * - `e.repeat` est ignoré (maintenir une touche ne relance pas un outil).
  */
 export function hotkeyIdFromEvent(e: KeyboardEvent, ctx: HotkeyContext): string | null {
-  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  if (e.altKey) return null;
   if (ctx.composing || e.isComposing) return null;
   if (ctx.overlayOpen) return null;
   if (e.repeat) return null;
@@ -92,8 +120,11 @@ export function hotkeyIdFromEvent(e: KeyboardEvent, ctx: HotkeyContext): string 
     return null;
   }
 
+  const hasMod = e.ctrlKey || e.metaKey;
   const key = e.key === " " ? " " : e.key.toLowerCase();
-  const found = HOTKEYS.find((h) => h.key === key);
+  const found = HOTKEYS.find(
+    (h) => h.key === key && !!h.mod === hasMod && (!h.mod || !!e.shiftKey === !!h.shift),
+  );
   if (!found) return null;
   if (found.mjOnly && !ctx.isMj) return null;
   if (found.yieldsToTextSelection && (globalThis.getSelection?.()?.toString() ?? "") !== "") {

@@ -24,6 +24,7 @@
   import { slugify } from '$lib/slug';
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
+  import { ICONS } from '$lib/ds/icons';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -291,6 +292,24 @@
     if (isMj) {
       cmds.push(
         {
+          id: 'history.undo',
+          label: 'Annuler la dernière action',
+          group: 'Édition',
+          keywords: ['undo', 'annuler', 'retour', 'historique'],
+          shortcut: 'Ctrl/⌘ Z',
+          badge: store.history.canUndo ? undefined : 'aucune action',
+          run: doUndo,
+        },
+        {
+          id: 'history.redo',
+          label: 'Rétablir',
+          group: 'Édition',
+          keywords: ['redo', 'rétablir', 'refaire', 'historique'],
+          shortcut: 'Ctrl/⌘ ⇧ Z',
+          badge: store.history.canRedo ? undefined : 'rien à rétablir',
+          run: doRedo,
+        },
+        {
           id: 'tool.move',
           label: 'Outil Déplacer',
           group: 'Actions',
@@ -453,7 +472,7 @@
   let dragOverride = $state<Record<string, { x: number; y: number }>>({});
   let markerDragOverride = $state<Record<string, { x: number; y: number }>>({});
 
-  let drag: { id: string; kind: 'token' | 'marker'; moved: boolean } | null = null;
+  let drag: { id: string; kind: 'token' | 'marker'; moved: boolean; sent: boolean } | null = null;
   let fogErasing = false;
   let skipNextClick = false;
   let lastFogPoint: { x: number; y: number } | null = null;
@@ -464,7 +483,7 @@
   // (dragOverride) reste fluide sans réseau, et les autres joueurs n'ont pas
   // besoin de 60 Hz — 30/s est indiscernable et deux fois moins de trafic.
   const TOKEN_SEND_MIN_MS = 33;
-  let pendingTokenMove: { id: string; x: number; y: number } | null = null;
+  let pendingTokenMove: { id: string; x: number; y: number; begin: boolean } | null = null;
   let tokenMoveRaf = 0;
   let tokenMoveLastSent = 0;
 
@@ -472,25 +491,27 @@
     if (tokenMoveRaf) cancelAnimationFrame(tokenMoveRaf);
     tokenMoveRaf = 0;
     const m = pendingTokenMove;
-    pendingTokenMove = null;
     if (!m) return;
-    if (!force && Date.now() - tokenMoveLastSent < TOKEN_SEND_MIN_MS) return;
+    // Le `begin` ne doit jamais être perdu : s'il est trop tôt, on le garde en
+    // attente (c'est lui qui ouvre le pas d'undo du geste entier).
+    if (!force && !m.begin && Date.now() - tokenMoveLastSent < TOKEN_SEND_MIN_MS) return;
+    pendingTokenMove = null;
     tokenMoveLastSent = Date.now();
-    sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+    sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y, ...(m.begin ? { begin: true } : {}) });
   }
 
-  function scheduleTokenMove(id: string, x: number, y: number) {
-    pendingTokenMove = { id, x, y };
+  function scheduleTokenMove(id: string, x: number, y: number, begin = false) {
+    pendingTokenMove = { id, x, y, begin: begin || (pendingTokenMove?.begin ?? false) };
     if (tokenMoveRaf) return;
     tokenMoveRaf = requestAnimationFrame(() => flushTokenMove());
   }
 
-  function sendFogReveal(p: { x: number; y: number }) {
-    if (lastFogPoint && Math.hypot(p.x - lastFogPoint.x, p.y - lastFogPoint.y) < FOG_SEND_MIN_DIST) {
+  function sendFogReveal(p: { x: number; y: number }, begin = false) {
+    if (!begin && lastFogPoint && Math.hypot(p.x - lastFogPoint.x, p.y - lastFogPoint.y) < FOG_SEND_MIN_DIST) {
       return;
     }
     lastFogPoint = p;
-    sendWs({ type: 'fog.reveal', ...p });
+    sendWs({ type: 'fog.reveal', ...p, ...(begin ? { begin: true } : {}) });
   }
 
   const activeMap = $derived(maps.find((m) => m.id === store.state.mapId) ?? null);
@@ -682,6 +703,34 @@
     const t = store.state.tokens[charId];
     if (!t) return;
     camera.centerOn(t.x / 100, t.y / 100);
+  }
+
+  // ── Historique (lot 4) ───────────────────────────────────────
+  // Le DO est la source de vérité : la route REST lui demande d'appliquer le
+  // pas, et le delta `history` reçu ensuite remet les boutons d'aplomb. La
+  // pile n'est jamais dans le client.
+  let historyBusy = $state(false);
+
+  async function historyStep(dir: 'undo' | 'redo') {
+    if (!isMj || historyBusy) return;
+    if (dir === 'undo' ? !store.history.canUndo : !store.history.canRedo) return;
+    historyBusy = true;
+    try {
+      if (dir === 'undo') await api.campaigns.undo(campaignId);
+      else await api.campaigns.redo(campaignId);
+    } catch {
+      /* table fermée ou pas déjà consommé : le prochain delta corrigera */
+    } finally {
+      historyBusy = false;
+    }
+  }
+
+  function doUndo() {
+    void historyStep('undo');
+  }
+
+  function doRedo() {
+    void historyStep('redo');
   }
 
   $effect(() => {
@@ -969,7 +1018,7 @@
     if (!canMoveToken(charId)) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    drag = { id: charId, kind: 'token', moved: false };
+    drag = { id: charId, kind: 'token', moved: false, sent: false };
     skipNextClick = true;
   }
 
@@ -979,7 +1028,7 @@
     if (tool === 'hand') return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    drag = { id, kind: 'marker', moved: false };
+    drag = { id, kind: 'marker', moved: false, sent: false };
     skipNextClick = true;
   }
 
@@ -993,12 +1042,14 @@
     if (!drag) return;
     drag.moved = true;
     const { x, y } = mapXY(e);
+    const begin = !drag.sent;
+    drag.sent = true;
     if (drag.kind === 'token') {
       dragOverride = { ...dragOverride, [drag.id]: { x, y } };
-      scheduleTokenMove(drag.id, x, y);
+      scheduleTokenMove(drag.id, x, y, begin);
     } else {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
-      sendWs({ type: 'marker.move', id: drag.id, x, y });
+      sendWs({ type: 'marker.move', id: drag.id, x, y, ...(begin ? { begin: true } : {}) });
     }
   }
 
@@ -1039,7 +1090,7 @@
     if (!fogOn) return;
     fogErasing = true;
     lastFogPoint = null;
-    sendFogReveal(mapXY(e));
+    sendFogReveal(mapXY(e), true);
   }
 
   // ── Vue : panoramique (outil « Main », clic droit ou molette) ──
@@ -1419,7 +1470,7 @@
   }
 
   function onWindowKeydown(e: KeyboardEvent) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.altKey) return;
     if (e.key === 'Escape') {
       ctxMenu = null;
       pendingPlace = null;
@@ -1450,6 +1501,12 @@
         if (target) focusToken(target);
         break;
       }
+      case 'undo':
+        doUndo();
+        break;
+      case 'redo':
+        doRedo();
+        break;
       case 'tool.move':
         toolSelect('move');
         break;
@@ -1913,6 +1970,31 @@
           </div>
         {/if}
         <div class="mj-toolbar surface-raised">
+          {#if isMj}
+            <div class="history-group" role="group" aria-label="Historique">
+              <button
+                class="history-btn"
+                type="button"
+                disabled={!store.history.canUndo || historyBusy}
+                title="Annuler — Ctrl/⌘ Z"
+                aria-label="Annuler"
+                onclick={doUndo}
+              >
+                <ICONS.undo size={16} strokeWidth={2} />
+              </button>
+              <button
+                class="history-btn"
+                type="button"
+                disabled={!store.history.canRedo || historyBusy}
+                title="Rétablir — Ctrl/⌘ ⇧ Z"
+                aria-label="Rétablir"
+                onclick={doRedo}
+              >
+                <ICONS.redo size={16} strokeWidth={2} />
+              </button>
+            </div>
+            <span class="tsep"></span>
+          {/if}
           {#if isMj && toolbarFit.overflow.length > 0}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger class="tool-more" aria-label="Autres outils">⋯</DropdownMenu.Trigger>
@@ -2654,6 +2736,15 @@
   .ghost-btn:hover { border-color: var(--text-2); color: var(--text); }
   .ghost-btn.danger:hover { border-color: var(--accent-border); color: var(--accent-text); }
   .tsep { width: 2px; height: 20px; background: var(--border-soft); margin: 0 4px; }
+  .history-group { display: flex; align-items: center; gap: 2px; }
+  .history-btn {
+    display: grid; place-items: center;
+    width: 30px; height: 30px;
+    background: transparent; border: none; border-radius: var(--radius-sm);
+    color: var(--text-2); cursor: pointer;
+  }
+  .history-btn:hover:not(:disabled) { background: var(--bg); color: var(--heading); }
+  .history-btn:disabled { opacity: 0.35; cursor: default; }
   .npc-input {
     font-family: var(--font-body); font-size: 13px; padding: 3px 9px;
     border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;

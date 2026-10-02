@@ -6,6 +6,7 @@ import type {
   JournalPage,
   TableSettings,
 } from "@rollwith/shared/dto";
+import type { HistoryState } from "@rollwith/shared/protocol";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
@@ -197,6 +198,40 @@ app.patch(
     }
 
     return c.json<{ settings: TableSettings }>({ settings: newSettings });
+  },
+);
+
+// ── Undo / redo (MJ, lot 4) ────────────────────────────────────
+// L'annulation vit dans le DO (source de vérité) : la route ne fait que
+// sérialiser l'appel, le DO applique la mutation inverse et la diffuse à tous.
+
+app.post(
+  "/:campaignId/undo",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    try {
+      return c.json<HistoryState>(await tableStub(c, campaignId).undo());
+    } catch {
+      return c.json({ error: "Table indisponible" }, 503);
+    }
+  },
+);
+
+app.post(
+  "/:campaignId/redo",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    try {
+      return c.json<HistoryState>(await tableStub(c, campaignId).redo());
+    } catch {
+      return c.json({ error: "Table indisponible" }, 503);
+    }
   },
 );
 

@@ -2,7 +2,7 @@
   import { Dialog } from 'bits-ui';
   import { surfaceClass } from '$lib/ds/surface';
   import CloseButton from '$lib/ds/CloseButton.svelte';
-  import { hotkeysForRole } from '$lib/hotkeys';
+  import { hotkeysForRole, type HotkeyDef } from '$lib/hotkeys';
 
   interface Props {
     open: boolean;
@@ -14,8 +14,9 @@
 
   const groups = $derived(hotkeysForRole(isMj));
 
-  function displayKey(key: string): string {
-    return key === ' ' ? 'Espace' : key === '?' ? '?' : key.toUpperCase();
+  function displayKey(h: HotkeyDef): string {
+    if (h.display) return h.display;
+    return h.key === ' ' ? 'Espace' : h.key.toUpperCase();
   }
 </script>
 
@@ -35,7 +36,7 @@
               {#each group.items as h (h.id)}
                 <div class="help-row">
                   <dt>{h.label}</dt>
-                  <dd><kbd>{displayKey(h.key)}</kbd></dd>
+                  <dd><kbd>{displayKey(h)}</kbd></dd>
                 </div>
               {/each}
             </dl>

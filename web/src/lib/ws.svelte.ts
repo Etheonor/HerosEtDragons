@@ -11,6 +11,7 @@ import type {
   CombatState,
   CharacterCard,
   TableSettings,
+  HistoryState,
 } from "@rollwith/shared/protocol";
 import type { Inventory } from "@rollwith/shared/inventory";
 import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
@@ -61,6 +62,8 @@ export interface TableStore {
   error: string | null;
   /** Lot 2 : incrémenté quand la liste des cartes (REST) a changé côté serveur. */
   mapsRevision: number;
+  /** Lot 4 : disponibilité de l'undo/redo (source de vérité : le DO). */
+  history: HistoryState;
 }
 
 let pingSeq = 0;
@@ -82,6 +85,7 @@ export const tableStore = $state<TableStore>({
   diceAnim: null,
   mapsRevision: 0,
   error: null,
+  history: { canUndo: false, canRedo: false },
 });
 
 let ws: WebSocket | null = null;
@@ -113,6 +117,7 @@ export function resetTableStore() {
   tableStore.pings = [];
   tableStore.diceAnim = null;
   tableStore.error = null;
+  tableStore.history = { canUndo: false, canRedo: false };
 }
 
 export function connectWs(campaignId: string) {
@@ -195,6 +200,7 @@ function handleMessage(msg: Record<string, unknown>) {
       journalIds = new Set(tableStore.journal.map((e) => e.id));
       tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
+      tableStore.history = (msg.history as HistoryState) ?? { canUndo: false, canRedo: false };
       break;
 
     case "delta": {
@@ -223,6 +229,7 @@ function handleMessage(msg: Record<string, unknown>) {
         };
       if (patch.mapId !== undefined) tableStore.state.mapId = patch.mapId as string | null;
       if (patch.settings) tableStore.settings = patch.settings as TableSettings;
+      if (patch.history) tableStore.history = patch.history as HistoryState;
       if (patch.mapsUpdated) tableStore.mapsRevision += 1;
       if (patch.characters) {
         const byId = new Map(tableStore.characters.map((c) => [c.id, c]));

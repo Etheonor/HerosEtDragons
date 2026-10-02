@@ -125,9 +125,12 @@ describe("REST — autorisation (requireAuth / requireMemberOf / requireMj)", ()
     expect(outsider.campaigns).toEqual([]);
   });
 
-  it("un joueur reçoit 403 sur une route MJ (invitations, création de carte)", async () => {
+  it("un joueur reçoit 403 sur une route MJ (invitations, création de carte, undo)", async () => {
     const inv = await post(`/api/campaigns/${CAMPAIGN}/invitations`, {}, OTHER);
     expect(inv.status).toBe(403);
+
+    const undo = await post(`/api/campaigns/${CAMPAIGN}/undo`, {}, OTHER);
+    expect(undo.status).toBe(403);
 
     const formJ = new FormData();
     formJ.set("name", "Interdite");
@@ -151,6 +154,11 @@ describe("REST — autorisation (requireAuth / requireMemberOf / requireMj)", ()
 
     const inv = await post(`/api/campaigns/${CAMPAIGN}/invitations`, {}, MISTRESS);
     expect(inv.status).toBeLessThan(300);
+
+    // Undo sur une pile vide : la route répond l'état d'historique, pas une erreur.
+    const undo = await post(`/api/campaigns/${CAMPAIGN}/undo`, {}, MISTRESS);
+    expect(undo.status).toBe(200);
+    expect(await undo.json()).toEqual({ canUndo: false, canRedo: false });
   });
 
   it("une ressource inexistante renvoie 400 (campaignId manquant), pas 500", async () => {

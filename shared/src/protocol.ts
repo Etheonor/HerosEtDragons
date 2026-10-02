@@ -130,6 +130,14 @@ export interface TableSnapshot {
   presence: PresenceUser[];
   /** Sacs visibles par CE socket : tous pour le MJ, le sien pour un joueur. */
   inventories: Record<string, Inventory>;
+  /** État des piles undo/redo du DO (boutons MJ). */
+  history: HistoryState;
+}
+
+/** Disponibilité de l'undo/redo — booléens seuls, jamais la pile elle-même. */
+export interface HistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 // ── Client → Serveur ──────────────────────────────────────────
@@ -139,6 +147,8 @@ export interface TokenMoveMsg {
   tokenId: string;
   x: number;
   y: number;
+  /** Premier message d'un drag : ouvre UN pas d'undo pour tout le geste. */
+  begin?: boolean;
 }
 
 /** Le MJ pose un personnage (PJ ou PNJ) sur la carte active s'il n'y est pas. */
@@ -235,6 +245,8 @@ export interface MarkerMoveMsg {
   id: string;
   x: number;
   y: number;
+  /** Premier message d'un drag : ouvre UN pas d'undo pour tout le geste. */
+  begin?: boolean;
 }
 
 export interface MarkerRemoveMsg {
@@ -254,6 +266,8 @@ export interface FogRevealMsg {
   type: "fog.reveal";
   x: number;
   y: number;
+  /** Premier point d'un trait : ouvre UN pas d'undo pour toute la passe. */
+  begin?: boolean;
 }
 
 export interface FogCoverMsg {
@@ -370,6 +384,8 @@ export interface TableDeltaPatch {
   fog?: Record<string, FogState>;
   characters?: Record<string, Partial<CharacterCard> | null>;
   settings?: TableSettings;
+  /** Lot 4 : disponibilité de l'undo/redo (diffusée après chaque pas). */
+  history?: HistoryState;
   /** Lot 2 : la liste des cartes (REST) a changé — les clients la relisent. */
   mapsUpdated?: boolean;
 }
