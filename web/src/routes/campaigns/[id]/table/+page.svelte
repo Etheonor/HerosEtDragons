@@ -3,7 +3,7 @@
   import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
-  import type { JournalEntry, MapLink, TableSettings } from '@rollwith/shared/protocol';
+  import type { ClientMessage, JournalEntry, MapLink, TableSettings } from '@rollwith/shared/protocol';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
@@ -516,31 +516,32 @@
   const FOG_SEND_MIN_DIST = 2.5;
 
   // P2 (audit) : un pointermove = jusqu'à 60-120 messages/s. On n'émet qu'une
-  // fois par rAF ET au plus toutes les TOKEN_SEND_MIN_MS : la position locale
-  // (dragOverride) reste fluide sans réseau, et les autres joueurs n'ont pas
-  // besoin de 60 Hz — 30/s est indiscernable et deux fois moins de trafic.
-  const TOKEN_SEND_MIN_MS = 33;
-  let pendingTokenMove: { id: string; x: number; y: number; begin: boolean } | null = null;
-  let tokenMoveRaf = 0;
-  let tokenMoveLastSent = 0;
+  // fois par rAF ET au plus toutes les MOVE_SEND_MIN_MS : la position locale
+  // reste fluide sans réseau, et les autres joueurs n'ont pas besoin de 60 Hz.
+  // Vaut pour TOUS les drags — pions, repères et liens — sans quoi l'envoi à
+  // la frame tape dans le budget GÉNÉRAL du rate limit en plein geste.
+  const MOVE_SEND_MIN_MS = 33;
+  let pendingMove: { msg: ClientMessage; begin: boolean } | null = null;
+  let moveRaf = 0;
+  let moveLastSent = 0;
 
-  function flushTokenMove(force = false) {
-    if (tokenMoveRaf) cancelAnimationFrame(tokenMoveRaf);
-    tokenMoveRaf = 0;
-    const m = pendingTokenMove;
+  function flushMove(force = false) {
+    if (moveRaf) cancelAnimationFrame(moveRaf);
+    moveRaf = 0;
+    const m = pendingMove;
     if (!m) return;
     // Le `begin` ne doit jamais être perdu : s'il est trop tôt, on le garde en
     // attente (c'est lui qui ouvre le pas d'undo du geste entier).
-    if (!force && !m.begin && Date.now() - tokenMoveLastSent < TOKEN_SEND_MIN_MS) return;
-    pendingTokenMove = null;
-    tokenMoveLastSent = Date.now();
-    sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y, ...(m.begin ? { begin: true } : {}) });
+    if (!force && !m.begin && Date.now() - moveLastSent < MOVE_SEND_MIN_MS) return;
+    pendingMove = null;
+    moveLastSent = Date.now();
+    sendWs(m.msg);
   }
 
-  function scheduleTokenMove(id: string, x: number, y: number, begin = false) {
-    pendingTokenMove = { id, x, y, begin: begin || (pendingTokenMove?.begin ?? false) };
-    if (tokenMoveRaf) return;
-    tokenMoveRaf = requestAnimationFrame(() => flushTokenMove());
+  function scheduleMove(msg: ClientMessage, begin = false) {
+    pendingMove = { msg, begin: begin || (pendingMove?.begin ?? false) };
+    if (moveRaf) return;
+    moveRaf = requestAnimationFrame(() => flushMove());
   }
 
   function sendFogReveal(p: { x: number; y: number }, begin = false) {
@@ -825,7 +826,7 @@
     const { x, y } = mapXY(e);
     linkDrag.moved = true;
     linkDragOverride = { ...linkDragOverride, [linkDrag.id]: { x, y } };
-    sendWs({ type: 'link.move', id: linkDrag.id, x, y });
+    scheduleMove({ type: 'link.move', id: linkDrag.id, x, y });
   }
 
   function linkPointerUp() {
@@ -833,6 +834,8 @@
     const { id, moved } = linkDrag;
     linkDrag = null;
     linkJustDragged = moved;
+    // La position finale part TOUJOURS (le throttle a pu dropper la dernière).
+    if (moved) flushMove(true);
     setTimeout(() => {
       const { [id]: _drop, ...rest } = linkDragOverride;
       linkDragOverride = rest;
@@ -1161,10 +1164,16 @@
     drag.sent = true;
     if (drag.kind === 'token') {
       dragOverride = { ...dragOverride, [drag.id]: { x, y } };
-      scheduleTokenMove(drag.id, x, y, begin);
+      scheduleMove(
+        { type: 'token.move', tokenId: drag.id, x, y, ...(begin ? { begin: true } : {}) },
+        begin,
+      );
     } else {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
-      sendWs({ type: 'marker.move', id: drag.id, x, y, ...(begin ? { begin: true } : {}) });
+      scheduleMove(
+        { type: 'marker.move', id: drag.id, x, y, ...(begin ? { begin: true } : {}) },
+        begin,
+      );
     }
   }
 
@@ -1184,7 +1193,7 @@
       drag = null;
       // `true` : la position finale part TOUJOURS, même si le throttle vient de
       //DROP la précédente — sinon le pion resterait en retard d'un mouvement.
-      flushTokenMove(true);
+      flushMove(true);
       setTimeout(() => {
         if (kind === 'token') {
           const { [id]: _drop, ...rest } = dragOverride;

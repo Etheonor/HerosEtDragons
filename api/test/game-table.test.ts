@@ -503,6 +503,33 @@ describe("GameTableDO — intégration", () => {
     expect(errors).toEqual([]);
   });
 
+  it("link.move : un drag de pin ne déclenche PAS le rate limit (budget déplacement)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "link.set", x: 30, y: 30, targetMapId: "map-2", label: "Porte" });
+    const delta = await mj.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const linkId = (delta.patch as { links: { id: string }[] }).links[0]!.id;
+
+    // Un drag de ~2 s à 60 messages/s : 120 messages, même budget que les pions.
+    for (let i = 0; i < 120; i++) {
+      mj.send({ type: "link.move", id: linkId, x: 30 + (i % 10) * 0.1, y: 30 });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mj.messages.filter((m) => m.type === "error")).toEqual([]);
+  });
+
   it("un Abuse de chat reste plafonné (le budget général n'a pas été relâché)", async () => {
     await setupWorld();
     const mj = await connect(MJ);

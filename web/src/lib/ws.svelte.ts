@@ -319,7 +319,7 @@ export function clearWsError() {
   tableStore.error = null;
 }
 
-export function sendWs(msg: Record<string, unknown>) {
+export function sendWs(msg: object) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }

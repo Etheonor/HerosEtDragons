@@ -1064,7 +1064,10 @@ export class GameTableDO extends DurableObject<Env> {
     // (drag de pion) a son propre budget, sinon un usage normal le fait tomber.
     const rawType = msg.type;
     const isMoveMsg =
-      rawType === "token.move" || rawType === "marker.move" || rawType === "fog.reveal";
+      rawType === "token.move" ||
+      rawType === "marker.move" ||
+      rawType === "link.move" ||
+      rawType === "fog.reveal";
     if (this.isRateLimited(attachment.userId, isMoveMsg)) {
       ws.send(
         JSON.stringify({ type: "error", code: "RATE_LIMITED", msg: "Trop de messages, ralentis" }),
