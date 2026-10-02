@@ -126,6 +126,36 @@ export const markerMoveSchema = z.object({
   begin: z.boolean().optional(),
 });
 
+export const linkSetSchema = z.object({
+  type: z.literal("link.set"),
+  id: z.string({ error: "identifiant requis" }).max(64).optional(),
+  x: coord,
+  y: coord,
+  targetMapId: id,
+  targetX: coord.optional(),
+  targetY: coord.optional(),
+  label: z.string({ error: "libellé requis" }).max(80).optional(),
+  kind: z.enum(["door", "stairs", "region", "portal"]).optional(),
+  oneWay: z.boolean().optional(),
+});
+
+export const linkRemoveSchema = z.object({
+  type: z.literal("link.remove"),
+  id: id,
+});
+
+export const linkMoveSchema = z.object({
+  type: z.literal("link.move"),
+  id: id,
+  x: coord,
+  y: coord,
+});
+
+export const linkTravelSchema = z.object({
+  type: z.literal("link.travel"),
+  id: id,
+});
+
 export const markerRemoveSchema = z.object({
   type: z.literal("marker.remove"),
   id: id,
@@ -223,6 +253,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   mapSelectSchema,
   markerSetSchema,
   markerMoveSchema,
+  linkSetSchema,
+  linkRemoveSchema,
+  linkMoveSchema,
+  linkTravelSchema,
   markerRemoveSchema,
   markerClearSchema,
   fogEnableSchema,

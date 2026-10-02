@@ -13,6 +13,8 @@ import {
 import type {
   JournalEntry,
   Marker,
+  MapLink,
+  MapLinkKind,
   FogState,
   CombatState,
   CharacterCard,
@@ -65,6 +67,10 @@ interface LiveState {
    *  changer de carte ne doit pas emporter le placement d'une autre. */
   tokensByMap: Record<string, Record<string, TokenState>>;
   markersByMap: Record<string, Marker[]>;
+  /** Liens entre cartes (portes, escaliers…), stockés par carte. */
+  linksByMap: Record<string, MapLink[]>;
+  /** Lien « ← retour » posé par le dernier voyage (non persisté comme un lien). */
+  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -146,6 +152,10 @@ type MapSelectMsg = Extract<ClientMessageInput, { type: "map.select" }>;
 type MarkerSetMsg = Extract<ClientMessageInput, { type: "marker.set" }>;
 type MarkerMoveMsg = Extract<ClientMessageInput, { type: "marker.move" }>;
 type MarkerRemoveMsg = Extract<ClientMessageInput, { type: "marker.remove" }>;
+type LinkSetMsg = Extract<ClientMessageInput, { type: "link.set" }>;
+type LinkRemoveMsg = Extract<ClientMessageInput, { type: "link.remove" }>;
+type LinkMoveMsg = Extract<ClientMessageInput, { type: "link.move" }>;
+type LinkTravelMsg = Extract<ClientMessageInput, { type: "link.travel" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
@@ -161,6 +171,8 @@ function defaultLiveState(): LiveState {
     mapId: null,
     tokensByMap: {},
     markersByMap: {},
+    linksByMap: {},
+    returnLink: null,
     fog: {},
     combat: null,
   };
@@ -219,13 +231,19 @@ export class GameTableDO extends DurableObject<Env> {
   private migrateLiveState(stored: LiveState | undefined): LiveState {
     if (!stored) return defaultLiveState();
     const legacy = stored as unknown as Record<string, unknown>;
-    if (legacy.tokensByMap && legacy.markersByMap) return stored;
+    if (legacy.tokensByMap && legacy.markersByMap) {
+      // v2 → v3 : les liens entre cartes sont apparus après coup.
+      if (!legacy.linksByMap) return { ...stored, linksByMap: {}, returnLink: null };
+      return stored;
+    }
     const key = ((legacy.mapId as string | null) ?? "") as string;
     return {
       mode: (legacy.mode as "exploration" | "combat") ?? "exploration",
       mapId: (legacy.mapId as string | null) ?? null,
       tokensByMap: { [key]: (legacy.tokens as Record<string, TokenState>) ?? {} },
       markersByMap: { [key]: (legacy.markers as Marker[]) ?? [] },
+      linksByMap: {},
+      returnLink: null,
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
     };
@@ -252,6 +270,14 @@ export class GameTableDO extends DurableObject<Env> {
 
   private patchMarkers(state: LiveState, markers: Marker[]): Partial<LiveState> {
     return { markersByMap: { ...state.markersByMap, [this.mapKey(state.mapId)]: markers } };
+  }
+
+  private linksOf(state: LiveState, mapId: string | null = state.mapId): MapLink[] {
+    return state.linksByMap?.[this.mapKey(mapId)] ?? [];
+  }
+
+  private patchLinks(state: LiveState, links: MapLink[]): Partial<LiveState> {
+    return { linksByMap: { ...state.linksByMap, [this.mapKey(state.mapId)]: links } };
   }
 
   private async ensureCampaignId(): Promise<void> {
@@ -1106,6 +1132,18 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "marker.clear":
           await this.handleMarkerClear(ws, attachment);
+          break;
+        case "link.set":
+          await this.handleLinkSet(attachment, m);
+          break;
+        case "link.remove":
+          await this.handleLinkRemove(attachment, m);
+          break;
+        case "link.move":
+          await this.handleLinkMove(attachment, m);
+          break;
+        case "link.travel":
+          await this.handleLinkTravel(attachment, m);
           break;
         case "fog.enable":
           await this.handleFogEnable(ws, attachment);
@@ -2217,14 +2255,17 @@ export class GameTableDO extends DurableObject<Env> {
     }
 
     const state = await this.getState();
-    await this.patchState({ mapId });
+    await this.patchState({ mapId, returnLink: null });
     const view = { ...state, mapId };
-    // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers (vue de
-    // la nouvelle carte) au lieu de fusionner (voir ws.ts).
+    // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers/liens
+    // (vue de la nouvelle carte) au lieu de fusionner (voir ws.ts).
     this.broadcastRoleAware({
       mapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
+      links: this.linksOf(view),
+      returnLink: null,
+      arrival: null,
     });
     // B5 : changer de carte change tout le jeu de PNJ visibles/masqués.
     await this.broadcastPnjVisibility();
@@ -2309,6 +2350,124 @@ export class GameTableDO extends DurableObject<Env> {
         markers: previous.map((m) => ({ ...m })),
       },
     ]);
+  }
+
+  // ── Handlers : liens entre cartes ──────────────────────────────
+  // Créés/édités par le MJ ; empruntés par TOUT membre (« link.travel »), la
+  // carte active étant partagée. Aucun filtre B5 : les noms de cartes sont déjà
+  // lisibles par les membres (GET /api/maps), un lien ne révèle rien de plus.
+
+  private async handleLinkSet(att: WsAttachment, msg: LinkSetMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId || msg.targetMapId === mapId) return;
+
+    const db = this.getDb();
+    const [target] = await db
+      .select({ id: schema.maps.id })
+      .from(schema.maps)
+      .where(and(eq(schema.maps.id, msg.targetMapId), eq(schema.maps.campaignId, this.campaignId)))
+      .limit(1);
+    if (!target) return;
+
+    const links = this.linksOf(state);
+    const existing = msg.id ? links.find((l) => l.id === msg.id) : undefined;
+    const link: MapLink = {
+      id: existing?.id ?? msg.id ?? crypto.randomUUID(),
+      mapId,
+      x: this.clamp(msg.x),
+      y: this.clamp(msg.y),
+      targetMapId: msg.targetMapId,
+      ...(msg.targetX !== undefined ? { targetX: this.clamp(msg.targetX) } : {}),
+      ...(msg.targetY !== undefined ? { targetY: this.clamp(msg.targetY) } : {}),
+      label: (msg.label?.trim() || "passage").slice(0, 80),
+      kind: (msg.kind ?? "door") as MapLinkKind,
+      oneWay: msg.oneWay ?? false,
+    };
+    const next = existing ? links.map((l) => (l.id === link.id ? link : l)) : [...links, link];
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastAll({ type: "delta", patch: { links: next } });
+  }
+
+  private async handleLinkRemove(att: WsAttachment, msg: LinkRemoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const links = this.linksOf(state);
+    const next = links.filter((l) => l.id !== msg.id);
+    if (next.length === links.length) return;
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastAll({ type: "delta", patch: { links: next } });
+  }
+
+  private async handleLinkMove(att: WsAttachment, msg: LinkMoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const links = this.linksOf(state);
+    const next = links.map((l) =>
+      l.id === msg.id ? { ...l, x: this.clamp(msg.x), y: this.clamp(msg.y) } : l,
+    );
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastAll({ type: "delta", patch: { links: next } });
+  }
+
+  private async handleLinkTravel(att: WsAttachment, msg: LinkTravelMsg) {
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId) return;
+
+    const back = state.returnLink && state.returnLink.id === msg.id ? state.returnLink : null;
+    const link = back ?? this.linksOf(state).find((l) => l.id === msg.id);
+    if (!link) return;
+
+    const db = this.getDb();
+    const [target] = await db
+      .select({ id: schema.maps.id })
+      .from(schema.maps)
+      .where(and(eq(schema.maps.id, link.targetMapId), eq(schema.maps.campaignId, this.campaignId)))
+      .limit(1);
+    if (!target) return;
+
+    const arrival = { x: link.targetX ?? 50, y: link.targetY ?? 50 };
+    // Le retour n'existe que pour un vrai lien, non « one-way », et pas pour le
+    // retour lui-même (sinon on empile des retours).
+    const returnLink: MapLink | null =
+      back || link.oneWay
+        ? null
+        : {
+            id: `return:${crypto.randomUUID()}`,
+            mapId: link.targetMapId,
+            x: arrival.x,
+            y: arrival.y,
+            targetMapId: mapId,
+            targetX: link.x,
+            targetY: link.y,
+            label: "← retour",
+            kind: "region",
+            oneWay: true,
+          };
+
+    await this.patchState({ mapId: link.targetMapId, returnLink });
+    const view = { ...state, mapId: link.targetMapId };
+    // mapId dans le patch ⇒ le client REMPLACE tokens/markers/liens.
+    this.broadcastRoleAware({
+      mapId: link.targetMapId,
+      tokens: this.tokensOf(view),
+      markers: this.markersOf(view),
+      links: this.linksOf(view),
+      returnLink,
+      arrival,
+    });
+    await this.broadcastPnjVisibility(); // B5 : changer de carte change les PNJ visibles
+
+    const entry = this.makeJournalEntry(
+      "system",
+      null,
+      null,
+      `✦ Le groupe emprunte ${link.label}.`,
+    );
+    this.appendJournal(entry);
+    this.broadcastJournal(entry);
   }
 
   // ── Handlers : brouillard ───────────────────────────────────────
@@ -3007,6 +3166,8 @@ export class GameTableDO extends DurableObject<Env> {
         mapId: state.mapId,
         tokens,
         markers: this.markersOf(state),
+        links: this.linksOf(state),
+        returnLink: state.returnLink?.mapId === state.mapId ? state.returnLink : null,
         fog: state.fog,
         combat,
       },

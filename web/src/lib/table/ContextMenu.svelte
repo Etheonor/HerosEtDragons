@@ -22,6 +22,32 @@
   const { open, x, y, items, onOpenChange }: Props = $props();
 </script>
 
+{#snippet entry(item: ContextMenuItem)}
+  {#if item.separatorBefore}
+    <DropdownMenu.Separator class="ctx-sep" />
+  {/if}
+  {#if item.children && item.children.length > 0}
+    <DropdownMenu.Sub>
+      <DropdownMenu.SubTrigger class="ctx-item" disabled={item.disabled}>
+        {item.label} ›
+      </DropdownMenu.SubTrigger>
+      <DropdownMenu.SubContent {...surfaceProps('overlay', 'ctx-menu')} sideOffset={4} alignOffset={-4}>
+        {#each item.children as child (child.id)}
+          {@render entry(child)}
+        {/each}
+      </DropdownMenu.SubContent>
+    </DropdownMenu.Sub>
+  {:else}
+    <DropdownMenu.Item
+      class="ctx-item{item.danger ? ' danger' : ''}"
+      disabled={item.disabled}
+      onSelect={item.onSelect}
+    >
+      {item.label}
+    </DropdownMenu.Item>
+  {/if}
+{/snippet}
+
 <DropdownMenu.Root {open} {onOpenChange}>
   <DropdownMenu.Trigger
     class="ctx-anchor"
@@ -37,16 +63,7 @@
       sideOffset={2}
     >
       {#each items as item (item.id)}
-        {#if item.separatorBefore}
-          <DropdownMenu.Separator class="ctx-sep" />
-        {/if}
-        <DropdownMenu.Item
-          class="ctx-item{item.danger ? ' danger' : ''}"
-          disabled={item.disabled}
-          onSelect={item.onSelect}
-        >
-          {item.label}
-        </DropdownMenu.Item>
+        {@render entry(item)}
       {/each}
     </DropdownMenu.Content>
   </DropdownMenu.Portal>

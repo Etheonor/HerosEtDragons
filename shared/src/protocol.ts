@@ -39,6 +39,25 @@ export interface FogState {
   reveals: { x: number; y: number }[];
 }
 
+/** Lien entre deux cartes (porte, escalier, portail…) — « le HTML des maps ». */
+export type MapLinkKind = "door" | "stairs" | "region" | "portal";
+
+export interface MapLink {
+  id: string;
+  /** Carte qui porte le lien. */
+  mapId: string;
+  /** Position du pin, en % de la surface. */
+  x: number;
+  y: number;
+  targetMapId: string;
+  /** Point d'arrivée dans la carte cible (%, défaut : centre). */
+  targetX?: number;
+  targetY?: number;
+  label: string;
+  kind: MapLinkKind;
+  oneWay: boolean;
+}
+
 export interface CombatState {
   phase: "init" | "run";
   participants: string[];
@@ -54,6 +73,10 @@ export interface TableLiveState {
   mapId: string | null;
   tokens: Record<string, TokenState>;
   markers: Marker[];
+  /** Liens de la carte active (le DO les stocke par carte, comme les pions). */
+  links: MapLink[];
+  /** Lien « ← retour » posé automatiquement au dernier voyage, s'il y en a un. */
+  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -258,6 +281,37 @@ export interface MarkerClearMsg {
   type: "marker.clear";
 }
 
+export interface LinkSetMsg {
+  type: "link.set";
+  id?: string;
+  x: number;
+  y: number;
+  targetMapId: string;
+  targetX?: number;
+  targetY?: number;
+  label?: string;
+  kind?: MapLinkKind;
+  oneWay?: boolean;
+}
+
+export interface LinkRemoveMsg {
+  type: "link.remove";
+  id: string;
+}
+
+export interface LinkMoveMsg {
+  type: "link.move";
+  id: string;
+  x: number;
+  y: number;
+}
+
+/** Voyage par un lien : autorisé à tout membre (la carte active est partagée). */
+export interface LinkTravelMsg {
+  type: "link.travel";
+  id: string;
+}
+
 export interface FogEnableMsg {
   type: "fog.enable";
 }
@@ -365,6 +419,10 @@ export type ClientMessage =
   | MarkerMoveMsg
   | MarkerRemoveMsg
   | MarkerClearMsg
+  | LinkSetMsg
+  | LinkRemoveMsg
+  | LinkMoveMsg
+  | LinkTravelMsg
   | FogEnableMsg
   | FogRevealMsg
   | FogCoverMsg
@@ -388,6 +446,10 @@ export interface TableDeltaPatch {
   mapId?: string | null;
   combat?: TableLiveState["combat"];
   markers?: Marker[];
+  links?: MapLink[];
+  returnLink?: MapLink | null;
+  /** Point d'arrivée du dernier voyage (le client recentre sa caméra). */
+  arrival?: { x: number; y: number } | null;
   tokens?: Record<string, TokenState | null>;
   fog?: Record<string, FogState>;
   characters?: Record<string, Partial<CharacterCard> | null>;
@@ -504,6 +566,10 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "marker.move",
     "marker.remove",
     "marker.clear",
+    "link.set",
+    "link.remove",
+    "link.move",
+    "link.travel",
     "fog.enable",
     "fog.reveal",
     "fog.cover",

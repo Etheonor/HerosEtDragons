@@ -948,6 +948,89 @@ describe("GameTableDO — intégration", () => {
     );
   });
 
+  it("liens (lot 6) : un joueur emprunte un lien, arrive au point prévu et peut revenir", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "link.set",
+      x: 30,
+      y: 40,
+      targetMapId: "map-2",
+      targetX: 70,
+      targetY: 60,
+      label: "Escalier",
+    });
+    const linkDelta = await player.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const link = (linkDelta.patch as { links: { id: string; label: string }[] }).links[0]!;
+    expect(link.label).toBe("Escalier");
+
+    // Le joueur emprunte le lien (autorisé à tout membre), tout le monde suit.
+    player.send({ type: "link.travel", id: link.id });
+    const arrived = await player.nextWhere(
+      (m) => (m.patch as { mapId?: unknown })?.mapId === "map-2",
+    );
+    const patch = arrived.patch as {
+      arrival: { x: number; y: number };
+      returnLink: { id: string; targetMapId: string; targetX?: number; targetY?: number } | null;
+    };
+    expect(patch.arrival).toEqual({ x: 70, y: 60 });
+    expect(patch.returnLink?.targetMapId).toBe("map-1");
+    expect(patch.returnLink?.targetX).toBe(30);
+    expect(patch.returnLink?.targetY).toBe(40);
+
+    // Retour : même mécanique, et le retour ne s'empile pas.
+    player.send({ type: "link.travel", id: patch.returnLink!.id });
+    const back = await player.nextWhere((m) => {
+      const p = m.patch as { mapId?: unknown; arrival?: unknown } | undefined;
+      return p?.mapId === "map-1" && p.arrival !== null && p.arrival !== undefined;
+    });
+    expect((back.patch as { arrival: { x: number; y: number } }).arrival).toEqual({
+      x: 30,
+      y: 40,
+    });
+    expect((back.patch as { returnLink: unknown }).returnLink).toBeNull();
+  });
+
+  it("liens (lot 6) : un joueur ne peut ni poser ni supprimer un lien", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    player.send({ type: "link.set", x: 10, y: 10, targetMapId: "map-2", label: "Pirate" });
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Un snapshot neuf prouve que rien n'a été enregistré.
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    expect((snap.state as { links: unknown[] }).links.length).toBe(0);
+  });
+
   it("undo (lot 4) : la pile est plafonnée à 50 pas, et le snapshot expose canUndo/canRedo", async () => {
     await setupWorld();
     const mj = await connect(MJ);

@@ -730,6 +730,76 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
       .toBeGreaterThan(0);
   });
 
+  test("les liens : poser par clic droit, voyager, revenir", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+
+    // Clic droit dans le vide → « Poser un lien ici… » → sous-menu des cartes.
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
+    await page.getByRole("menuitem", { name: /Carte quadrillée/ }).click();
+
+    const link = page.locator(".map-link", { hasText: "Carte quadrillée" });
+    await expect(link).toHaveCount(1);
+
+    // Voyage : la carte change, un lien retour apparaît.
+    await link.click();
+    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+    const back = page.locator(".map-link.return-link");
+    await expect(back).toHaveCount(1);
+
+    // Retour : tout revient, le lien retour disparaît.
+    await back.click();
+    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+    await expect(page.locator(".map-link.return-link")).toHaveCount(0);
+  });
+
+  test("les liens : onglet Liens de la bibliothèque", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
+    await page.getByRole("menuitem", { name: /Carte quadrillée/ }).click();
+    await expect(page.locator(".map-link", { hasText: "Carte quadrillée" })).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /Liens/ }).click();
+    await expect(dialog.locator(".link-row", { hasText: "Carte quadrillée" })).toHaveCount(1);
+
+    // « aller » depuis la bibliothèque voyage et referme l'overlay.
+    await dialog.getByRole("button", { name: "aller" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+  });
+
+  test("aperçu au survol (Ctrl) sur un pion", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await expect(token).toBeVisible();
+
+    await page.keyboard.down("Control");
+    await token.hover();
+    const preview = page.locator(".token-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("Kaelith");
+    await expect(preview).toContainText(/CA \d+/);
+
+    await page.keyboard.up("Control");
+    await expect(preview).toHaveCount(0);
+  });
+
   test("le tableau de bord MJ liste les PNJ de la scène et garde les notes de carte", async ({
     page,
   }) => {

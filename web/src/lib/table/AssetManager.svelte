@@ -23,7 +23,7 @@
   import CloseButton from '$lib/ds/CloseButton.svelte';
   import { ICONS } from '$lib/ds/icons';
   import { api, type MapSummary, type NpcTemplate } from '$lib/api';
-  import type { CharacterCard } from '@rollwith/shared/protocol';
+  import type { CharacterCard, MapLink } from '@rollwith/shared/protocol';
   import { portraitUrl } from '$lib/portraits';
   import type { AssetTarget } from './context-menu';
 
@@ -34,6 +34,9 @@
     maps: MapSummary[];
     activeMapId: string | null;
     characters: CharacterCard[];
+    /** Liens de la carte active + lien retour éventuel. */
+    links: MapLink[];
+    returnLink: MapLink | null;
     /** Ids des personnages ayant un pion sur la carte active. */
     tokenCharIds: string[];
     isMj: boolean;
@@ -44,6 +47,8 @@
     onNewMap: () => void;
     onPlaceTemplate: (tpl: NpcTemplate, count: number) => void;
     onPlaceChar: (charId: string) => void;
+    onTravelLink: (id: string) => void;
+    onRemoveLink: (id: string) => void;
     onContextMenu: (e: MouseEvent, target: AssetTarget) => void;
   }
 
@@ -54,6 +59,8 @@
     maps,
     activeMapId,
     characters,
+    links,
+    returnLink,
     tokenCharIds,
     isMj,
     templatesRevision,
@@ -61,10 +68,12 @@
     onNewMap,
     onPlaceTemplate,
     onPlaceChar,
+    onTravelLink,
+    onRemoveLink,
     onContextMenu,
   }: Props = $props();
 
-  type Tab = 'maps' | 'npcs' | 'chars';
+  type Tab = 'maps' | 'npcs' | 'chars' | 'links';
 
   let tab = $state<Tab>('maps');
   let search = $state('');
@@ -103,6 +112,11 @@
 
   const pjChars = $derived(characters.filter((c) => c.kind === 'pj'));
   const pnjChars = $derived(characters.filter((c) => c.kind === 'pnj'));
+  const allLinks = $derived(returnLink ? [...links, returnLink] : links);
+
+  function mapName(id: string): string {
+    return maps.find((m) => m.id === id)?.name ?? 'carte supprimée';
+  }
 
   const filteredMaps = $derived(maps.filter((m) => matches(m.name)));
   const filteredTemplates = $derived(templates.filter((t) => matches(t.name)));
@@ -125,7 +139,9 @@
       ? filteredMaps.length
       : tab === 'npcs'
         ? filteredTemplates.length + filteredPnj.length
-        : filteredPj.length,
+        : tab === 'chars'
+          ? filteredPj.length
+          : allLinks.length,
   );
 </script>
 
@@ -171,6 +187,13 @@
           aria-selected={tab === 'chars'}
           onclick={() => (tab = 'chars')}
           >Personnages <span class="asset-count">{pjChars.length}</span></button
+        >
+        <button
+          class="asset-tab"
+          class:active={tab === 'links'}
+          role="tab"
+          aria-selected={tab === 'links'}
+          onclick={() => (tab = 'links')}>Liens <span class="asset-count">{allLinks.length}</span></button
         >
       </div>
 
@@ -333,12 +356,43 @@
               </div>
             {/if}
           {/if}
-        {:else if filteredPj.length === 0}
-          <p class="asset-empty">Aucun personnage joueur.</p>
+        {:else if tab === 'chars'}
+          {#if filteredPj.length === 0}
+            <p class="asset-empty">Aucun personnage joueur.</p>
+          {:else}
+            <div class="asset-grid">
+              {#each filteredPj as c (c.id)}
+                {@render charCard(c)}
+              {/each}
+            </div>
+          {/if}
+        {:else if allLinks.length === 0}
+          <p class="asset-empty">
+            Aucun lien sur cette carte — clic droit sur la carte : « Poser un lien ici… ».
+          </p>
         {:else}
-          <div class="asset-grid">
-            {#each filteredPj as c (c.id)}
-              {@render charCard(c)}
+          <div class="link-list">
+            {#each allLinks as l (l.id)}
+              <div class="link-row" class:return-link={l.id.startsWith('return:')}>
+                <span class="link-kind" aria-hidden="true">→</span>
+                <span class="link-body">
+                  <span class="link-label">{l.label}</span>
+                  <span class="link-target">
+                    vers {mapName(l.targetMapId)}{l.oneWay ? ' · sens unique' : ''}
+                  </span>
+                </span>
+                <button class="link-go" type="button" onclick={() => onTravelLink(l.id)}>aller</button
+                >
+                {#if isMj && !l.id.startsWith('return:')}
+                  <button
+                    class="link-del"
+                    type="button"
+                    aria-label="Supprimer le lien"
+                    title="Supprimer le lien"
+                    onclick={() => onRemoveLink(l.id)}>✕</button
+                  >
+                {/if}
+              </div>
             {/each}
           </div>
         {/if}
@@ -552,6 +606,68 @@
   }
   .asset-qty button:hover { border-color: var(--accent-border); color: var(--accent-text); }
   .asset-qty-n { font-size: 12px; font-weight: 700; color: var(--text); min-width: 22px; text-align: center; }
+  .link-list { display: flex; flex-direction: column; gap: 5px; }
+  .link-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    background: var(--panel);
+    border: 1.5px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+  }
+  .link-row:hover { border-color: var(--border); }
+  .link-row.return-link { border-style: dashed; opacity: 0.9; }
+  .link-kind {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    font-size: 13px;
+    color: var(--accent-fg);
+    background: var(--accent);
+    border-radius: var(--radius-full);
+  }
+  .link-row.return-link .link-kind {
+    color: var(--heading);
+    background: var(--panel);
+    border: 1.5px solid var(--border);
+  }
+  .link-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .link-label {
+    font-family: var(--font-title);
+    font-size: 13.5px;
+    color: var(--heading);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .link-target { font-size: 11px; color: var(--text-2); }
+  .link-go {
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    color: var(--text-2);
+    background: transparent;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .link-go:hover { color: var(--heading); background: var(--selected); }
+  .link-del {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font-size: 11px;
+    color: var(--text-2);
+    background: transparent;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .link-del:hover { color: var(--accent-fg); background: var(--accent); border-color: var(--accent-border); }
   .asset-foot {
     display: flex;
     align-items: center;

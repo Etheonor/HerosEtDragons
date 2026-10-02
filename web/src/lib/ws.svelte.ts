@@ -7,6 +7,7 @@
 import type {
   JournalEntry,
   Marker,
+  MapLink,
   FogState,
   CombatState,
   CharacterCard,
@@ -21,6 +22,8 @@ export interface TableState {
   mapId: string | null;
   tokens: Record<string, { charId: string; x: number; y: number }>;
   markers: Marker[];
+  links: MapLink[];
+  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -64,6 +67,8 @@ export interface TableStore {
   mapsRevision: number;
   /** Lot 4 : disponibilité de l'undo/redo (source de vérité : le DO). */
   history: HistoryState;
+  /** Point d'arrivée du dernier voyage (à consommer par la caméra). */
+  arrival: { x: number; y: number } | null;
 }
 
 let pingSeq = 0;
@@ -75,7 +80,16 @@ let journalIds = new Set<number>();
 /** État partagé de la table — les mutations ci-dessous sont réactives partout. */
 export const tableStore = $state<TableStore>({
   connected: false,
-  state: { mode: "exploration", mapId: null, tokens: {}, markers: [], fog: {}, combat: null },
+  state: {
+    mode: "exploration",
+    mapId: null,
+    tokens: {},
+    markers: [],
+    links: [],
+    returnLink: null,
+    fog: {},
+    combat: null,
+  },
   characters: [],
   settings: DEFAULT_SETTINGS,
   journal: [],
@@ -86,6 +100,7 @@ export const tableStore = $state<TableStore>({
   mapsRevision: 0,
   error: null,
   history: { canUndo: false, canRedo: false },
+  arrival: null,
 });
 
 let ws: WebSocket | null = null;
@@ -105,6 +120,8 @@ export function resetTableStore() {
     mapId: null,
     tokens: {},
     markers: [],
+    links: [],
+    returnLink: null,
     fog: {},
     combat: null,
   };
@@ -118,6 +135,7 @@ export function resetTableStore() {
   tableStore.diceAnim = null;
   tableStore.error = null;
   tableStore.history = { canUndo: false, canRedo: false };
+  tableStore.arrival = null;
 }
 
 export function connectWs(campaignId: string) {
@@ -201,6 +219,7 @@ function handleMessage(msg: Record<string, unknown>) {
       tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
       tableStore.history = (msg.history as HistoryState) ?? { canUndo: false, canRedo: false };
+      tableStore.arrival = null;
       break;
 
     case "delta": {
@@ -222,6 +241,13 @@ function handleMessage(msg: Record<string, unknown>) {
         tableStore.state.tokens = tokens;
       }
       if (patch.markers) tableStore.state.markers = patch.markers as Marker[];
+      if (patch.links) tableStore.state.links = patch.links as MapLink[];
+      if (patch.returnLink !== undefined) {
+        tableStore.state.returnLink = patch.returnLink as MapLink | null;
+      }
+      if (patch.arrival !== undefined) {
+        tableStore.arrival = patch.arrival as { x: number; y: number } | null;
+      }
       if (patch.fog)
         tableStore.state.fog = {
           ...tableStore.state.fog,

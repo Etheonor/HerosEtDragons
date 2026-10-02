@@ -704,7 +704,15 @@
     if (id === cameraMapId) return;
     flushCameraSave();
     cameraMapId = id;
-    pendingPose = id ? (loadCameraPose(id) ?? { fx: 0.5, fy: 0.5, zoom: 1 }) : null;
+    // Un voyage par un lien arrive avec son point d'arrivée : il prime sur le
+    // cadrage sauvegardé de la carte cible.
+    const arrival = store.arrival;
+    if (id && arrival) {
+      store.arrival = null;
+      pendingPose = { fx: arrival.x / 100, fy: arrival.y / 100, zoom: 1 };
+    } else {
+      pendingPose = id ? (loadCameraPose(id) ?? { fx: 0.5, fy: 0.5, zoom: 1 }) : null;
+    }
   });
 
   const surfaceReady = $derived(
@@ -794,6 +802,31 @@
   const displayMarkers = $derived(
     store.state.markers.map((m) => (markerDragOverride[m.id] ? { ...m, ...markerDragOverride[m.id] } : m)),
   );
+
+  const displayLinks = $derived(
+    store.state.returnLink ? [...store.state.links, store.state.returnLink] : store.state.links,
+  );
+
+  // ── Aperçu au survol (Cmd/Ctrl + survol) ─────────────────────
+  let preview = $state<{ charId: string; x: number; y: number } | null>(null);
+  const previewChar = $derived(preview ? charById(preview.charId) : null);
+
+  function onTokenHover(charId: string, e: PointerEvent) {
+    if (e.metaKey || e.ctrlKey) preview = { charId, x: e.clientX, y: e.clientY };
+    else if (preview) preview = null;
+  }
+
+  $effect(() => {
+    const clear = () => {
+      if (preview) preview = null;
+    };
+    globalThis.addEventListener('keyup', clear);
+    globalThis.addEventListener('blur', clear);
+    return () => {
+      globalThis.removeEventListener('keyup', clear);
+      globalThis.removeEventListener('blur', clear);
+    };
+  });
 
   function charById(id: string) {
     return store.characters.find((c) => c.id === id) ?? null;
@@ -1176,7 +1209,8 @@
     if (isOnToken(e)) return;
     e.preventDefault();
     if (Date.now() - panMovedAt < 400) return;
-    ctxMenu = { kind: 'map', x: e.clientX, y: e.clientY };
+    const p = mapXY(e);
+    ctxMenu = { kind: 'map', x: e.clientX, y: e.clientY, sx: p.x, sy: p.y };
   }
 
   function onFramePointerMove(e: PointerEvent) {
@@ -1481,7 +1515,9 @@
   type CtxTarget =
     | { kind: 'token'; charId: string; charKind: 'pj' | 'pnj'; x: number; y: number }
     | { kind: 'marker'; id: string; x: number; y: number }
-    | { kind: 'map'; x: number; y: number }
+    | { kind: 'link'; id: string; x: number; y: number }
+    /** `x/y` = pointeur écran (ancre du menu) ; `sx/sy` = % de surface. */
+    | { kind: 'map'; x: number; y: number; sx: number; sy: number }
     | ({ x: number; y: number } & AssetTarget);
 
   let ctxMenu = $state<CtxTarget | null>(null);
@@ -1629,6 +1665,26 @@
       return items;
     }
 
+    if (t.kind === 'link') {
+      const items: ContextMenuItem[] = [
+        {
+          id: 'travel',
+          label: 'Emprunter ce lien',
+          onSelect: () => sendWs({ type: 'link.travel', id: t.id }),
+        },
+      ];
+      if (isMj && !t.id.startsWith('return:')) {
+        items.push({
+          id: 'remove-link',
+          label: 'Supprimer le lien',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => sendWs({ type: 'link.remove', id: t.id }),
+        });
+      }
+      return items;
+    }
+
     // Vide de carte.
     const items: ContextMenuItem[] = [];
     if (myCharId && store.state.tokens[myCharId]) {
@@ -1640,6 +1696,28 @@
     }
     items.push({ id: 'fit', label: 'Recadrer la carte', onSelect: resetView });
     if (isMj) {
+      const otherMaps = maps.filter((m) => m.id !== store.state.mapId);
+      if (otherMaps.length > 0) {
+        items.push({
+          id: 'add-link',
+          label: 'Poser un lien ici…',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: otherMaps.map((m) => ({
+            id: `link-to-${m.id}`,
+            label: m.name,
+            onSelect: () =>
+              sendWs({
+                type: 'link.set',
+                x: t.sx,
+                y: t.sy,
+                targetMapId: m.id,
+                label: m.name,
+                kind: 'door',
+              }),
+          })),
+        });
+      }
       items.push(
         {
           id: 'tool.move',
@@ -1670,6 +1748,12 @@
     e.preventDefault();
     e.stopPropagation();
     ctxMenu = { kind: 'marker', id, x: e.clientX, y: e.clientY };
+  }
+
+  function openLinkMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'link', id, x: e.clientX, y: e.clientY };
   }
 
   /** Clic droit dans l'asset manager : même menu unique, cible « asset ». */
@@ -1970,6 +2054,24 @@
               </div>
             {/each}
 
+            {#each displayLinks as l (l.id)}
+              <button
+                type="button"
+                class="map-link"
+                class:return-link={l.id.startsWith('return:')}
+                style="left: {l.x}%; top: {l.y}%;"
+                title={l.label}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  sendWs({ type: 'link.travel', id: l.id });
+                }}
+                oncontextmenu={(e) => openLinkMenu(e, l.id)}
+              >
+                <span class="map-link-icon" aria-hidden="true">→</span>
+                <span class="map-link-label">{l.label}</span>
+              </button>
+            {/each}
+
             {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
               {@const c = charById(t.charId)}
               {#if c}
@@ -1986,6 +2088,10 @@
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
+                  onpointermove={(e) => onTokenHover(c.id, e)}
+                  onpointerleave={() => {
+                    if (preview) preview = null;
+                  }}
                   oncontextmenu={(e) => openTokenMenu(e, c.id, c.kind)}
                 >
                   {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
@@ -2704,6 +2810,44 @@
     <div class="toast" role="status">{toast}</div>
   {/if}
 
+  {#if previewChar && preview}
+    <div
+      class="token-preview surface-overlay"
+      style="left: {Math.min(preview.x + 16, innerWidth - 272)}px; top: {Math.min(preview.y + 16, innerHeight - 240)}px;"
+    >
+      <div class="tp-head">
+        {#if portraitUrl(previewChar.portrait)}
+          <img class="tp-portrait" src={portraitUrl(previewChar.portrait)} alt="" draggable="false" />
+        {:else}
+          <span class="tp-initial" style="--token-color: {previewChar.color};">
+            {previewChar.name.slice(0, 1).toUpperCase()}
+          </span>
+        {/if}
+        <span class="tp-id">
+          <span class="tp-name">{previewChar.name}</span>
+          <span class="tp-sub">
+            {previewChar.kind === 'pj' ? previewChar.sub : 'PNJ'} · CA {previewChar.ca}
+          </span>
+        </span>
+      </div>
+      {#if previewChar.pv !== null && previewChar.pvMax !== null && previewChar.pvMax > 0}
+        {@const pct = Math.max(0, Math.min(100, (previewChar.pv / previewChar.pvMax) * 100))}
+        <div class="tp-hp">
+          <div
+            class="tp-hp-fill {pct >= 70 ? 'ok' : pct >= 30 ? 'mid' : 'low'}"
+            style="width: {pct}%;"
+          ></div>
+        </div>
+        <span class="tp-pv">PV {previewChar.pv} / {previewChar.pvMax}</span>
+      {/if}
+      {#if previewChar.conditions.length > 0}
+        <div class="tp-conds">
+          {#each previewChar.conditions as cond (cond)}<span class="tp-cond">{cond}</span>{/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <ContextMenu
     open={ctxMenu !== null}
     x={ctxMenu?.x ?? 0}
@@ -2723,6 +2867,8 @@
       {maps}
       activeMapId={store.state.mapId}
       characters={store.characters}
+      links={store.state.links}
+      returnLink={store.state.returnLink}
       tokenCharIds={Object.keys(store.state.tokens)}
       {isMj}
       {templatesRevision}
@@ -2730,6 +2876,11 @@
       onNewMap={() => pickFile(IMAGE_ACCEPT, (f) => void createMapFromFile(f))}
       onPlaceTemplate={(tpl, count) => armTemplate(tpl.id, tpl.name, count)}
       onPlaceChar={placeCharFromLibrary}
+      onTravelLink={(id) => {
+        sendWs({ type: 'link.travel', id });
+        assetManagerOpen = false;
+      }}
+      onRemoveLink={(id) => sendWs({ type: 'link.remove', id })}
       onContextMenu={openAssetMenu}
     />
   {/if}
@@ -3266,10 +3417,12 @@
   /* Le contenu de la carte ne reçoit pas les gestes — c'est `.map-bg` qui les
      porte — sauf les objets interactifs : pions et repères. */
   .token,
-  .marker { pointer-events: auto; }
+  .marker,
+  .map-link { pointer-events: auto; }
   /* Outil Main : les pions ne doivent pas intercepter le geste, il part du fond. */
   .map-zoom.tool-hand .token,
-  .map-zoom.tool-hand .marker { pointer-events: none; }
+  .map-zoom.tool-hand .marker,
+  .map-zoom.tool-hand .map-link { pointer-events: none; }
 
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
@@ -3395,6 +3548,79 @@
     padding: 0 4px; cursor: pointer;
   }
   .marker-remove:hover { color: var(--accent-text); }
+
+  /* ── Liens entre cartes (lot 6) ─────────────────────────────── */
+  .map-link {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 0; background: transparent; border: none;
+    cursor: pointer; z-index: var(--z-links);
+    touch-action: none;
+  }
+  .map-link:hover { transform: translate(-50%, -100%) scale(1.08); }
+  .map-link-icon {
+    display: grid; place-items: center;
+    width: 22px; height: 22px;
+    font-size: 12px; line-height: 1;
+    color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-full);
+    box-shadow: 0 2px 6px var(--shadow-1);
+  }
+  .map-link-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px;
+    color: #f2ede0; background: rgba(27, 25, 23, 0.88);
+    border-radius: var(--radius-full); padding: 1px 7px;
+    white-space: nowrap;
+  }
+  .map-link.return-link .map-link-icon {
+    color: var(--heading); background: var(--panel); border-color: var(--border);
+  }
+  .map-link.return-link .map-link-label { background: var(--panel); color: var(--text); }
+
+  /* Aperçu au survol (Cmd/Ctrl) : non cliquable, suit le curseur. */
+  .token-preview {
+    position: fixed;
+    z-index: var(--z-toast);
+    width: 240px; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 7px;
+    pointer-events: none;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay);
+  }
+  .tp-head { display: flex; align-items: center; gap: 9px; }
+  .tp-portrait {
+    width: 40px; height: 40px; flex: none; object-fit: cover;
+    border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
+  }
+  .tp-initial {
+    width: 40px; height: 40px; flex: none;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 19px;
+    color: var(--map-token-fg); background: var(--map-token-bg);
+    border: 2.5px solid var(--token-color, var(--accent)); border-radius: 50%;
+  }
+  .tp-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tp-name {
+    font-family: var(--font-title); font-size: 15px; color: var(--heading);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tp-sub { font-size: 11.5px; color: var(--text-2); }
+  .tp-hp {
+    height: 6px; border-radius: 3px; overflow: hidden;
+    background: #2b2822; border: 1px solid #3a352d;
+  }
+  .tp-hp-fill { height: 100%; background: var(--hp-ok); }
+  .tp-hp-fill.mid { background: var(--hp-mid); }
+  .tp-hp-fill.low { background: var(--hp-low); }
+  .tp-pv { font-size: 11.5px; color: var(--text-2); }
+  .tp-conds { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tp-cond {
+    font-size: 11px; font-weight: 500; padding: 0 7px;
+    border: 1.5px solid var(--accent-border); border-radius: var(--radius-full);
+    color: var(--accent-text);
+  }
 
   /* Pion « objet de jeu » (Penpot : Game/Token) : disque plein, anneau à la
      couleur du personnage, barre de PV dessous, plaque de nom au survol.

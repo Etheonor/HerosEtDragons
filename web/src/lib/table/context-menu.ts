@@ -13,5 +13,7 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** Affiche un séparateur au-dessus de cette entrée. */
   separatorBefore?: boolean;
+  /** Sous-menu (un niveau) — ex. choisir la carte cible d'un lien. */
+  children?: ContextMenuItem[];
   onSelect: () => void;
 }

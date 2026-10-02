@@ -86,6 +86,8 @@
   --z-map: 0;
   --z-grid: 10;
   --z-markers: 15;
+  /* Liens entre cartes : au-dessus des repères, sous les pions. */
+  --z-links: 16;
   --z-tokens: 18;
   --z-fog: 20;
   --z-ping: 30;

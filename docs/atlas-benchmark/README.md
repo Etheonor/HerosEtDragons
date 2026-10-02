@@ -44,6 +44,8 @@ interface **de jeu** plutôt qu'une interface web.
 | **Initiative**              | **Verticale** à droite (remplace le bandeau horizontal) : PV, vaincu, réordonnancement ▲▼ (`combat.reorder`), clic = recadrage caméra, tourniquet d'auto-roll conservé.                                                                                                                                                                                                                                                                                                                                  | `07` §5.3   |
 | **Asset manager**           | Overlay unique à onglets `Cartes` / `PNJ` / `Personnages` : grille de vignettes, recherche, double-clic = poser, badge `− ×N +`, clic droit délégué au menu unique. Import de carte depuis l'overlay, renommage, remplacement d'image, **avatars importés** (R2, marqueur `custom:`) pour PJ comme PNJ. Les `MapManager`/`NpcLibrary` restent en secours dans la barre d'outils. La **bibliothèque d'avatars avec cadrage** a son ticket : [`docs/bibliotheque-avatars.md`](../bibliotheque-avatars.md). | `07` §5.4   |
 | **Dashboard MJ**            | Panneau `<Panel>` fermé par défaut (palette) : PNJ de la scène (PV, CA, états, recentrage, fiche) + notes de la carte (REST, enregistrement à la demande).                                                                                                                                                                                                                                                                                                                                               | `07` §5.5   |
+| **Liens entre cartes**      | Entité `MapLink` par carte, création au clic droit (sous-menu des cartes), **voyage ouvert à tout membre** (`link.travel`), point d'arrivée + **lien retour automatique**, onglet Liens dans la bibliothèque. Pas d'undo (documenté).                                                                                                                                                                                                                                                                    | `07` §6     |
+| **Aperçu au survol**        | `Cmd/Ctrl + survol` d'un pion : portrait, nom, CA, PV, conditions — non cliquable, suit le curseur. L'extrait compendium attend un lien fiche→compendium.                                                                                                                                                                                                                                                                                                                                                | `07` §6.6   |
 | **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                                                                                                                                                                                                                                                                                                                                                | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -110,7 +112,7 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
-**Livrés au 01/10/2026 : lots 0, 1, 2, 3, 4 et 5** — fondations de surfaces ;
+**Livrés au 02/10/2026 : lots 0 à 5, et lot 6 entamé** — fondations de surfaces ;
 carte plein écran, panneaux flottants ; barre d'outils, command palette et
 raccourcis ; la vie sur la carte : caméra animée persistée par carte, barres de
 PV sur les pions (seuils Penpot, jamais diffusées hors droit serveur), pastille
@@ -118,10 +120,12 @@ d'initiative, état mort/couché, taille de pion en cases (`tokenScale`), plaque
 nom au survol et curseur de brosse ; l'**undo/redo transactionnel** (DO source de
 vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; puis le **lot 5** :
 `<Panel>` drag/resize/persisté, menu contextuel unique, initiative **verticale**
-réordonnable, **asset manager** (Cartes/PNJ/Personnages, pose ×N) et **dashboard
-MJ** (PNJ de la scène + notes de carte). Le design system Penpot est la source
-(19 couleurs, 17 typographies, 37 composants). Prochain : le **lot 6** (liens
-entre cartes, pins, aperçu au survol) ou le **lot 7** (autres écrans).
+réordonnable, **asset manager** (Cartes/PNJ/Personnages/Liens, pose ×N) et
+**dashboard MJ** (PNJ de la scène + notes de carte) ; puis le **lot 6** entamé :
+**liens entre cartes** (voyage partagé, point d'arrivée, lien retour, onglet
+Liens) et **aperçu au survol**. Restent du lot 6 les **notes épinglées**. Le
+design system Penpot est la source (19 couleurs, 17 typographies,
+37 composants).
 
 ---
 
