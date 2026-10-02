@@ -2350,7 +2350,9 @@
                 }}
                 oncontextmenu={(e) => openPinMenu(e, p.id)}
               >
-                <span class="map-pin-icon" aria-hidden="true">✎</span>
+                <span class="map-pin-icon" aria-hidden="true">
+                  <ICONS.pin size={18} strokeWidth={2} />
+                </span>
                 <span class="map-pin-label">{p.label}</span>
               </button>
             {/each}
@@ -3952,15 +3954,15 @@
   .map-pin {
     position: absolute; transform: translate(-50%, -50%);
     display: flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; padding: 0;
+    width: 39px; height: 39px; padding: 0;
     background: var(--panel); color: var(--heading);
-    border: 2px solid var(--border-default); border-radius: var(--radius-sm);
+    border: 2px solid var(--border-default); border-radius: var(--radius-md);
     box-shadow: 0 2px 6px var(--shadow-1);
     cursor: pointer; z-index: var(--z-links);
     touch-action: none;
   }
   .map-pin:hover { border-color: var(--accent-border); color: var(--accent-text); }
-  .map-pin-icon { font-size: 12px; line-height: 1; }
+  .map-pin-icon { display: grid; place-items: center; line-height: 1; }
   .map-pin-label {
     position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px;
     font-size: 10.5px; font-weight: 700; color: #f2ede0; background: rgba(27, 25, 23, 0.88);

@@ -22,6 +22,7 @@ import {
   List,
   Map,
   Maximize2,
+  MessageSquareText,
   Minus,
   MousePointer2,
   Plus,
@@ -41,6 +42,8 @@ export const ICONS = {
   npc: Skull,
   marker: Flag,
   fog: CloudFog,
+  /** Notes épinglées sur la carte (lot 6.7). */
+  pin: MessageSquareText,
   /** Chrome : cartes, bibliothèque, commandes, réglages, aide. */
   maps: Map,
   library: List,
