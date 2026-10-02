@@ -1728,9 +1728,14 @@
       if (isMj) {
         items.push(
           {
+            id: 'rename-link',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenameLinkPrompt(l.id),
+          },
+          {
             id: 'toggle-hidden',
             label: l.hidden ? 'Révéler aux joueurs' : 'Cacher aux joueurs',
-            separatorBefore: true,
             onSelect: () =>
               sendWs({
                 type: 'link.set',
@@ -1884,6 +1889,31 @@
     } catch {
       toast = 'Renommage impossible';
     }
+  }
+
+  function openRenameLinkPrompt(id: string) {
+    const l = store.state.links.find((x) => x.id === id);
+    if (!l) return;
+    prompt = {
+      title: 'Renommer le lien',
+      label: 'Nom',
+      initial: l.label,
+      confirmLabel: 'Renommer',
+      onSubmit: (v) =>
+        sendWs({
+          type: 'link.set',
+          id: l.id,
+          x: l.x,
+          y: l.y,
+          targetMapId: l.targetMapId,
+          targetX: l.targetX,
+          targetY: l.targetY,
+          label: v,
+          kind: l.kind,
+          oneWay: l.oneWay,
+          hidden: l.hidden,
+        }),
+    };
   }
 
   function openRenameMapPrompt(mapId: string) {

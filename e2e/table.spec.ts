@@ -773,6 +773,27 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(page.locator(".map-header")).toContainText("Carte illustrée");
   });
 
+  test("renommer un lien par le clic droit", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
+    await page.getByRole("menuitem", { name: /Carte quadrillée/ }).click();
+
+    const link = page.locator(".map-link", { hasText: "Carte quadrillée" });
+    await expect(link).toHaveCount(1);
+    await link.click({ button: "right" });
+    await page.getByRole("menuitem", { name: /Renommer/ }).click();
+    const prompt = page.getByRole("dialog", { name: "Renommer le lien" });
+    await expect(prompt).toBeVisible();
+    await prompt.getByLabel("Nom").fill("Porte de la crypte");
+    await prompt.getByRole("button", { name: "Renommer" }).click();
+    await expect(page.locator(".map-link", { hasText: "Porte de la crypte" })).toHaveCount(1);
+    await expect(page.locator(".map-link", { hasText: "Carte quadrillée" })).toHaveCount(0);
+  });
+
   test("les liens cachés ne sont pas visibles par les joueurs", async ({ page, browser }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
