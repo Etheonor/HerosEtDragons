@@ -730,7 +730,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
       .toBeGreaterThan(0);
   });
 
-  test("les liens : poser par clic droit, voyager, revenir", async ({ page }) => {
+  test("les liens : poser, déplacer, voyager, et un retour posé à la main", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
@@ -745,16 +745,65 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     const link = page.locator(".map-link", { hasText: "Carte quadrillée" });
     await expect(link).toHaveCount(1);
 
-    // Voyage : la carte change, un lien retour apparaît.
+    // Drag du pin (MJ) : il se déplace, et le relâchement ne VOYAGE pas.
+    const before = (await link.boundingBox())!;
+    await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(before.x + before.width / 2 + 90, before.y + before.height / 2 + 50, {
+      steps: 10,
+    });
+    await page.mouse.up();
+    await expect
+      .poll(async () => Math.abs((await link.boundingBox())!.x - before.x))
+      .toBeGreaterThan(50);
+    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+
+    // Clic = voyage ; aucun retour automatique sur la carte cible.
     await link.click();
     await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
-    const back = page.locator(".map-link.return-link");
-    await expect(back).toHaveCount(1);
+    await expect(page.locator(".map-link")).toHaveCount(0);
 
-    // Retour : tout revient, le lien retour disparaît.
+    // Le MJ pose le retour À LA MAIN, puis revient avec.
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
+    await page.getByRole("menuitem", { name: /Carte illustrée/ }).click();
+    const back = page.locator(".map-link", { hasText: "Carte illustrée" });
+    await expect(back).toHaveCount(1);
     await back.click();
     await expect(page.locator(".map-header")).toContainText("Carte illustrée");
-    await expect(page.locator(".map-link.return-link")).toHaveCount(0);
+  });
+
+  test("les liens cachés ne sont pas visibles par les joueurs", async ({ page, browser }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
+    await page.getByRole("menuitem", { name: /Carte quadrillée/ }).click();
+
+    const link = page.locator(".map-link", { hasText: "Carte quadrillée" });
+    await expect(link).toHaveCount(1);
+    await link.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Cacher aux joueurs" }).click();
+    await expect(page.locator(".map-link.link-hidden")).toHaveCount(1);
+
+    // Badge dans la bibliothèque MJ.
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /Liens/ }).click();
+    await expect(dialog.locator(".link-row", { hasText: "caché" })).toHaveCount(1);
+    await page.keyboard.press("Escape");
+
+    // Le joueur ne voit RIEN.
+    const playerCtx = await browser.newContext();
+    const p2 = await playerCtx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".map-link")).toHaveCount(0);
+    await playerCtx.close();
   });
 
   test("les liens : onglet Liens de la bibliothèque", async ({ page }) => {

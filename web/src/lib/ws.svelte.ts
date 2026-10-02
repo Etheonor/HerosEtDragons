@@ -23,7 +23,6 @@ export interface TableState {
   tokens: Record<string, { charId: string; x: number; y: number }>;
   markers: Marker[];
   links: MapLink[];
-  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -86,7 +85,6 @@ export const tableStore = $state<TableStore>({
     tokens: {},
     markers: [],
     links: [],
-    returnLink: null,
     fog: {},
     combat: null,
   },
@@ -121,7 +119,6 @@ export function resetTableStore() {
     tokens: {},
     markers: [],
     links: [],
-    returnLink: null,
     fog: {},
     combat: null,
   };
@@ -242,9 +239,6 @@ function handleMessage(msg: Record<string, unknown>) {
       }
       if (patch.markers) tableStore.state.markers = patch.markers as Marker[];
       if (patch.links) tableStore.state.links = patch.links as MapLink[];
-      if (patch.returnLink !== undefined) {
-        tableStore.state.returnLink = patch.returnLink as MapLink | null;
-      }
       if (patch.arrival !== undefined) {
         tableStore.arrival = patch.arrival as { x: number; y: number } | null;
       }

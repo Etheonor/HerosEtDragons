@@ -948,7 +948,61 @@ describe("GameTableDO — intégration", () => {
     );
   });
 
-  it("liens (lot 6) : un joueur emprunte un lien, arrive au point prévu et peut revenir", async () => {
+  it("liens (lot 6) : un passage secret n'est jamais diffusé aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "link.set",
+      x: 25,
+      y: 25,
+      targetMapId: "map-2",
+      label: "Passage secret",
+      hidden: true,
+    });
+    const mjDelta = await mj.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const link = (mjDelta.patch as { links: { id: string; hidden: boolean }[] }).links[0]!;
+    expect(link.hidden).toBe(true);
+
+    // Le joueur n'a jamais reçu ce lien (aucun patch links non vide).
+    await new Promise((r) => setTimeout(r, 60));
+    for (const msg of player.messages.filter((m) => m.type === "delta")) {
+      const links = (msg.patch as { links?: unknown[] } | undefined)?.links;
+      if (links) expect(links.length).toBe(0);
+    }
+
+    // Même avec l'id, le joueur ne peut pas l'emprunter…
+    player.send({ type: "link.travel", id: link.id });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(
+      player.messages.some((m) => (m.patch as { mapId?: string } | undefined)?.mapId === "map-2"),
+    ).toBe(false);
+
+    // …et le journal du voyage ne part qu'au MJ.
+    mj.send({ type: "link.travel", id: link.id });
+    const journal = await mj.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { text: string }).text.includes("emprunte"),
+    );
+    expect((journal.entry as { text: string }).text).toContain("Passage secret");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(player.messages.some((m) => m.type === "journal")).toBe(false);
+  });
+
+  it("liens (lot 6) : un joueur emprunte un lien, et le retour est un lien posé à la main", async () => {
     await setupWorld();
     const mj = await connect(MJ);
     await mj.ready();
@@ -984,17 +1038,30 @@ describe("GameTableDO — intégration", () => {
     const arrived = await player.nextWhere(
       (m) => (m.patch as { mapId?: unknown })?.mapId === "map-2",
     );
-    const patch = arrived.patch as {
-      arrival: { x: number; y: number };
-      returnLink: { id: string; targetMapId: string; targetX?: number; targetY?: number } | null;
-    };
-    expect(patch.arrival).toEqual({ x: 70, y: 60 });
-    expect(patch.returnLink?.targetMapId).toBe("map-1");
-    expect(patch.returnLink?.targetX).toBe(30);
-    expect(patch.returnLink?.targetY).toBe(40);
+    expect((arrived.patch as { arrival: { x: number; y: number } }).arrival).toEqual({
+      x: 70,
+      y: 60,
+    });
 
-    // Retour : même mécanique, et le retour ne s'empile pas.
-    player.send({ type: "link.travel", id: patch.returnLink!.id });
+    // Pas de retour automatique : si un « ← retour » existait, le patch de
+    // création ci-dessous aurait DEUX liens et le prédicat ne matcherait pas.
+    mj.send({
+      type: "link.set",
+      x: 20,
+      y: 20,
+      targetMapId: "map-1",
+      targetX: 30,
+      targetY: 40,
+      label: "Retour",
+    });
+    const backDelta = await player.nextWhere(
+      (m) =>
+        ((m.patch as { links?: { label: string }[] } | undefined)?.links?.[0]?.label ?? "") ===
+        "Retour",
+    );
+    const backLink = (backDelta.patch as { links: { id: string }[] }).links[0]!;
+
+    player.send({ type: "link.travel", id: backLink.id });
     const back = await player.nextWhere((m) => {
       const p = m.patch as { mapId?: unknown; arrival?: unknown } | undefined;
       return p?.mapId === "map-1" && p.arrival !== null && p.arrival !== undefined;
@@ -1003,7 +1070,6 @@ describe("GameTableDO — intégration", () => {
       x: 30,
       y: 40,
     });
-    expect((back.patch as { returnLink: unknown }).returnLink).toBeNull();
   });
 
   it("liens (lot 6) : un joueur ne peut ni poser ni supprimer un lien", async () => {

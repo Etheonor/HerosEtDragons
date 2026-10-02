@@ -137,6 +137,7 @@ export const linkSetSchema = z.object({
   label: z.string({ error: "libellé requis" }).max(80).optional(),
   kind: z.enum(["door", "stairs", "region", "portal"]).optional(),
   oneWay: z.boolean().optional(),
+  hidden: z.boolean().optional(),
 });
 
 export const linkRemoveSchema = z.object({

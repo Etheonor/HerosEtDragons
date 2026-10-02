@@ -56,6 +56,8 @@ export interface MapLink {
   label: string;
   kind: MapLinkKind;
   oneWay: boolean;
+  /** Passage secret : jamais diffusé aux joueurs (filtre serveur). */
+  hidden: boolean;
 }
 
 export interface CombatState {
@@ -75,8 +77,6 @@ export interface TableLiveState {
   markers: Marker[];
   /** Liens de la carte active (le DO les stocke par carte, comme les pions). */
   links: MapLink[];
-  /** Lien « ← retour » posé automatiquement au dernier voyage, s'il y en a un. */
-  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -292,6 +292,7 @@ export interface LinkSetMsg {
   label?: string;
   kind?: MapLinkKind;
   oneWay?: boolean;
+  hidden?: boolean;
 }
 
 export interface LinkRemoveMsg {
@@ -447,7 +448,6 @@ export interface TableDeltaPatch {
   combat?: TableLiveState["combat"];
   markers?: Marker[];
   links?: MapLink[];
-  returnLink?: MapLink | null;
   /** Point d'arrivée du dernier voyage (le client recentre sa caméra). */
   arrival?: { x: number; y: number } | null;
   tokens?: Record<string, TokenState | null>;

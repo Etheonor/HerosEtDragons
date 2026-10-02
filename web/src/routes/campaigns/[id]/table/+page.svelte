@@ -3,7 +3,7 @@
   import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
-  import type { JournalEntry, TableSettings } from '@rollwith/shared/protocol';
+  import type { JournalEntry, MapLink, TableSettings } from '@rollwith/shared/protocol';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
@@ -803,9 +803,50 @@
     store.state.markers.map((m) => (markerDragOverride[m.id] ? { ...m, ...markerDragOverride[m.id] } : m)),
   );
 
+  let linkDragOverride = $state<Record<string, { x: number; y: number }>>({});
+  let linkDrag: { id: string; moved: boolean } | null = null;
+  let linkJustDragged = false;
+
   const displayLinks = $derived(
-    store.state.returnLink ? [...store.state.links, store.state.returnLink] : store.state.links,
+    store.state.links.map((l) => (linkDragOverride[l.id] ? { ...l, ...linkDragOverride[l.id] } : l)),
   );
+
+  function linkPointerDown(l: MapLink, e: PointerEvent) {
+    if (!isMj) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (tool === 'hand') return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    linkDrag = { id: l.id, moved: false };
+  }
+
+  function linkPointerMove(e: PointerEvent) {
+    if (!linkDrag) return;
+    const { x, y } = mapXY(e);
+    linkDrag.moved = true;
+    linkDragOverride = { ...linkDragOverride, [linkDrag.id]: { x, y } };
+    sendWs({ type: 'link.move', id: linkDrag.id, x, y });
+  }
+
+  function linkPointerUp() {
+    if (!linkDrag) return;
+    const { id, moved } = linkDrag;
+    linkDrag = null;
+    linkJustDragged = moved;
+    setTimeout(() => {
+      const { [id]: _drop, ...rest } = linkDragOverride;
+      linkDragOverride = rest;
+    }, 50);
+  }
+
+  /** Clic = voyager — sauf s'il vient de terminer un drag du pin. */
+  function onLinkClick(l: MapLink) {
+    if (linkJustDragged) {
+      linkJustDragged = false;
+      return;
+    }
+    sendWs({ type: 'link.travel', id: l.id });
+  }
 
   // ── Aperçu au survol (Cmd/Ctrl + survol) ─────────────────────
   let preview = $state<{ charId: string; x: number; y: number } | null>(null);
@@ -1666,6 +1707,8 @@
     }
 
     if (t.kind === 'link') {
+      const l = store.state.links.find((x) => x.id === t.id);
+      if (!l) return [];
       const items: ContextMenuItem[] = [
         {
           id: 'travel',
@@ -1673,14 +1716,34 @@
           onSelect: () => sendWs({ type: 'link.travel', id: t.id }),
         },
       ];
-      if (isMj && !t.id.startsWith('return:')) {
-        items.push({
-          id: 'remove-link',
-          label: 'Supprimer le lien',
-          danger: true,
-          separatorBefore: true,
-          onSelect: () => sendWs({ type: 'link.remove', id: t.id }),
-        });
+      if (isMj) {
+        items.push(
+          {
+            id: 'toggle-hidden',
+            label: l.hidden ? 'Révéler aux joueurs' : 'Cacher aux joueurs',
+            separatorBefore: true,
+            onSelect: () =>
+              sendWs({
+                type: 'link.set',
+                id: l.id,
+                x: l.x,
+                y: l.y,
+                targetMapId: l.targetMapId,
+                targetX: l.targetX,
+                targetY: l.targetY,
+                label: l.label,
+                kind: l.kind,
+                oneWay: l.oneWay,
+                hidden: !l.hidden,
+              }),
+          },
+          {
+            id: 'remove-link',
+            label: 'Supprimer le lien',
+            danger: true,
+            onSelect: () => sendWs({ type: 'link.remove', id: t.id }),
+          },
+        );
       }
       return items;
     }
@@ -2058,12 +2121,16 @@
               <button
                 type="button"
                 class="map-link"
-                class:return-link={l.id.startsWith('return:')}
+                class:link-hidden={l.hidden}
                 style="left: {l.x}%; top: {l.y}%;"
-                title={l.label}
+                title={l.hidden ? `${l.label} — caché aux joueurs` : l.label}
+                onpointerdown={(e) => linkPointerDown(l, e)}
+                onpointermove={linkPointerMove}
+                onpointerup={linkPointerUp}
+                onpointercancel={linkPointerUp}
                 onclick={(e) => {
                   e.stopPropagation();
-                  sendWs({ type: 'link.travel', id: l.id });
+                  onLinkClick(l);
                 }}
                 oncontextmenu={(e) => openLinkMenu(e, l.id)}
               >
@@ -2868,7 +2935,6 @@
       activeMapId={store.state.mapId}
       characters={store.characters}
       links={store.state.links}
-      returnLink={store.state.returnLink}
       tokenCharIds={Object.keys(store.state.tokens)}
       {isMj}
       {templatesRevision}
@@ -3573,10 +3639,11 @@
     border-radius: var(--radius-full); padding: 1px 7px;
     white-space: nowrap;
   }
-  .map-link.return-link .map-link-icon {
-    color: var(--heading); background: var(--panel); border-color: var(--border);
+  .map-link.link-hidden .map-link-icon {
+    color: var(--text-2); background: var(--panel); border: 2px dashed var(--border-default);
   }
-  .map-link.return-link .map-link-label { background: var(--panel); color: var(--text); }
+  .map-link.link-hidden .map-link-label { opacity: 0.85; }
+  .map-link.link-hidden { opacity: 0.75; }
 
   /* Aperçu au survol (Cmd/Ctrl) : non cliquable, suit le curseur. */
   .token-preview {

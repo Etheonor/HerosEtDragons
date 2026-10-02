@@ -34,9 +34,8 @@
     maps: MapSummary[];
     activeMapId: string | null;
     characters: CharacterCard[];
-    /** Liens de la carte active + lien retour éventuel. */
+    /** Liens de la carte active (le MJ voit aussi les passages secrets). */
     links: MapLink[];
-    returnLink: MapLink | null;
     /** Ids des personnages ayant un pion sur la carte active. */
     tokenCharIds: string[];
     isMj: boolean;
@@ -60,7 +59,6 @@
     activeMapId,
     characters,
     links,
-    returnLink,
     tokenCharIds,
     isMj,
     templatesRevision,
@@ -112,8 +110,6 @@
 
   const pjChars = $derived(characters.filter((c) => c.kind === 'pj'));
   const pnjChars = $derived(characters.filter((c) => c.kind === 'pnj'));
-  const allLinks = $derived(returnLink ? [...links, returnLink] : links);
-
   function mapName(id: string): string {
     return maps.find((m) => m.id === id)?.name ?? 'carte supprimée';
   }
@@ -141,7 +137,7 @@
         ? filteredTemplates.length + filteredPnj.length
         : tab === 'chars'
           ? filteredPj.length
-          : allLinks.length,
+          : links.length,
   );
 </script>
 
@@ -193,7 +189,7 @@
           class:active={tab === 'links'}
           role="tab"
           aria-selected={tab === 'links'}
-          onclick={() => (tab = 'links')}>Liens <span class="asset-count">{allLinks.length}</span></button
+          onclick={() => (tab = 'links')}>Liens <span class="asset-count">{links.length}</span></button
         >
       </div>
 
@@ -366,24 +362,27 @@
               {/each}
             </div>
           {/if}
-        {:else if allLinks.length === 0}
+        {:else if links.length === 0}
           <p class="asset-empty">
             Aucun lien sur cette carte — clic droit sur la carte : « Poser un lien ici… ».
           </p>
         {:else}
           <div class="link-list">
-            {#each allLinks as l (l.id)}
-              <div class="link-row" class:return-link={l.id.startsWith('return:')}>
+            {#each links as l (l.id)}
+              <div class="link-row" class:hidden-link={l.hidden}>
                 <span class="link-kind" aria-hidden="true">→</span>
                 <span class="link-body">
-                  <span class="link-label">{l.label}</span>
+                  <span class="link-label">
+                    {l.label}
+                    {#if l.hidden}<span class="link-secret">caché</span>{/if}
+                  </span>
                   <span class="link-target">
                     vers {mapName(l.targetMapId)}{l.oneWay ? ' · sens unique' : ''}
                   </span>
                 </span>
                 <button class="link-go" type="button" onclick={() => onTravelLink(l.id)}>aller</button
                 >
-                {#if isMj && !l.id.startsWith('return:')}
+                {#if isMj}
                   <button
                     class="link-del"
                     type="button"
@@ -617,7 +616,18 @@
     border-radius: var(--radius-sm);
   }
   .link-row:hover { border-color: var(--border); }
-  .link-row.return-link { border-style: dashed; opacity: 0.9; }
+  .link-row.hidden-link { border-style: dashed; opacity: 0.85; }
+  .link-secret {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--accent-text);
+    border: 1px dashed var(--accent-border);
+    border-radius: var(--radius-full);
+    padding: 0 6px;
+    margin-left: 5px;
+  }
   .link-kind {
     display: grid;
     place-items: center;

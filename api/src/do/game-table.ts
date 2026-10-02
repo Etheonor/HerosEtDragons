@@ -69,8 +69,6 @@ interface LiveState {
   markersByMap: Record<string, Marker[]>;
   /** Liens entre cartes (portes, escaliers…), stockés par carte. */
   linksByMap: Record<string, MapLink[]>;
-  /** Lien « ← retour » posé par le dernier voyage (non persisté comme un lien). */
-  returnLink: MapLink | null;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -172,7 +170,6 @@ function defaultLiveState(): LiveState {
     tokensByMap: {},
     markersByMap: {},
     linksByMap: {},
-    returnLink: null,
     fog: {},
     combat: null,
   };
@@ -233,7 +230,7 @@ export class GameTableDO extends DurableObject<Env> {
     const legacy = stored as unknown as Record<string, unknown>;
     if (legacy.tokensByMap && legacy.markersByMap) {
       // v2 → v3 : les liens entre cartes sont apparus après coup.
-      if (!legacy.linksByMap) return { ...stored, linksByMap: {}, returnLink: null };
+      if (!legacy.linksByMap) return { ...stored, linksByMap: {} };
       return stored;
     }
     const key = ((legacy.mapId as string | null) ?? "") as string;
@@ -243,7 +240,6 @@ export class GameTableDO extends DurableObject<Env> {
       tokensByMap: { [key]: (legacy.tokens as Record<string, TokenState>) ?? {} },
       markersByMap: { [key]: (legacy.markers as Marker[]) ?? [] },
       linksByMap: {},
-      returnLink: null,
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
     };
@@ -2255,18 +2251,18 @@ export class GameTableDO extends DurableObject<Env> {
     }
 
     const state = await this.getState();
-    await this.patchState({ mapId, returnLink: null });
+    await this.patchState({ mapId });
     const view = { ...state, mapId };
-    // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers/liens
-    // (vue de la nouvelle carte) au lieu de fusionner (voir ws.ts).
+    // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers (vue de
+    // la nouvelle carte) au lieu de fusionner (voir ws.ts) ; les liens suivent
+    // dans un patch filtré par rôle.
     this.broadcastRoleAware({
       mapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
-      links: this.linksOf(view),
-      returnLink: null,
       arrival: null,
     });
+    this.broadcastLinks(this.linksOf(view));
     // B5 : changer de carte change tout le jeu de PNJ visibles/masqués.
     await this.broadcastPnjVisibility();
   }
@@ -2383,11 +2379,28 @@ export class GameTableDO extends DurableObject<Env> {
       ...(msg.targetY !== undefined ? { targetY: this.clamp(msg.targetY) } : {}),
       label: (msg.label?.trim() || "passage").slice(0, 80),
       kind: (msg.kind ?? "door") as MapLinkKind,
-      oneWay: msg.oneWay ?? false,
+      oneWay: existing?.oneWay ?? msg.oneWay ?? false,
+      hidden: msg.hidden ?? existing?.hidden ?? false,
     };
     const next = existing ? links.map((l) => (l.id === link.id ? link : l)) : [...links, link];
     await this.patchState(this.patchLinks(state, next));
-    this.broadcastAll({ type: "delta", patch: { links: next } });
+    this.broadcastLinks(next);
+  }
+
+  /** Diffuse les liens de la carte active : un joueur ne voit jamais un lien
+   *  `hidden` (passage secret) — filtre serveur, comme la visibilité PNJ. */
+  private broadcastLinks(links: MapLink[]): void {
+    const visible = links.filter((l) => !l.hidden);
+    const dataMj = JSON.stringify({ type: "delta", patch: { links } });
+    const dataPlayer = JSON.stringify({ type: "delta", patch: { links: visible } });
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | null;
+      try {
+        ws.send(att?.role === "mj" ? dataMj : dataPlayer);
+      } catch {
+        /* socket fermée */
+      }
+    }
   }
 
   private async handleLinkRemove(att: WsAttachment, msg: LinkRemoveMsg) {
@@ -2397,7 +2410,7 @@ export class GameTableDO extends DurableObject<Env> {
     const next = links.filter((l) => l.id !== msg.id);
     if (next.length === links.length) return;
     await this.patchState(this.patchLinks(state, next));
-    this.broadcastAll({ type: "delta", patch: { links: next } });
+    this.broadcastLinks(next);
   }
 
   private async handleLinkMove(att: WsAttachment, msg: LinkMoveMsg) {
@@ -2408,7 +2421,7 @@ export class GameTableDO extends DurableObject<Env> {
       l.id === msg.id ? { ...l, x: this.clamp(msg.x), y: this.clamp(msg.y) } : l,
     );
     await this.patchState(this.patchLinks(state, next));
-    this.broadcastAll({ type: "delta", patch: { links: next } });
+    this.broadcastLinks(next);
   }
 
   private async handleLinkTravel(att: WsAttachment, msg: LinkTravelMsg) {
@@ -2416,9 +2429,10 @@ export class GameTableDO extends DurableObject<Env> {
     const mapId = state.mapId;
     if (!mapId) return;
 
-    const back = state.returnLink && state.returnLink.id === msg.id ? state.returnLink : null;
-    const link = back ?? this.linksOf(state).find((l) => l.id === msg.id);
+    const link = this.linksOf(state).find((l) => l.id === msg.id);
     if (!link) return;
+    // Un passage secret ne s'emprunte pas côté joueur (même avec l'id en cache).
+    if (link.hidden && att.role !== "mj") return;
 
     const db = this.getDb();
     const [target] = await db
@@ -2429,45 +2443,28 @@ export class GameTableDO extends DurableObject<Env> {
     if (!target) return;
 
     const arrival = { x: link.targetX ?? 50, y: link.targetY ?? 50 };
-    // Le retour n'existe que pour un vrai lien, non « one-way », et pas pour le
-    // retour lui-même (sinon on empile des retours).
-    const returnLink: MapLink | null =
-      back || link.oneWay
-        ? null
-        : {
-            id: `return:${crypto.randomUUID()}`,
-            mapId: link.targetMapId,
-            x: arrival.x,
-            y: arrival.y,
-            targetMapId: mapId,
-            targetX: link.x,
-            targetY: link.y,
-            label: "← retour",
-            kind: "region",
-            oneWay: true,
-          };
-
-    await this.patchState({ mapId: link.targetMapId, returnLink });
+    await this.patchState({ mapId: link.targetMapId });
     const view = { ...state, mapId: link.targetMapId };
-    // mapId dans le patch ⇒ le client REMPLACE tokens/markers/liens.
+    // mapId dans le patch ⇒ le client REMPLACE tokens/markers (vue de la cible).
     this.broadcastRoleAware({
       mapId: link.targetMapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
-      links: this.linksOf(view),
-      returnLink,
       arrival,
     });
+    this.broadcastLinks(this.linksOf(view));
     await this.broadcastPnjVisibility(); // B5 : changer de carte change les PNJ visibles
 
+    // Un passage secret ne se raconte qu'au MJ.
+    const visibility = link.hidden ? "mj" : "all";
     const entry = this.makeJournalEntry(
       "system",
       null,
       null,
       `✦ Le groupe emprunte ${link.label}.`,
     );
-    this.appendJournal(entry);
-    this.broadcastJournal(entry);
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
   }
 
   // ── Handlers : brouillard ───────────────────────────────────────
@@ -3166,8 +3163,7 @@ export class GameTableDO extends DurableObject<Env> {
         mapId: state.mapId,
         tokens,
         markers: this.markersOf(state),
-        links: this.linksOf(state),
-        returnLink: state.returnLink?.mapId === state.mapId ? state.returnLink : null,
+        links: role === "mj" ? this.linksOf(state) : this.linksOf(state).filter((l) => !l.hidden),
         fog: state.fog,
         combat,
       },
