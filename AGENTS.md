@@ -201,13 +201,14 @@ l'**initiative verticale** réordonnable, l'**asset manager**
 - notes de carte). Prochain : **lot 6** (liens entre cartes, pins, aperçu) ou
   **lot 7** (autres écrans).
 
-| Document                                             | Contenu                                                         |
-| ---------------------------------------------------- | --------------------------------------------------------------- |
-| `docs/atlas-benchmark/README.md`                     | **Point d'entrée.** §0 = décisions et validations, §1 = verdict |
-| `docs/atlas-benchmark/07-parcours-implémentation.md` | Les 9 lots, dépendances, risques, recette                       |
-| `docs/atlas-benchmark/05-architecture-svelte.md`     | Décisions techniques, dont DOM vs WebGL                         |
-| `docs/atlas-benchmark/06-design-system.md`           | Le système de surfaces (`<Surface>`, rayons, z-index)           |
-| `docs/brouillard-optimisation.md`                    | Ticket **indépendant**, à faire sur `main`                      |
+| Document                                             | Contenu                                                                      |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `docs/atlas-benchmark/README.md`                     | **Point d'entrée.** §0 = décisions et validations, §1 = verdict              |
+| `docs/atlas-benchmark/07-parcours-implémentation.md` | Les 9 lots, dépendances, risques, recette                                    |
+| `docs/atlas-benchmark/05-architecture-svelte.md`     | Décisions techniques, dont DOM vs WebGL                                      |
+| `docs/atlas-benchmark/06-design-system.md`           | Le système de surfaces (`<Surface>`, rayons, z-index)                        |
+| `docs/brouillard-optimisation.md`                    | Ticket **indépendant**, à faire sur `main`                                   |
+| `docs/bibliotheque-avatars.md`                       | Feature dédiée : upload + cadrage carré + bibliothèque d'avatars de campagne |
 
 Règles du chantier :
 
