@@ -40,9 +40,11 @@ implémentés, ou seulement en structure :
 nom, sous-titre (« Classe 5 »), barre de PV + valeurs (`32 / 45`). Variantes :
 `Enemy` (PNJ, liseré rouge), `Down` (défait : grisé).
 
-**Périmètre d'affichage proposé** : les **PJ actifs** toujours, les **PNJ ayant
-un pion sur la carte active** (comme l'initiative et le dashboard). Les
-personnages non posés se retrouvent dans la bibliothèque (onglet Personnages).
+**Périmètre d'affichage (décidé)** : les **PJ sont toujours affichés** — posés
+ou non sur la carte, actifs ou non (les inactifs sont grisés et non ciblables) ;
+les **PNJ ne sont affichés que s'ils ont un pion sur la carte active** (comme
+l'initiative et le dashboard). Un PJ non posé se place en double-cliquant sa
+ligne (MJ) ; les PNJ non posés vivent dans la bibliothèque.
 
 **Audit de perte — ce que la Compagnie fait aujourd'hui qui n'est pas sur la
 maquette :**
@@ -69,17 +71,19 @@ MJ soigne un PJ en ≤ 2 gestes, et place un PNJ en ≤ 2 gestes.
 
 **Interactions proposées** :
 
-- **clic** = cibler (TargetFrame partagé), re-clic = retirer la cible ;
+- **clic**, MJ = cibler (re-clic = retirer la cible) ; joueur = recentrer la
+  caméra sur le pion ;
 - **double-clic** = recentrer la caméra si posé, sinon placer (MJ) ;
 - **clic droit** = menu unique (mêmes entrées que le pion + fiche) ;
-- **survol de la barre de PV** = `− / +` (MJ ou propriétaire).
+- **survol de la barre de PV** = `− / +` (MJ ou propriétaire) ;
+- les PJ inactifs sont grisés : ni cible, ni recadrage, ni PV.
 
 ### 2.2 TargetFrame — partagé
 
 - L'état vit dans le DO : `TableLiveState.target: charId | null`, message WS
   `target.set { charId | null }`, diffusé comme une mutation normale.
-- **N'importe quel membre** peut cibler (le dernier clic gagne, décision Q4 à
-  confirmer) ; tout le monde voit la même barre en haut au centre.
+- **Seul le MJ cible** (décision) ; tout le monde voit la même barre en haut au
+  centre, et seul le MJ peut la fermer. Pas de conflit « dernier clic gagne ».
 - Rendu : portrait, nom, CA, barre de PV (± au survol ?), conditions, `×`.
 - **B5** : un PNJ non révélé ciblé par le MJ doit être **invisible** chez les
   joueurs (le filtre au broadcast renvoie `target: null`, comme `combat`).
@@ -88,9 +92,11 @@ MJ soigne un PJ en ≤ 2 gestes, et place un PNJ en ≤ 2 gestes.
 
 ### 2.3 TopActions + Zoom
 
-- `TopActions` : trois boutons carrés (maquette) — **engrenage** = command
-  palette ouverte sur l'onglet Réglages ; **chevron** = masquer/afficher le
-  chrome (carte seule) ; **`?`** = aide clavier (existant).
+- `TopActions` (décidé) : trois boutons carrés — **Compendium** (navigue vers
+  l'écran compendium ; deviendra un panneau au lot 7.3), **Tableau de bord**
+  (bascule `panelsOpen.dashboard`, remplace l'accès par la palette seule), et
+  **`?`** = aide clavier. L'engrenage de la maquette est écarté : les réglages
+  vivent déjà dans la palette (Espace).
 - `Zoom` : reskin du `.map-hud` actuel sur le composant Penpot (`− 100 % +`),
   même comportement (déjà validé par les e2e « caméra »).
 
@@ -112,22 +118,23 @@ MJ soigne un PJ en ≤ 2 gestes, et place un PNJ en ≤ 2 gestes.
 - Initiative : typo/espacements sur `InitiativeRow` (badge score à droite,
   sous-titre PV, liseré actif) — déjà proche, c'est du réglage.
 
-## 3. Questions ouvertes
+## 3. Décisions actées (02/10/2026)
 
-1. **Périmètre du GroupFrame** : PJ actifs + PNJ posés sur la carte active —
-   OK, ou faut-il aussi les PJ inactifs ?
+1. **Périmètre** : PJ toujours affichés (posés ou non, actifs ou non, les
+   inactifs grisés) ; PNJ affichés seulement s'ils sont posés sur la carte
+   active. — acté.
 2. **Interactions** : clic = cibler, double-clic = recentrer/placer, clic
-   droit = menu, `−/+` au survol de la barre — OK ?
-3. **Conditions** sur le frame : 2-3 pastilles + « +N », ou rien (le pion
-   porte déjà le voile) ?
-4. **Qui cible** : tout le monde (dernier clic gagne) ou MJ seul ?
-5. **TopActions** : engrenage = palette Réglages, chevron = chrome on/off
-   (garde-t-on la toolbar visible ?), `?` = aide — OK ?
-6. **Réduire** les fenêtres (repli à la barre de titre) : on l'ajoute, ou
-   titre + fermer suffisent ?
-7. **DicePad** : refonte complète dans ce lot (modificateur + historique) ?
-8. **Compagnie** : suppression franche, ou commande palette « Compagnie
-   (liste complète) » en secours le temps de valider ?
+   droit = menu, `−/+` PV au survol de la barre. — acté.
+3. **Qui cible** : **MJ seul** ; tout le monde voit la barre. — acté.
+4. **TopActions** : Compendium + Tableau de bord + Aide (`?`) ; pas
+   d'engrenage (la palette s'en charge). — acté.
+5. **Réduire** les fenêtres : oui, repli à la barre de titre. — acté.
+6. **DicePad** : refonte complète dans ce lot (modificateur + historique) ;
+   le lot 8.4 ne garde que le feedback (toast). — acté.
+7. **Compagnie** : commande palette « Compagnie (liste complète) » en secours
+   temporaire pendant la validation. — acté.
+
+**Reste ouverte** : la question 3 (conditions affichées sur le frame).
 
 ## 4. Tâches et estimation
 
@@ -158,9 +165,9 @@ MJ soigne un PJ en ≤ 2 gestes, et place un PNJ en ≤ 2 gestes.
 
 - Le bloc gauche affiche les PJ + les PNJ de la scène, avec PV et états, et
   remplace visuellement la Compagnie ;
-- cibler un gobelin (clic) affiche la TargetFrame **chez tous** ; la fermer la
-  retire partout ; un PNJ caché ciblé par le MJ n'apparaît pas chez les
-  joueurs ;
+- le MJ cible un gobelin (clic) : la TargetFrame s'affiche **chez tous** ; le
+  MJ la ferme, elle disparaît partout ; un PNJ caché ciblé n'apparaît pas
+  chez les joueurs (B5) ;
 - le MJ soigne un PJ en ≤ 2 gestes et place un PNJ en ≤ 2 gestes ;
 - engrenage → palette Réglages ; chevron → carte seule puis retour ;
 - les dés se lancent depuis le pad avec modificateur et historique ;
