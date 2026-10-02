@@ -134,7 +134,9 @@ MJ soigne un PJ en ≤ 2 gestes, et place un PNJ en ≤ 2 gestes.
 7. **Compagnie** : commande palette « Compagnie (liste complète) » en secours
    temporaire pendant la validation. — acté.
 
-**Reste ouverte** : la question 3 (conditions affichées sur le frame).
+8. **Conditions sur le frame** : **Option A** — jusqu'à 3 pastilles compactes
+   - « +N » au-delà, édition par le clic droit (mêmes entrées que le pion).
+     — acté.
 
 ## 4. Tâches et estimation
 
