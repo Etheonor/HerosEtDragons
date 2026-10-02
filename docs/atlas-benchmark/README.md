@@ -43,6 +43,7 @@ interface **de jeu** plutôt qu'une interface web.
 | **Menu contextuel**         | Un seul `<ContextMenu>` (bits-ui, ancré au pointeur) : pion, repère, vide de carte. Un pan au clic droit le referme (macOS dispatche `contextmenu` au mousedown).                                                                                                                                              | `07` §5.2   |
 | **Initiative**              | **Verticale** à droite (remplace le bandeau horizontal) : PV, vaincu, réordonnancement ▲▼ (`combat.reorder`), clic = recadrage caméra, tourniquet d'auto-roll conservé.                                                                                                                                        | `07` §5.3   |
 | **Asset manager**           | Overlay unique à onglets `Cartes` / `PNJ` / `Personnages` : grille de vignettes, recherche, double-clic = poser, badge `− ×N +`, clic droit délégué au menu unique. Les `MapManager`/`NpcLibrary` restent en secours dans la barre d'outils.                                                                   | `07` §5.4   |
+| **Dashboard MJ**            | Panneau `<Panel>` fermé par défaut (palette) : PNJ de la scène (PV, CA, états, recentrage, fiche) + notes de la carte (REST, enregistrement à la demande).                                                                                                                                                     | `07` §5.5   |
 | **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                                                                                                                                                      | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -109,18 +110,18 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
-**Livrés au 01/10/2026 : lots 0, 1, 2, 3 et 4, et lot 5 presque complet** —
-fondations de surfaces ; carte plein écran, panneaux flottants ; barre d'outils,
-command palette et raccourcis ; la vie sur la carte : caméra animée persistée par
-carte, barres de PV sur les pions (seuils Penpot, jamais diffusées hors droit
-serveur), pastille d'initiative, état mort/couché, taille de pion en cases
-(`tokenScale`), plaque de nom au survol et curseur de brosse ; l'**undo/redo
-transactionnel** (DO source de vérité, un geste = un pas, `Ctrl/⌘ Z` et
-`Ctrl/⌘ ⇧ Z`) ; puis le **lot 5** : `<Panel>` drag/resize/persisté, menu
-contextuel unique, initiative **verticale** réordonnable et **asset manager**
-(onglets Cartes/PNJ/Personnages, recherche, pose ×N). Reste du lot 5 le
-**dashboard MJ** (5.5). Le design system Penpot est la source (19 couleurs,
-17 typographies, 37 composants).
+**Livrés au 01/10/2026 : lots 0, 1, 2, 3, 4 et 5** — fondations de surfaces ;
+carte plein écran, panneaux flottants ; barre d'outils, command palette et
+raccourcis ; la vie sur la carte : caméra animée persistée par carte, barres de
+PV sur les pions (seuils Penpot, jamais diffusées hors droit serveur), pastille
+d'initiative, état mort/couché, taille de pion en cases (`tokenScale`), plaque de
+nom au survol et curseur de brosse ; l'**undo/redo transactionnel** (DO source de
+vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; puis le **lot 5** :
+`<Panel>` drag/resize/persisté, menu contextuel unique, initiative **verticale**
+réordonnable, **asset manager** (Cartes/PNJ/Personnages, pose ×N) et **dashboard
+MJ** (PNJ de la scène + notes de carte). Le design system Penpot est la source
+(19 couleurs, 17 typographies, 37 composants). Prochain : le **lot 6** (liens
+entre cartes, pins, aperçu au survol) ou le **lot 7** (autres écrans).
 
 ---
 
@@ -326,8 +327,9 @@ Les lots sont dans `07`. Trois choses à savoir avant d'ouvrir le premier :
    plein écran, panneaux flottants déplaçables/redimensionnables, barre
    d'outils, command palette et raccourcis, pion « objet de jeu » (PV,
    initiative, états, échelle), caméra animée, undo/redo transactionnel, menu
-   contextuel unique, initiative verticale et asset manager. La suite
-   immédiate : le dashboard MJ (5.5).
+   contextuel unique, initiative verticale, asset manager et dashboard MJ. La
+   suite : le lot 6 (liens entre cartes, pins, aperçu) ou le lot 7 (autres
+   écrans).
 3. **Les trois pièges du §0** sont à respecter dès la première ligne de code,
    pas découverts en chemin.
 

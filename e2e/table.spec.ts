@@ -646,6 +646,41 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await page.keyboard.press("Escape");
   });
 
+  test("le tableau de bord MJ liste les PNJ de la scène et garde les notes de carte", async ({
+    page,
+  }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    // Ouverture par la palette (surface à la demande).
+    await page.keyboard.press("Space");
+    const input = page.getByPlaceholder(/Rechercher une action/);
+    await input.fill("tableau de bord");
+    await page.getByRole("option", { name: /Tableau de bord MJ/ }).click();
+
+    const dash = page.locator(".dashboard");
+    await expect(dash).toBeVisible();
+    await expect(dash).toContainText("Gobelin");
+    await expect(dash.locator(".dash-hp")).toHaveCount(1);
+
+    // Note de carte : enregistrée puis rechargée après rechargement de page
+    // (le panneau ouvert est persistant, comme les autres).
+    await dash.getByLabel("Notes de la carte").fill("La porte grince au sud.");
+    await dash.getByRole("button", { name: "Enregistrer" }).click();
+    await expect(dash.locator(".dash-note-state")).toHaveText("à jour");
+
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    const dash2 = page.locator(".dashboard");
+    await expect(dash2).toBeVisible();
+    await expect(dash2.getByLabel("Notes de la carte")).toHaveValue("La porte grince au sud.");
+  });
+
   test("clic droit sur un pion : menu contextuel unique (dupliquer)", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();

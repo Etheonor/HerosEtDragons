@@ -29,6 +29,7 @@
   import ContextMenu from '$lib/table/ContextMenu.svelte';
   import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
+  import GmDashboard from '$lib/table/GmDashboard.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -147,19 +148,24 @@
   // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
   // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
   const PANELS_KEY = 'hd-table-panels';
-  type PanelId = 'compagnie' | 'panel';
+  type PanelId = 'compagnie' | 'panel' | 'dashboard';
 
   function loadPanelState(): Record<PanelId, boolean> {
     try {
       const raw = localStorage.getItem(PANELS_KEY);
       if (raw) {
         const p = JSON.parse(raw) as Partial<Record<PanelId, boolean>>;
-        return { compagnie: p.compagnie !== false, panel: p.panel !== false };
+        // Le dashboard MJ est fermé par défaut (surface à la demande).
+        return {
+          compagnie: p.compagnie !== false,
+          panel: p.panel !== false,
+          dashboard: p.dashboard === true,
+        };
       }
     } catch {
       /* stockage indisponible : on garde les panneaux ouverts */
     }
-    return { compagnie: true, panel: true };
+    return { compagnie: true, panel: true, dashboard: false };
   }
 
   let panelsOpen = $state(loadPanelState());
@@ -304,6 +310,14 @@
           group: 'Actions',
           keywords: ['bibliothèque', 'cartes', 'pnj', 'modèles', 'personnages', 'asset'],
           run: () => (assetManagerOpen = true),
+        },
+        {
+          id: 'dashboard.toggle',
+          label: panelsOpen.dashboard ? 'Masquer le tableau de bord MJ' : 'Tableau de bord MJ',
+          group: 'Actions',
+          keywords: ['dashboard', 'tableau', 'pnj', 'notes', 'scène'],
+          active: panelsOpen.dashboard,
+          run: () => setPanelOpen('dashboard', !panelsOpen.dashboard),
         },
         {
           id: 'history.undo',
@@ -2567,6 +2581,26 @@
           {/if}
         </div>
       {/if}
+    </Panel>
+    {/if}
+
+    {#if isMj && panelsOpen.dashboard}
+    <Panel
+      id="dashboard"
+      title="Tableau de bord"
+      campaignId={campaignId}
+      onClose={() => setPanelOpen('dashboard', false)}
+      closeLabel="Fermer le tableau de bord"
+      initial={{ x: 340, y: 90, w: 336, h: Math.min(560, innerHeight - 240) }}
+      class="dashboard"
+    >
+      <GmDashboard
+        {campaignId}
+        characters={store.characters}
+        tokenCharIds={Object.keys(store.state.tokens)}
+        activeMap={activeMap}
+        onFocus={focusToken}
+      />
     </Panel>
     {/if}
 
