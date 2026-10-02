@@ -7,14 +7,16 @@
 //      config Playwright et imposait un rebuild complet + un boot wrangler ;
 //   2. attendre 3 s pleines après le `pkill`, quoi qu'il arrive.
 //
-// Le `pkill` avait une vraie raison : wrangler garde le SQLite local du Durable
-// Object ouvert, et deux workers sur le même état échouent au boot en
+// Le nettoyage avait une vraie raison : wrangler garde le SQLite local du
+// Durable Object ouvert, et deux workers sur le même état échouent au boot en
 // SQLITE_BUSY. Mais ce risque n'existe que si on démarre un DEUXIÈME worker.
 // Réutiliser le serveur déjà debout le supprime entièrement.
 //
-// DÉCISION. On ne tue un serveur que si on va réellement en démarrer un autre,
-// c'est-à-dire si le front est périmé (`scripts/web-build.mjs --check`) ou si
-// le serveur ne répond plus.
+// DÉCISION. On réutilise tant que le serveur répond, que le front est à jour
+// (`scripts/web-build.mjs --check`) et qu'il n'y a pas d'instance orphelines.
+// `scripts/dev-clean.mjs` détecte les arbres wrangler/workerd en trop (que le
+// health check ne voit pas mais qui font échouer le prochain boot), et c'est
+// lui qui tue — plus jamais un `pkill -f "wrangler dev"` qui ne matche rien.
 //
 // OPTIONS.
 //   --rebuild   force la reconstruction du front et le redémarrage du worker
@@ -49,22 +51,18 @@ const webStale =
   FORCE ||
   spawnSync("node", ["scripts/web-build.mjs", "--check"], { stdio: "ignore" }).status !== 0;
 
-if (serverUp && !webStale) {
+// Un arbre wrangler orphelin (parent sans listener, deuxième instance) ne se
+// voit pas au health check mais fait échouer le prochain démarrage en
+// SQLITE_BUSY : `--check` le détecte sans rien tuer.
+const orphans =
+  spawnSync("node", ["scripts/dev-clean.mjs", "--check"], { stdio: "ignore" }).status !== 0;
+
+if (serverUp && !webStale && !orphans) {
   console.log("[e2e] serveur déjà chaud et front à jour — réutilisation.");
 } else {
-  const why = !serverUp ? "aucun serveur" : "front périmé";
-  console.log(`[e2e] ${why} — démarrage d'un worker neuf.`);
-
-  // On ne tue que maintenant, et seulement si un vrai serveur répond : un port
-  // occupé par autre chose n'est pas touché. On passe par pkill sur les deux
-  // binaires — vite ne répond pas sur /api/health quand l'API est morte, mais
-  // occupe le port et fait échouer le build.
-  if (stale.length > 0) {
-    console.log(`[e2e] serveur de dev trouvé sur ${stale.join(", ")} — arrêt…`);
-    for (const pattern of ["wrangler dev", "workerd", "vite.js dev"]) {
-      spawn("pkill", ["-f", pattern], { stdio: "ignore" });
-    }
-  }
+  const why = !serverUp ? "aucun serveur" : webStale ? "front périmé" : "instances orphelines";
+  console.log(`[e2e] ${why} — nettoyage puis démarrage d'un worker neuf.`);
+  spawnSync("node", ["scripts/dev-clean.mjs"], { stdio: "inherit" });
   // Attente active de la libération du port (SQLITE_BUSY si on repart trop vite),
   // au lieu d'un sleep fixe de 3 s.
   const deadline = Date.now() + 10_000;

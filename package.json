@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter api dev",
+    "dev": "node scripts/dev-clean.mjs && pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
-    "dev:all": "pnpm --filter web build && pnpm --filter web dev & pnpm --filter api dev",
+    "dev:all": "node scripts/dev-clean.mjs && pnpm --filter web build && (pnpm --filter web dev & pnpm --filter api dev)",
+    "dev:clean": "node scripts/dev-clean.mjs",
     "build": "pnpm --filter shared build && pnpm --filter web build && pnpm --filter api build",
     "build:cloudflare": "pnpm build && pnpm db:migrate:remote",
     "deploy": "pnpm build:cloudflare && wrangler deploy",
