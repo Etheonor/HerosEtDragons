@@ -27,7 +27,8 @@
   import { ICONS } from '$lib/ds/icons';
   import Panel from '$lib/table/Panel.svelte';
   import ContextMenu from '$lib/table/ContextMenu.svelte';
-  import type { ContextMenuItem } from '$lib/table/context-menu';
+  import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
+  import AssetManager from '$lib/table/AssetManager.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -175,6 +176,9 @@
   // ── Chrome (Lot 2) : palette, aide, barre d'outils ───────────
   let paletteOpen = $state(false);
   let helpOpen = $state(false);
+  let assetManagerOpen = $state(false);
+  /** Incrémenté après suppression d'un modèle : l'asset manager recharge. */
+  let templatesRevision = $state(0);
   let toolbarWidth = $state(1280);
 
   function onToolbarResize(node: HTMLElement) {
@@ -294,6 +298,13 @@
 
     if (isMj) {
       cmds.push(
+        {
+          id: 'assets.open',
+          label: 'Ouvrir la bibliothèque',
+          group: 'Actions',
+          keywords: ['bibliothèque', 'cartes', 'pnj', 'modèles', 'personnages', 'asset'],
+          run: () => (assetManagerOpen = true),
+        },
         {
           id: 'history.undo',
           label: 'Annuler la dernière action',
@@ -1447,7 +1458,8 @@
   type CtxTarget =
     | { kind: 'token'; charId: string; charKind: 'pj' | 'pnj'; x: number; y: number }
     | { kind: 'marker'; id: string; x: number; y: number }
-    | { kind: 'map'; x: number; y: number };
+    | { kind: 'map'; x: number; y: number }
+    | ({ x: number; y: number } & AssetTarget);
 
   let ctxMenu = $state<CtxTarget | null>(null);
   /** Un panoramique au clic droit ne doit pas ouvrir le menu au relâchement. */
@@ -1456,6 +1468,56 @@
   const ctxItems = $derived.by<ContextMenuItem[]>(() => {
     const t = ctxMenu;
     if (!t) return [];
+
+    if (t.kind === 'asset-map') {
+      return [
+        {
+          id: 'show',
+          label: 'Afficher cette carte',
+          onSelect: () => {
+            selectMap(t.mapId);
+            assetManagerOpen = false;
+          },
+        },
+      ];
+    }
+    if (t.kind === 'asset-template') {
+      const items: ContextMenuItem[] = [
+        {
+          id: 'spawn',
+          label: `Poser ×${t.count}`,
+          onSelect: () => {
+            armTemplate(t.templateId, t.name, t.count);
+            assetManagerOpen = false;
+          },
+        },
+      ];
+      if (isMj) {
+        items.push({
+          id: 'delete',
+          label: 'Supprimer le modèle',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => void deleteTemplate(t.templateId),
+        });
+      }
+      return items;
+    }
+    if (t.kind === 'asset-char') {
+      const placed = !!store.state.tokens[t.charId];
+      const items: ContextMenuItem[] = placed
+        ? [{ id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) }]
+        : [{ id: 'place', label: 'Placer sur la carte', onSelect: () => placeOnMap(t.charId) }];
+      items.push({
+        id: 'sheet',
+        label: 'Ouvrir la feuille',
+        separatorBefore: true,
+        onSelect: () => {
+          globalThis.location.href = `/characters/${t.charId}`;
+        },
+      });
+      return items;
+    }
 
     if (t.kind === 'token') {
       const c = charById(t.charId);
@@ -1566,6 +1628,33 @@
     e.preventDefault();
     e.stopPropagation();
     ctxMenu = { kind: 'marker', id, x: e.clientX, y: e.clientY };
+  }
+
+  /** Clic droit dans l'asset manager : même menu unique, cible « asset ». */
+  function openAssetMenu(e: MouseEvent, target: AssetTarget) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { ...target, x: e.clientX, y: e.clientY } as CtxTarget;
+  }
+
+  function armTemplate(templateId: string, name: string, count: number) {
+    tool = 'move';
+    pendingPlace = { templateId, name, count };
+  }
+
+  async function deleteTemplate(templateId: string) {
+    try {
+      await api.npcTemplates.remove(templateId);
+      templatesRevision += 1;
+    } catch {
+      toast = 'Suppression du modèle impossible';
+    }
+  }
+
+  /** Double-clic dans la bibliothèque : poser, ou recentrer s'il l'est déjà. */
+  function placeCharFromLibrary(charId: string) {
+    if (store.state.tokens[charId]) focusToken(charId);
+    else placeOnMap(charId);
   }
 
   // ── Raccourcis clavier ───────────────────────────────────────
@@ -1889,7 +1978,7 @@
       campaignId={campaignId}
       onClose={() => setPanelOpen('compagnie', false)}
       closeLabel="Fermer la compagnie"
-      initial={{ x: 16, y: 56, w: 288, h: 640 }}
+      initial={{ x: 16, y: 56, w: 288, h: Math.min(640, innerHeight - 200) }}
       class="compagnie"
     >
       <div class="panel-body scroll-area" use:scrollArea>
@@ -2265,6 +2354,9 @@
 
           {#if isMj}
             <div class="tsep"></div>
+            <button class="asset-btn" type="button" onclick={() => (assetManagerOpen = true)}>
+              <ICONS.library size={14} strokeWidth={2} aria-hidden="true" /> Bibliothèque
+            </button>
             <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
             <NpcLibrary {campaignId} onPlace={(tpl, count) => {
               tool = 'move';
@@ -2292,7 +2384,12 @@
       campaignId={campaignId}
       onClose={() => setPanelOpen('panel', false)}
       closeLabel="Fermer le panneau"
-      initial={{ x: Math.max(16, innerWidth - 324 - 16), y: 56, w: 324, h: 640 }}
+      initial={{
+        x: Math.max(16, innerWidth - 324 - 16),
+        y: 56,
+        w: 324,
+        h: Math.min(640, innerHeight - 200),
+      }}
       class="panel"
     >
       <div class="tabs">
@@ -2491,6 +2588,23 @@
   />
   </div>
 
+  {#if isMj}
+    <AssetManager
+      open={assetManagerOpen}
+      onOpenChange={(o) => (assetManagerOpen = o)}
+      {campaignId}
+      {maps}
+      activeMapId={store.state.mapId}
+      characters={store.characters}
+      {isMj}
+      {templatesRevision}
+      onPickMap={selectMap}
+      onPlaceTemplate={(tpl, count) => armTemplate(tpl.id, tpl.name, count)}
+      onPlaceChar={placeCharFromLibrary}
+      onContextMenu={openAssetMenu}
+    />
+  {/if}
+
   <CommandPalette open={paletteOpen} onOpenChange={(o) => (paletteOpen = o)} commands={paletteCommands} />
   <HotkeyHelp open={helpOpen} onOpenChange={(o) => (helpOpen = o)} {isMj} />
 
@@ -2569,6 +2683,23 @@
     border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer;
   }
   .palette-btn:hover { color: var(--heading); background: var(--selected); }
+
+  .asset-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 5px 11px;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .asset-btn:hover { color: var(--heading); background: var(--selected); }
 
   .compendium-link { font-size: 14px; font-weight: 700; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
   .compendium-link:hover { color: var(--accent-link-hover); }

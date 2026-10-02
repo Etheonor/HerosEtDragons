@@ -592,6 +592,60 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     expect(Math.abs(after.y - moved.y)).toBeLessThan(3);
   });
 
+  test("la bibliothèque : recherche, double-clic sur une carte, onglet PNJ", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await expect(dialog).toBeVisible();
+
+    // Recherche : seule « Carte quadrillée » reste.
+    const search = dialog.getByLabel("Rechercher dans la bibliothèque");
+    await search.fill("quadr");
+    await expect(dialog.locator(".asset-card", { hasText: "Carte illustrée" })).toHaveCount(0);
+    await expect(dialog.locator(".asset-card", { hasText: "Carte quadrillée" })).toHaveCount(1);
+
+    // Double-clic = afficher la carte, l'overlay se referme.
+    await dialog.locator(".asset-card", { hasText: "Carte quadrillée" }).dblclick();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+  });
+
+  test("l'onglet PNJ pose ×N en un double-clic (badge − ×N +)", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    // Enregistre le gobelin comme modèle, puis ouvre la bibliothèque.
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "modèle" })
+      .click();
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("tab", { name: /PNJ/ }).click();
+
+    const card = dialog.locator(".asset-card", { hasText: "Gobelin" });
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "Plus" }).click();
+    await expect(card.locator(".asset-qty-n")).toHaveText("×2");
+
+    // Double-clic : arme la pose ×2 et ferme l'overlay ; un clic sur la carte pose les deux.
+    await card.dblclick();
+    await expect(dialog).toHaveCount(0);
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height / 2);
+    await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(2);
+
+    // Clic droit sur la vignette : le menu unique s'ouvre.
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("tab", { name: /PNJ/ }).click();
+    await dialog.locator(".asset-card", { hasText: "Gobelin" }).click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Supprimer le modèle" })).toBeVisible();
+    await page.keyboard.press("Escape");
+  });
+
   test("clic droit sur un pion : menu contextuel unique (dupliquer)", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
