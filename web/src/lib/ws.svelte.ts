@@ -8,6 +8,7 @@ import type {
   JournalEntry,
   Marker,
   MapLink,
+  MapPin,
   FogState,
   CombatState,
   CharacterCard,
@@ -23,6 +24,7 @@ export interface TableState {
   tokens: Record<string, { charId: string; x: number; y: number }>;
   markers: Marker[];
   links: MapLink[];
+  pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -85,6 +87,7 @@ export const tableStore = $state<TableStore>({
     tokens: {},
     markers: [],
     links: [],
+    pins: [],
     fog: {},
     combat: null,
   },
@@ -119,6 +122,7 @@ export function resetTableStore() {
     tokens: {},
     markers: [],
     links: [],
+    pins: [],
     fog: {},
     combat: null,
   };
@@ -239,6 +243,7 @@ function handleMessage(msg: Record<string, unknown>) {
       }
       if (patch.markers) tableStore.state.markers = patch.markers as Marker[];
       if (patch.links) tableStore.state.links = patch.links as MapLink[];
+      if (patch.pins) tableStore.state.pins = patch.pins as MapPin[];
       if (patch.arrival !== undefined) {
         tableStore.arrival = patch.arrival as { x: number; y: number } | null;
       }

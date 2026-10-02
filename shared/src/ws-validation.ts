@@ -157,6 +157,27 @@ export const linkTravelSchema = z.object({
   id: id,
 });
 
+export const pinSetSchema = z.object({
+  type: z.literal("pin.set"),
+  id: z.string({ error: "identifiant requis" }).max(64).optional(),
+  x: coord,
+  y: coord,
+  label: z.string({ error: "libellé requis" }).max(80).optional(),
+  text: z.string({ error: "texte requis" }).max(4000).optional(),
+});
+
+export const pinMoveSchema = z.object({
+  type: z.literal("pin.move"),
+  id: id,
+  x: coord,
+  y: coord,
+});
+
+export const pinRemoveSchema = z.object({
+  type: z.literal("pin.remove"),
+  id: id,
+});
+
 export const markerRemoveSchema = z.object({
   type: z.literal("marker.remove"),
   id: id,
@@ -258,6 +279,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   linkRemoveSchema,
   linkMoveSchema,
   linkTravelSchema,
+  pinSetSchema,
+  pinMoveSchema,
+  pinRemoveSchema,
   markerRemoveSchema,
   markerClearSchema,
   fogEnableSchema,

@@ -1124,6 +1124,51 @@ describe("GameTableDO — intégration", () => {
     expect((snap.state as { links: unknown[] }).links.length).toBe(0);
   });
 
+  it("notes épinglées (lot 6) : le MJ crée/édite/déplace, le joueur ne peut que lire", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "pin.set",
+      x: 20,
+      y: 30,
+      label: "Salle du trône",
+      text: "Des **pièces d'or** au sol.",
+    });
+    const delta = await player.nextWhere(
+      (m) => ((m.patch as { pins?: unknown[] } | undefined)?.pins?.length ?? 0) === 1,
+    );
+    const pin = (delta.patch as { pins: { id: string; label: string; text: string }[] }).pins[0]!;
+    expect(pin.label).toBe("Salle du trône");
+    expect(pin.text).toContain("pièces d'or");
+
+    // Un joueur ne peut ni créer ni modifier : un snapshot neuf le prouve.
+    player.send({ type: "pin.set", x: 10, y: 10, label: "Pirate", text: "…" });
+    await new Promise((r) => setTimeout(r, 60));
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const pins = (snap.state as { pins: { label: string }[] }).pins;
+    expect(pins.length).toBe(1);
+    expect(pins[0]!.label).toBe("Salle du trône");
+
+    // Déplacement et suppression diffusés.
+    mj.send({ type: "pin.move", id: pin.id, x: 40, y: 50 });
+    await player.nextWhere(
+      (m) => (m.patch as { pins?: { x: number }[] } | undefined)?.pins?.[0]?.x === 40,
+    );
+    mj.send({ type: "pin.remove", id: pin.id });
+    await player.nextWhere(
+      (m) => ((m.patch as { pins?: unknown[] } | undefined)?.pins?.length ?? 1) === 0,
+    );
+  });
+
   it("undo (lot 4) : la pile est plafonnée à 50 pas, et le snapshot expose canUndo/canRedo", async () => {
     await setupWorld();
     const mj = await connect(MJ);

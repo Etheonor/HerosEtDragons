@@ -46,6 +46,7 @@ interface **de jeu** plutôt qu'une interface web.
 | **Dashboard MJ**            | Panneau `<Panel>` fermé par défaut (palette) : PNJ de la scène (PV, CA, états, recentrage, fiche) + notes de la carte (REST, enregistrement à la demande).                                                                                                                                                                                                                                                                                                                                               | `07` §5.5   |
 | **Liens entre cartes**      | Entité `MapLink` par carte, création au clic droit (sous-menu des cartes), **liens déplaçables** (drag MJ), **voyage ouvert à tout membre** (`link.travel`) avec point d'arrivée. **Pas de retour automatique** : le MJ pose le retour à la main (décidé le 02/10). `hidden` (passage secret) : jamais diffusé aux joueurs, voyage refusé, journal réservé au MJ. Onglet Liens dans la bibliothèque (badge « caché »). Pas d'undo (documenté).                                                           | `07` §6     |
 | **Aperçu au survol**        | `Cmd/Ctrl + survol` d'un pion : portrait, nom, CA, PV, conditions — non cliquable, suit le curseur. L'extrait compendium attend un lien fiche→compendium.                                                                                                                                                                                                                                                                                                                                                | `07` §6.6   |
+| **Notes épinglées**         | `MapPin` par carte (MJ), visibles par tous (notes de lieu ; le privé reste au dashboard / notes REST). Panneau non-modal `<Panel>` avec rendu markdown-lite, édition en place, drag du pin, clic droit (ouvrir, renommer, supprimer).                                                                                                                                                                                                                                                                    | `07` §6.7   |
 | **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                                                                                                                                                                                                                                                                                                                                                | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -121,11 +122,12 @@ nom au survol et curseur de brosse ; l'**undo/redo transactionnel** (DO source d
 vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; puis le **lot 5** :
 `<Panel>` drag/resize/persisté, menu contextuel unique, initiative **verticale**
 réordonnable, **asset manager** (Cartes/PNJ/Personnages/Liens, pose ×N) et
-**dashboard MJ** (PNJ de la scène + notes de carte) ; puis le **lot 6** entamé :
+**dashboard MJ** (PNJ de la scène + notes de carte) ; puis le **lot 6 complet** :
 **liens entre cartes** (voyage partagé, point d'arrivée, liens déplaçables,
-passages secrets, onglet Liens) et **aperçu au survol**. Restent du lot 6 les
-**notes épinglées**. Le design system Penpot est la source (19 couleurs,
-17 typographies, 37 composants).
+passages secrets, onglet Liens), **aperçu au survol** et **notes épinglées**
+(panneau markdown-lite). Le design system Penpot est la source (19 couleurs,
+17 typographies, 37 composants). Prochain : **lot 7** (feuille, compendium,
+accueil), puis le **lot peaux Penpot du chrome**.
 
 ---
 

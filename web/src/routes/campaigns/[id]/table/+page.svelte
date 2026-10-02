@@ -3,7 +3,14 @@
   import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
-  import type { ClientMessage, JournalEntry, MapLink, TableSettings } from '@rollwith/shared/protocol';
+  import type {
+    ClientMessage,
+    JournalEntry,
+    MapLink,
+    MapPin,
+    TableSettings,
+  } from '@rollwith/shared/protocol';
+  import { inlineHtml, toBlocks } from '$lib/markdown-lite';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
@@ -508,8 +515,16 @@
   let npcSaveAsTemplate = $state(false);
   let dragOverride = $state<Record<string, { x: number; y: number }>>({});
   let markerDragOverride = $state<Record<string, { x: number; y: number }>>({});
+  let pinDragOverride = $state<Record<string, { x: number; y: number }>>({});
 
-  let drag: { id: string; kind: 'token' | 'marker'; moved: boolean; sent: boolean } | null = null;
+  let drag: {
+    id: string;
+    kind: 'token' | 'marker' | 'pin';
+    moved: boolean;
+    sent: boolean;
+  } | null = null;
+  /** Un drag de note ne doit pas ouvrir le panneau au relâchement. */
+  let pinJustDragged = false;
   let fogErasing = false;
   let skipNextClick = false;
   let lastFogPoint: { x: number; y: number } | null = null;
@@ -851,6 +866,102 @@
     sendWs({ type: 'link.travel', id: l.id });
   }
 
+  // ── Notes épinglées (lot 6.7) ────────────────────────────────
+  let openPinId = $state<string | null>(null);
+  let pinEdit = $state(false);
+  let pinDraft = $state('');
+
+  const displayPins = $derived(
+    store.state.pins.map((p) => (pinDragOverride[p.id] ? { ...p, ...pinDragOverride[p.id] } : p)),
+  );
+  const openPin = $derived(
+    openPinId ? (store.state.pins.find((p) => p.id === openPinId) ?? null) : null,
+  );
+
+  /** Rendu markdown-lite de la note (blocs → HTML échappé par inlineHtml). */
+  const renderedPin = $derived.by(() => {
+    const pin = openPin;
+    if (!pin) return '';
+    return toBlocks(pin.text)
+      .map((b) => {
+        if (b.type === 'heading') return `<p class="pin-h">${inlineHtml(b.text)}</p>`;
+        if (b.type === 'list') {
+          return `<ul>${b.items.map((i) => `<li>${inlineHtml(i)}</li>`).join('')}</ul>`;
+        }
+        if (b.type === 'para') return `<p>${inlineHtml(b.text)}</p>`;
+        return `<p class="pin-h">${inlineHtml(b.headers.join(' · '))}</p>`;
+      })
+      .join('');
+  });
+
+  /** Ouvre une note en LECTURE (la création ouvre, elle, en édition). */
+  function openPinRead(pinId: string) {
+    pinEdit = false;
+    openPinId = pinId;
+  }
+
+  function onPinClick(p: MapPin) {
+    if (pinJustDragged) {
+      pinJustDragged = false;
+      return;
+    }
+    openPinRead(p.id);
+  }
+
+  function openPinMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'pin', id, x: e.clientX, y: e.clientY };
+  }
+
+  function createPinAt(x: number, y: number) {
+    prompt = {
+      title: 'Nouvelle note',
+      label: 'Titre',
+      initial: '',
+      confirmLabel: 'Créer',
+      onSubmit: (label) => {
+        const id = crypto.randomUUID();
+        sendWs({ type: 'pin.set', id, x, y, label, text: '' });
+        openPinId = id;
+        pinDraft = '';
+        pinEdit = true;
+      },
+    };
+  }
+
+  function openRenamePinPrompt(id: string) {
+    const p = store.state.pins.find((x) => x.id === id);
+    if (!p) return;
+    prompt = {
+      title: 'Renommer la note',
+      label: 'Titre',
+      initial: p.label,
+      confirmLabel: 'Renommer',
+      onSubmit: (label) =>
+        sendWs({ type: 'pin.set', id: p.id, x: p.x, y: p.y, label, text: p.text }),
+    };
+  }
+
+  function startPinEdit() {
+    if (!openPin) return;
+    pinDraft = openPin.text;
+    pinEdit = true;
+  }
+
+  function savePin() {
+    if (!openPin) return;
+    sendWs({
+      type: 'pin.set',
+      id: openPin.id,
+      x: openPin.x,
+      y: openPin.y,
+      label: openPin.label,
+      text: pinDraft,
+    });
+    pinEdit = false;
+  }
+
   // ── Aperçu au survol (Cmd/Ctrl + survol) ─────────────────────
   let preview = $state<{ charId: string; x: number; y: number } | null>(null);
   const previewChar = $derived(preview ? charById(preview.charId) : null);
@@ -1150,6 +1261,16 @@
     skipNextClick = true;
   }
 
+  function pinPointerDown(id: string, e: PointerEvent) {
+    if (!isMj) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (tool === 'hand') return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag = { id, kind: 'pin', moved: false, sent: false };
+    skipNextClick = true;
+  }
+
   function onMapPointerMove(e: PointerEvent) {
     if (isMj && tool === 'fog' && fogOn && !panning) updateFogCursor(e);
     if (panning) return;
@@ -1168,12 +1289,15 @@
         { type: 'token.move', tokenId: drag.id, x, y, ...(begin ? { begin: true } : {}) },
         begin,
       );
-    } else {
+    } else if (drag.kind === 'marker') {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
       scheduleMove(
         { type: 'marker.move', id: drag.id, x, y, ...(begin ? { begin: true } : {}) },
         begin,
       );
+    } else {
+      pinDragOverride = { ...pinDragOverride, [drag.id]: { x, y } };
+      scheduleMove({ type: 'pin.move', id: drag.id, x, y });
     }
   }
 
@@ -1189,8 +1313,9 @@
     // déclenche un pointerleave immédiat sur la surface, qui appelait ce
     // handler et annulait le panoramique dès la première frame.
     if (drag) {
-      const { id, kind } = drag;
+      const { id, kind, moved } = drag;
       drag = null;
+      if (kind === 'pin') pinJustDragged = moved;
       // `true` : la position finale part TOUJOURS, même si le throttle vient de
       //DROP la précédente — sinon le pion resterait en retard d'un mouvement.
       flushMove(true);
@@ -1198,9 +1323,12 @@
         if (kind === 'token') {
           const { [id]: _drop, ...rest } = dragOverride;
           dragOverride = rest;
-        } else {
+        } else if (kind === 'marker') {
           const { [id]: _drop, ...rest } = markerDragOverride;
           markerDragOverride = rest;
+        } else {
+          const { [id]: _drop, ...rest } = pinDragOverride;
+          pinDragOverride = rest;
         }
       }, 50);
     }
@@ -1566,6 +1694,7 @@
     | { kind: 'token'; charId: string; charKind: 'pj' | 'pnj'; x: number; y: number }
     | { kind: 'marker'; id: string; x: number; y: number }
     | { kind: 'link'; id: string; x: number; y: number }
+    | { kind: 'pin'; id: string; x: number; y: number }
     /** `x/y` = pointeur écran (ancre du menu) ; `sx/sy` = % de surface. */
     | { kind: 'map'; x: number; y: number; sx: number; sy: number }
     | ({ x: number; y: number } & AssetTarget);
@@ -1715,6 +1844,31 @@
       return items;
     }
 
+    if (t.kind === 'pin') {
+      const p = store.state.pins.find((x) => x.id === t.id);
+      if (!p) return [];
+      const items: ContextMenuItem[] = [
+        { id: 'open', label: 'Ouvrir la note', onSelect: () => openPinRead(p.id) },
+      ];
+      if (isMj) {
+        items.push(
+          {
+            id: 'rename-pin',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenamePinPrompt(p.id),
+          },
+          {
+            id: 'remove-pin',
+            label: 'Supprimer la note',
+            danger: true,
+            onSelect: () => sendWs({ type: 'pin.remove', id: p.id }),
+          },
+        );
+      }
+      return items;
+    }
+
     if (t.kind === 'link') {
       const l = store.state.links.find((x) => x.id === t.id);
       if (!l) return [];
@@ -1795,6 +1949,11 @@
           })),
         });
       }
+      items.push({
+        id: 'add-pin',
+        label: 'Poser une note ici…',
+        onSelect: () => createPinAt(t.sx, t.sy),
+      });
       items.push(
         {
           id: 'tool.move',
@@ -2175,6 +2334,24 @@
               >
                 <span class="map-link-icon" aria-hidden="true">→</span>
                 <span class="map-link-label">{l.label}</span>
+              </button>
+            {/each}
+
+            {#each displayPins as p (p.id)}
+              <button
+                type="button"
+                class="map-pin"
+                style="left: {p.x}%; top: {p.y}%;"
+                title={p.label}
+                onpointerdown={(e) => pinPointerDown(p.id, e)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onPinClick(p);
+                }}
+                oncontextmenu={(e) => openPinMenu(e, p.id)}
+              >
+                <span class="map-pin-icon" aria-hidden="true">✎</span>
+                <span class="map-pin-label">{p.label}</span>
               </button>
             {/each}
 
@@ -2909,6 +3086,47 @@
     </Panel>
     {/if}
 
+    {#if openPin}
+    <Panel
+      id={`pin:${openPin.id}`}
+      title={openPin.label}
+      campaignId={campaignId}
+      onClose={() => (openPinId = null)}
+      closeLabel="Fermer la note"
+      initial={{ x: 380, y: 110, w: 340, h: 320 }}
+      class="pin-panel"
+    >
+      <div class="pin-body scroll-area" use:scrollArea>
+        {#if isMj && pinEdit}
+          <textarea
+            class="pin-edit"
+            bind:value={pinDraft}
+            placeholder="Note (markdown léger : **gras**, *italique*, listes…)"
+            aria-label="Contenu de la note"
+          ></textarea>
+          <div class="pin-actions">
+            <button class="pin-cancel" type="button" onclick={() => (pinEdit = false)}>Annuler</button
+            >
+            <button class="pin-save" type="button" onclick={savePin}>Enregistrer</button>
+          </div>
+        {:else}
+          {#if openPin.text.trim()}
+            <div class="pin-note">{@html renderedPin}</div>
+          {:else}
+            <p class="pin-empty">
+              Note vide.{#if isMj} Cliquez sur Modifier pour l'écrire.{/if}
+            </p>
+          {/if}
+          {#if isMj}
+            <button class="pin-cancel pin-edit-btn" type="button" onclick={startPinEdit}
+              >Modifier</button
+            >
+          {/if}
+        {/if}
+      </div>
+    </Panel>
+    {/if}
+
   <!-- Couche popups : éléments flottants non portalés (le reste passe par
        bits-ui + <BitsConfig>, donc dans le top layer). -->
   <div class="layer-popups">
@@ -3523,11 +3741,13 @@
      porte — sauf les objets interactifs : pions et repères. */
   .token,
   .marker,
-  .map-link { pointer-events: auto; }
+  .map-link,
+  .map-pin { pointer-events: auto; }
   /* Outil Main : les pions ne doivent pas intercepter le geste, il part du fond. */
   .map-zoom.tool-hand .token,
   .map-zoom.tool-hand .marker,
-  .map-zoom.tool-hand .map-link { pointer-events: none; }
+  .map-zoom.tool-hand .map-link,
+  .map-zoom.tool-hand .map-pin { pointer-events: none; }
 
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
@@ -3727,6 +3947,59 @@
     border: 1.5px solid var(--accent-border); border-radius: var(--radius-full);
     color: var(--accent-text);
   }
+
+  /* ── Notes épinglées (lot 6.7) ──────────────────────────────── */
+  .map-pin {
+    position: absolute; transform: translate(-50%, -50%);
+    display: flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; padding: 0;
+    background: var(--panel); color: var(--heading);
+    border: 2px solid var(--border-default); border-radius: var(--radius-sm);
+    box-shadow: 0 2px 6px var(--shadow-1);
+    cursor: pointer; z-index: var(--z-links);
+    touch-action: none;
+  }
+  .map-pin:hover { border-color: var(--accent-border); color: var(--accent-text); }
+  .map-pin-icon { font-size: 12px; line-height: 1; }
+  .map-pin-label {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px;
+    font-size: 10.5px; font-weight: 700; color: #f2ede0; background: rgba(27, 25, 23, 0.88);
+    border-radius: var(--radius-full); padding: 1px 7px; white-space: nowrap;
+    opacity: 0; transition: opacity 140ms var(--ease-out); pointer-events: none;
+  }
+  .map-pin:hover .map-pin-label { opacity: 1; }
+
+  .pin-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .pin-note { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+  .pin-note :global(p) { margin: 0 0 8px; }
+  .pin-note :global(p:last-child) { margin-bottom: 0; }
+  .pin-note :global(ul) { margin: 0 0 8px; padding-left: 18px; }
+  .pin-note :global(.pin-h) { font-family: var(--font-title); color: var(--heading); }
+  .pin-empty { margin: 0; font-size: 12.5px; font-style: italic; color: var(--text-3); }
+  .pin-edit {
+    flex: 1; min-height: 140px; resize: none;
+    font-family: var(--font-body); font-size: 13px; line-height: 1.45;
+    padding: 8px 9px; color: var(--text); background: var(--sunken);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); outline: none;
+  }
+  .pin-edit:focus { border-color: var(--accent-border); }
+  .pin-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .pin-save {
+    font-family: var(--font-body); font-size: 12px; font-weight: 600;
+    padding: 4px 12px; color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .pin-save:hover { background: var(--accent-hover); }
+  .pin-cancel {
+    font-family: var(--font-body); font-size: 12px; font-weight: 600;
+    padding: 4px 12px; color: var(--text-2); background: transparent;
+    border: 2px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .pin-cancel:hover { color: var(--heading); border-color: var(--border); }
+  .pin-edit-btn { align-self: flex-start; }
 
   /* Pion « objet de jeu » (Penpot : Game/Token) : disque plein, anneau à la
      couleur du personnage, barre de PV dessous, plaque de nom au survol.

@@ -773,6 +773,32 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(page.locator(".map-header")).toContainText("Carte illustrée");
   });
 
+  test("notes épinglées : créer, écrire en markdown, relire", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
+    await page.getByRole("menuitem", { name: /Poser une note ici/ }).click();
+    const prompt = page.getByRole("dialog", { name: "Nouvelle note" });
+    await prompt.getByLabel("Titre").fill("Salle du trône");
+    await prompt.getByRole("button", { name: "Créer" }).click();
+
+    // Le panneau s'ouvre en édition ; on écrit du markdown léger.
+    const panel = page.locator(".pin-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByLabel("Contenu de la note").fill("Des **pièces d'or** au sol.");
+    await panel.getByRole("button", { name: "Enregistrer" }).click();
+    await expect(panel.locator("strong")).toHaveText("pièces d'or");
+
+    // Fermer puis rouvrir par le pin rend la même note.
+    await panel.getByRole("button", { name: "Fermer la note" }).click();
+    await expect(panel).toHaveCount(0);
+    await page.locator(".map-pin", { hasText: "Salle du trône" }).click();
+    await expect(page.locator(".pin-panel strong")).toHaveText("pièces d'or");
+  });
+
   test("renommer un lien par le clic droit", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();

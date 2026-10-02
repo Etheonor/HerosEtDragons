@@ -42,6 +42,17 @@ export interface FogState {
 /** Lien entre deux cartes (porte, escalier, portail…) — « le HTML des maps ». */
 export type MapLinkKind = "door" | "stairs" | "region" | "portal";
 
+/** Note épinglée sur une carte (préparation MJ affichée dans le monde). */
+export interface MapPin {
+  id: string;
+  mapId: string;
+  x: number;
+  y: number;
+  label: string;
+  /** Contenu markdown-lite rendu dans le panneau non-modal. */
+  text: string;
+}
+
 export interface MapLink {
   id: string;
   /** Carte qui porte le lien. */
@@ -77,6 +88,8 @@ export interface TableLiveState {
   markers: Marker[];
   /** Liens de la carte active (le DO les stocke par carte, comme les pions). */
   links: MapLink[];
+  /** Notes épinglées de la carte active. */
+  pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -313,6 +326,27 @@ export interface LinkTravelMsg {
   id: string;
 }
 
+export interface PinSetMsg {
+  type: "pin.set";
+  id?: string;
+  x: number;
+  y: number;
+  label?: string;
+  text?: string;
+}
+
+export interface PinMoveMsg {
+  type: "pin.move";
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface PinRemoveMsg {
+  type: "pin.remove";
+  id: string;
+}
+
 export interface FogEnableMsg {
   type: "fog.enable";
 }
@@ -424,6 +458,9 @@ export type ClientMessage =
   | LinkRemoveMsg
   | LinkMoveMsg
   | LinkTravelMsg
+  | PinSetMsg
+  | PinMoveMsg
+  | PinRemoveMsg
   | FogEnableMsg
   | FogRevealMsg
   | FogCoverMsg
@@ -448,6 +485,7 @@ export interface TableDeltaPatch {
   combat?: TableLiveState["combat"];
   markers?: Marker[];
   links?: MapLink[];
+  pins?: MapPin[];
   /** Point d'arrivée du dernier voyage (le client recentre sa caméra). */
   arrival?: { x: number; y: number } | null;
   tokens?: Record<string, TokenState | null>;
@@ -570,6 +608,9 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "link.remove",
     "link.move",
     "link.travel",
+    "pin.set",
+    "pin.move",
+    "pin.remove",
     "fog.enable",
     "fog.reveal",
     "fog.cover",

@@ -15,6 +15,7 @@ import type {
   Marker,
   MapLink,
   MapLinkKind,
+  MapPin,
   FogState,
   CombatState,
   CharacterCard,
@@ -69,6 +70,8 @@ interface LiveState {
   markersByMap: Record<string, Marker[]>;
   /** Liens entre cartes (portes, escaliers…), stockés par carte. */
   linksByMap: Record<string, MapLink[]>;
+  /** Notes épinglées sur la carte, stockées par carte. */
+  pinsByMap: Record<string, MapPin[]>;
   fog: Record<string, FogState>;
   combat: CombatState | null;
 }
@@ -154,6 +157,9 @@ type LinkSetMsg = Extract<ClientMessageInput, { type: "link.set" }>;
 type LinkRemoveMsg = Extract<ClientMessageInput, { type: "link.remove" }>;
 type LinkMoveMsg = Extract<ClientMessageInput, { type: "link.move" }>;
 type LinkTravelMsg = Extract<ClientMessageInput, { type: "link.travel" }>;
+type PinSetMsg = Extract<ClientMessageInput, { type: "pin.set" }>;
+type PinMoveMsg = Extract<ClientMessageInput, { type: "pin.move" }>;
+type PinRemoveMsg = Extract<ClientMessageInput, { type: "pin.remove" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
@@ -170,6 +176,7 @@ function defaultLiveState(): LiveState {
     tokensByMap: {},
     markersByMap: {},
     linksByMap: {},
+    pinsByMap: {},
     fog: {},
     combat: null,
   };
@@ -229,8 +236,14 @@ export class GameTableDO extends DurableObject<Env> {
     if (!stored) return defaultLiveState();
     const legacy = stored as unknown as Record<string, unknown>;
     if (legacy.tokensByMap && legacy.markersByMap) {
-      // v2 → v3 : les liens entre cartes sont apparus après coup.
-      if (!legacy.linksByMap) return { ...stored, linksByMap: {} };
+      // v2 → v3 (liens) → v4 (notes épinglées) : champs apparus après coup.
+      if (!legacy.linksByMap || !legacy.pinsByMap) {
+        return {
+          ...stored,
+          linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
+          pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
+        };
+      }
       return stored;
     }
     const key = ((legacy.mapId as string | null) ?? "") as string;
@@ -240,6 +253,7 @@ export class GameTableDO extends DurableObject<Env> {
       tokensByMap: { [key]: (legacy.tokens as Record<string, TokenState>) ?? {} },
       markersByMap: { [key]: (legacy.markers as Marker[]) ?? [] },
       linksByMap: {},
+      pinsByMap: {},
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
     };
@@ -274,6 +288,14 @@ export class GameTableDO extends DurableObject<Env> {
 
   private patchLinks(state: LiveState, links: MapLink[]): Partial<LiveState> {
     return { linksByMap: { ...state.linksByMap, [this.mapKey(state.mapId)]: links } };
+  }
+
+  private pinsOf(state: LiveState, mapId: string | null = state.mapId): MapPin[] {
+    return state.pinsByMap?.[this.mapKey(mapId)] ?? [];
+  }
+
+  private patchPins(state: LiveState, pins: MapPin[]): Partial<LiveState> {
+    return { pinsByMap: { ...state.pinsByMap, [this.mapKey(state.mapId)]: pins } };
   }
 
   private async ensureCampaignId(): Promise<void> {
@@ -1067,6 +1089,7 @@ export class GameTableDO extends DurableObject<Env> {
       rawType === "token.move" ||
       rawType === "marker.move" ||
       rawType === "link.move" ||
+      rawType === "pin.move" ||
       rawType === "fog.reveal";
     if (this.isRateLimited(attachment.userId, isMoveMsg)) {
       ws.send(
@@ -1143,6 +1166,15 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "link.travel":
           await this.handleLinkTravel(attachment, m);
+          break;
+        case "pin.set":
+          await this.handlePinSet(attachment, m);
+          break;
+        case "pin.move":
+          await this.handlePinMove(attachment, m);
+          break;
+        case "pin.remove":
+          await this.handlePinRemove(attachment, m);
           break;
         case "fog.enable":
           await this.handleFogEnable(ws, attachment);
@@ -2263,6 +2295,7 @@ export class GameTableDO extends DurableObject<Env> {
       mapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
+      pins: this.pinsOf(view),
       arrival: null,
     });
     this.broadcastLinks(this.linksOf(view));
@@ -2453,6 +2486,7 @@ export class GameTableDO extends DurableObject<Env> {
       mapId: link.targetMapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
+      pins: this.pinsOf(view),
       arrival,
     });
     this.broadcastLinks(this.linksOf(view));
@@ -2468,6 +2502,53 @@ export class GameTableDO extends DurableObject<Env> {
     );
     this.appendJournal(entry, visibility);
     this.broadcastJournal(entry, visibility);
+  }
+
+  // ── Handlers : notes épinglées ─────────────────────────────────
+  // MJ seul les crée/édite ; visibles par tous (notes de lieu, pas de
+  // préparation privée — ça, c'est le dashboard / les notes de carte REST).
+
+  private async handlePinSet(att: WsAttachment, msg: PinSetMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId) return;
+
+    const pins = this.pinsOf(state);
+    const existing = msg.id ? pins.find((p) => p.id === msg.id) : undefined;
+    const pin: MapPin = {
+      id: existing?.id ?? msg.id ?? crypto.randomUUID(),
+      mapId,
+      x: this.clamp(msg.x),
+      y: this.clamp(msg.y),
+      label: (msg.label?.trim() || existing?.label || "note").slice(0, 80),
+      text: (msg.text ?? existing?.text ?? "").slice(0, 4000),
+    };
+    const next = existing ? pins.map((p) => (p.id === pin.id ? pin : p)) : [...pins, pin];
+    await this.patchState(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
+  }
+
+  private async handlePinMove(att: WsAttachment, msg: PinMoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const pins = this.pinsOf(state);
+    const next = pins.map((p) =>
+      p.id === msg.id ? { ...p, x: this.clamp(msg.x), y: this.clamp(msg.y) } : p,
+    );
+    // Comme les pions/repères : diffusion immédiate, persistance débouncée.
+    this.patchStateInMemory(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
+  }
+
+  private async handlePinRemove(att: WsAttachment, msg: PinRemoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const pins = this.pinsOf(state);
+    const next = pins.filter((p) => p.id !== msg.id);
+    if (next.length === pins.length) return;
+    await this.patchState(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
   }
 
   // ── Handlers : brouillard ───────────────────────────────────────
@@ -3167,6 +3248,7 @@ export class GameTableDO extends DurableObject<Env> {
         tokens,
         markers: this.markersOf(state),
         links: role === "mj" ? this.linksOf(state) : this.linksOf(state).filter((l) => !l.hidden),
+        pins: this.pinsOf(state),
         fog: state.fog,
         combat,
       },
