@@ -47,6 +47,9 @@ pnpm check          # LA commande de validation : lint + format + typecheck + te
 pnpm dev            # wrangler dev seul (API + build statique sur :8787)
 pnpm dev:web        # vite dev seul (:5173, HMR) — proxy /api vers :8787
 pnpm dev:all        # build web + vite (:5173) + wrangler (:8787)
+pnpm dev:clean      # arrête TOUTES les instances wrangler/workerd du dépôt
+                    # (`pnpm dev`/`dev:all` le font déjà avant de démarrer, et
+                    # `pnpm e2e` s'en sert pour purger les orphelins)
 
 pnpm --filter api typecheck        # tsc --noEmit
 pnpm --filter api test             # tests d'intégration DO (workerd + D1 + WS réels)
@@ -83,7 +86,7 @@ Sans `DEV_AUTH`, **toutes** les routes `/api/dev/*` renvoient 404 et le cookie
 ne vaut rien. Ne jamais définir `DEV_AUTH` en production.
 
 ```bash
-pnpm e2e              # 23 tests navigateur (Playwright) — démarre 8787 si besoin
+pnpm e2e              # 27 tests navigateur (Playwright) — démarre 8787 si besoin
 pnpm e2e:ui           # mode interactif
 pnpm e2e:headed       # navigateur visible
 pnpm dev:seed         # réinitialise la fixture (campagne dev-camp)
@@ -174,14 +177,21 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
   respecter ce filtre, sinon on réintroduit la fuite de noms.
 - **CSP (S3)** volontairement permissive (`'unsafe-inline'`) pour ne pas casser
   le bootstrap SvelteKit ; c'est un garde-fou, pas une politique dure.
+- **Instances `wrangler dev` orphelines** : deux workers sur le même SQLite de
+  DO échouent en `SQLITE_BUSY`, et les lignes de commande réelles
+  (`wrangler.js dev`, `wrangler-dist/cli.js dev`) ne matchent pas un
+  `pkill -f "wrangler dev"`. Utiliser `pnpm dev:clean` (détection par ports
+  `lsof` + arbres de processus, `--check` pour tester sans tuer) ; `pnpm dev`,
+  `pnpm dev:all` et `pnpm e2e` l'appellent d'eux-mêmes.
 
 ## 10. Chantier d'UX/UI v2 — branche `feat/uiv2`
 
 Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
 refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
-jeu » plutôt que « web ». **Lots 0 à 2 livrés** (fondations de surfaces, carte
-plein écran, chrome : barre d'outils, palette, raccourcis) ; le **lot 3** (vie
-sur la carte) est le prochain.
+jeu » plutôt que « web ». **Lots 0 à 3 livrés** (fondations de surfaces, carte
+plein écran, chrome : barre d'outils, palette, raccourcis ; puis vie sur la
+carte : caméra animée, PV/états des pions, échelle en cases) ; le **lot 4**
+(undo) est le prochain.
 
 | Document                                             | Contenu                                                         |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
@@ -199,10 +209,16 @@ Règles du chantier :
    responsive, aucun travail tactile.
 4. **`pnpm check` et `pnpm e2e` verts à chaque commit.**
 
-Déjà en place sur `feat/uiv2` : les lots 0 à 2, `bits-ui@2.19.3` et
+Déjà en place sur `feat/uiv2` : les lots 0 à 3, `bits-ui@2.19.3` et
 `@lucide/svelte` dans `web/package.json`, le design system Penpot comme source
-(`web/src/lib/ds/`) et deux spikes validés (overlays 54/54 sur
-Chromium/Firefox/Safari ; Lot 1 sur la vraie table).
+(`web/src/lib/ds/`), la caméra dans `web/src/lib/table/camera.svelte.ts` et deux
+spikes validés (overlays 54/54 sur Chromium/Firefox/Safari ; Lot 1 sur la vraie
+table).
+
+⚠️ **La règle de visibilité PNJ (AGENTS §9) couvre les PV des pions** : le DO
+envoie `pv/pvMax = null` à un joueur quand `pnjPvVisible=false` et filtre les
+pions non révélés (B5). Le client ne doit jamais déduire ou afficher une barre
+sans ces valeurs. Test e2e : « Pions vivants (Lot 3) ».
 
 ⚠️ **`web/src/routes/dev/overlays/` est un harnais jetable de spike.**
 `adapter-static` le déploierait tel quel. Le supprimer avant toute mise en prod.

@@ -38,6 +38,7 @@ function toDto(t: typeof schema.npcTemplates.$inferSelect) {
     initBonus: t.initBonus,
     color: t.color,
     conditions: t.conditions,
+    tokenScale: t.tokenScale,
     notes: t.notes,
     source: t.source,
     updatedAt: t.updatedAt.toISOString(),

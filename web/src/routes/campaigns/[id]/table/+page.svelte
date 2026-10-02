@@ -20,6 +20,7 @@
   import { TOOL_FACES } from '$lib/table/toolbar/faces';
   import { hotkeyIdFromEvent } from '$lib/hotkeys';
   import { commandRegistry, type PaletteCommand } from '$lib/table/commands.svelte';
+  import { createCamera, type CameraPose } from '$lib/table/camera.svelte';
   import { slugify } from '$lib/slug';
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
@@ -36,6 +37,13 @@
     'Pétrifié', 'Terrorisé', 'Repoussé', 'Surpris',
   ];
   let stateOptions = $state<string[]>(CONDITIONS);
+
+  /** États qui couchent la figurine : voile sur le pion (les PV à 0 ont leur
+   *  propre traitement : grisé + translucide). */
+  const DOWN_CONDITIONS = new Set(['Inconscient', 'À terre']);
+
+  /** Presets de taille de pion, en cases (multiplicateur de `gridSize`). */
+  const TOKEN_SCALES = [0.5, 1, 2, 3, 4];
 
   // Store runes partagé (ws.svelte.ts) : l'objet mute en place, tout est réactif.
   // NB : PAS de $state() ici — tableStore est déjà un proxy $state (N4 audit),
@@ -560,65 +568,101 @@
       : null,
   );
 
-  // ── Vue : zoom + panoramique, STRICTEMENT locaux ─────────────
-  // Chaque joueur a son propre cadrage ; rien n'est stocké ni diffusé, donc le
-  // zoom d'un joueur ne change rien pour les autres. Le DO ignore tout ça : les
-  // pions restent en % de la surface, la transformation est purement visuelle.
-  const VIEW_MIN = 0.5;
-  const VIEW_MAX = 8;
-  let viewZoom = $state(1);
-  let viewPanX = $state(0);
-  let viewPanY = $state(0);
+  // ── Caméra : zoom + panoramique, STRICTEMENT locaux ──────────
+  // Chaque joueur a son propre cadrage ; rien n'est diffusé, donc le zoom d'un
+  // joueur ne change rien pour les autres. Le DO ignore tout ça : les pions
+  // restent en % de la surface, la transformation est purement visuelle.
+  // Le cadrage est persisté par carte dans localStorage (préférence locale).
   let panning = $state<{ x: number; y: number; id: number; btn: number } | null>(null);
-  let viewForMapId: string | null = null;
 
   /** Taille réelle de la surface (fitted = image ajustée, fill = cadre plein). */
   const surfaceSize = $derived(
     fittedSize ? { w: fittedSize.w, h: fittedSize.h } : { w: frameW, h: frameH },
   );
 
+  let cameraMapId: string | null = null;
+  let pendingPose = $state<CameraPose | null>(null);
+
+  const camera = createCamera(() => {
+    scheduleFogRedraw();
+    scheduleCameraSave();
+  });
+
+  function cameraKey(mapId: string): string {
+    return `hd-camera:${campaignId}:${mapId}`;
+  }
+
+  function loadCameraPose(mapId: string): CameraPose | null {
+    try {
+      const raw = localStorage.getItem(cameraKey(mapId));
+      if (!raw) return null;
+      const p = JSON.parse(raw) as Partial<CameraPose>;
+      if (typeof p.fx !== 'number' || typeof p.fy !== 'number' || typeof p.zoom !== 'number') {
+        return null;
+      }
+      return { fx: p.fx, fy: p.fy, zoom: p.zoom };
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCameraPose(mapId: string): void {
+    try {
+      localStorage.setItem(cameraKey(mapId), JSON.stringify(camera.pose));
+    } catch {
+      /* stockage plein ou refusé : le cadrage reste valable en mémoire */
+    }
+  }
+
+  let cameraSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleCameraSave(): void {
+    if (!cameraMapId) return;
+    if (cameraSaveTimer) clearTimeout(cameraSaveTimer);
+    cameraSaveTimer = setTimeout(() => {
+      cameraSaveTimer = null;
+      if (cameraMapId) saveCameraPose(cameraMapId);
+    }, 250);
+  }
+
+  function flushCameraSave(): void {
+    if (!cameraMapId) return;
+    if (cameraSaveTimer) {
+      clearTimeout(cameraSaveTimer);
+      cameraSaveTimer = null;
+    }
+    saveCameraPose(cameraMapId);
+  }
+
+  $effect(() => {
+    camera.setViewport(frameW, frameH);
+  });
+
+  $effect(() => {
+    camera.setSurface(surfaceSize.w, surfaceSize.h);
+  });
+
   $effect(() => {
     const id = activeMap?.id ?? null;
-    if (id === viewForMapId) return;
-    viewForMapId = id;
-    viewZoom = 1;
-    viewPanX = 0;
-    viewPanY = 0;
+    if (id === cameraMapId) return;
+    flushCameraSave();
+    cameraMapId = id;
+    pendingPose = id ? (loadCameraPose(id) ?? { fx: 0.5, fy: 0.5, zoom: 1 }) : null;
+  });
+
+  const surfaceReady = $derived(
+    !!activeMap && frameW > 0 && frameH > 0 && (!activeMap.hasImage || !!fittedSize),
+  );
+
+  $effect(() => {
+    if (!pendingPose || !surfaceReady) return;
+    const p = pendingPose;
+    pendingPose = null;
+    camera.setSurface(surfaceSize.w, surfaceSize.h);
+    camera.setPose(p, { instant: true });
   });
 
   function resetView() {
-    viewZoom = 1;
-    viewPanX = 0;
-    viewPanY = 0;
-    scheduleFogRedraw();
-  }
-
-  /**
-   * Empêche de perdre la carte, sans casser l'ancrage « zoom sur le curseur ».
-   * Sans marge, dès que la carte couvrait le cadre (cas normal : une carte
-   * haute est d'abord letterboxée sur les côtés), le clamp refusait tout vide et
-   * le point sous la souris glissait de plusieurs % au premier palier. On
-   * autorise donc le cadre à dépasser la carte de VIEW_SLACK de sa taille : le
-   * zoom reste ancré, et le vide autour reste borné (la carte ne peut pas
-   * disparaître). Centrée quand la carte tient dans le cadre.
-   */
-  const VIEW_SLACK = 0.2;
-  function clampView() {
-    const { w: sw, h: sh } = surfaceSize;
-    const z = viewZoom;
-    if (!sw || !sh) return;
-    const sx = (frameW - sw) / 2;
-    const sy = (frameH - sh) / 2;
-    const slackX = frameW * VIEW_SLACK;
-    const slackY = frameH * VIEW_SLACK;
-    viewPanX =
-      z * sw >= frameW
-        ? Math.min(-z * sx + slackX, Math.max(frameW - z * (sx + sw) - slackX, viewPanX))
-        : (frameW * (1 - z)) / 2;
-    viewPanY =
-      z * sh >= frameH
-        ? Math.min(-z * sy + slackY, Math.max(frameH - z * (sy + sh) - slackY, viewPanY))
-        : (frameH * (1 - z)) / 2;
+    camera.reset();
   }
 
   /** Zoom ancré sur le curseur : le point sous la souris reste sous la souris. */
@@ -626,25 +670,18 @@
     const el = frameRef;
     if (!el || !frameW || !frameH) return;
     const r = el.getBoundingClientRect();
-    const cx = clientX - r.left;
-    const cy = clientY - r.top;
-    const z0 = viewZoom;
-    const z1 = Math.min(VIEW_MAX, Math.max(VIEW_MIN, z0 * factor));
-    if (z1 === z0) return;
-    const u = (cx - viewPanX) / z0;
-    const v = (cy - viewPanY) / z0;
-    viewZoom = z1;
-    viewPanX = cx - z1 * u;
-    viewPanY = cy - z1 * v;
-    clampView();
-    scheduleFogRedraw();
+    camera.zoomAtPoint(clientX - r.left, clientY - r.top, factor);
   }
 
   function zoomAtCenter(factor: number) {
-    const el = frameRef;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+    camera.zoomBy(factor, { instant: false });
+  }
+
+  /** Recadrage animé sur le pion d'un personnage (caméra locale, jamais diffusé). */
+  function focusToken(charId: string) {
+    const t = store.state.tokens[charId];
+    if (!t) return;
+    camera.centerOn(t.x / 100, t.y / 100);
   }
 
   $effect(() => {
@@ -685,7 +722,9 @@
   const pjCards = $derived(store.characters.filter((c) => c.kind === 'pj' && c.active));
   const pnjCards = $derived(store.characters.filter((c) => c.kind === 'pnj'));
   const activeCharId = $derived(
-    store.state.combat?.phase === 'run' && store.state.combat.order
+    store.state.mode === 'combat' &&
+      store.state.combat?.phase === 'run' &&
+      store.state.combat.order
       ? store.state.combat.order[store.state.combat.turn % store.state.combat.order.length]
       : null,
   );
@@ -906,11 +945,11 @@
     const { w: sw, h: sh } = surfaceSize;
     if (!sw || !sh) return { x: 50, y: 50 };
     const r = el.getBoundingClientRect();
-    const z = viewZoom || 1;
+    const z = camera.zoom || 1;
     const sx = (r.width - sw) / 2;
     const sy = (r.height - sh) / 2;
-    const lx = (e.clientX - r.left - viewPanX) / z - sx;
-    const ly = (e.clientY - r.top - viewPanY) / z - sy;
+    const lx = (e.clientX - r.left - camera.panX) / z - sx;
+    const ly = (e.clientY - r.top - camera.panY) / z - sy;
     return {
       x: Math.min(98, Math.max(2, (lx / sw) * 100)),
       y: Math.min(97, Math.max(3, (ly / sh) * 100)),
@@ -945,6 +984,7 @@
   }
 
   function onMapPointerMove(e: PointerEvent) {
+    if (isMj && tool === 'fog' && fogOn && !panning) updateFogCursor(e);
     if (panning) return;
     if (fogErasing) {
       if (fogOn) sendFogReveal(mapXY(e));
@@ -960,6 +1000,11 @@
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
       sendWs({ type: 'marker.move', id: drag.id, x, y });
     }
+  }
+
+  function onMapPointerLeave() {
+    onMapPointerUp();
+    fogCursor = null;
   }
 
   function onMapPointerUp() {
@@ -1041,10 +1086,8 @@
 
   function onFramePointerMove(e: PointerEvent) {
     if (!panning || panning.id !== e.pointerId) return;
-    viewPanX += e.clientX - panning.x;
-    viewPanY += e.clientY - panning.y;
+    camera.panBy(e.clientX - panning.x, e.clientY - panning.y);
     panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: panning.btn };
-    clampView();
   }
 
   function onFramePointerUp(e: PointerEvent) {
@@ -1144,6 +1187,25 @@
   let fogDrawnCount = 0;
   let fogScale = 1;
   let fogScaleTimer: ReturnType<typeof setTimeout> | null = null;
+  let fogCursor = $state<{ x: number; y: number } | null>(null);
+
+  /** Rayon de la brosse, en px de surface (identique au trou découpé). */
+  const FOG_BRUSH_RADIUS = 68;
+
+  /** Position surface (px) du curseur : le cercle de prévisualisation suit la
+   *  souris à la même échelle que les trous réellement découpés. */
+  function updateFogCursor(e: PointerEvent) {
+    const el = frameRef;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const z = camera.zoom || 1;
+    const sx = (r.width - surfaceSize.w) / 2;
+    const sy = (r.height - surfaceSize.h) / 2;
+    fogCursor = {
+      x: (e.clientX - r.left - camera.panX) / z - sx,
+      y: (e.clientY - r.top - camera.panY) / z - sy,
+    };
+  }
 
   /** Repeint le brouillard à la nouvelle résolution (le zoom change l'échelle
    *  de la backing store). Regroupé pour ne pas redessiner à chaque molette. */
@@ -1158,7 +1220,7 @@
   function cutFogHole(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
     const px = (x / 100) * w;
     const py = (y / 100) * h;
-    const rad = 68;
+    const rad = FOG_BRUSH_RADIUS;
     const g = ctx.createRadialGradient(px, py, rad * 0.35, px, py, rad);
     g.addColorStop(0, 'rgba(0,0,0,1)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1205,7 +1267,7 @@
     const w = Math.max(2, mapContainer.offsetWidth);
     const h = Math.max(2, mapContainer.offsetHeight);
     const dpr = globalThis.devicePixelRatio || 1;
-    const nextScale = Math.min(3, Math.max(1, viewZoom * dpr));
+    const nextScale = Math.min(3, Math.max(1, camera.zoom * dpr));
     const scaleChanged = Math.abs(nextScale - fogScale) > 0.01;
     fogScale = nextScale;
     const bw = Math.round(w * fogScale);
@@ -1383,6 +1445,11 @@
       case 'map.reset':
         resetView();
         break;
+      case 'camera.focus': {
+        const target = activeCharId ?? myCharId;
+        if (target) focusToken(target);
+        break;
+      }
       case 'tool.move':
         toolSelect('move');
         break;
@@ -1424,6 +1491,36 @@
   function tokenTitle(c: { name: string; ca: number; pv: number | null; pvMax: number | null }): string {
     return isMj ? `${c.name} — CA ${c.ca} · PV ${c.pv ?? '–'}/${c.pvMax ?? '–'}` : c.name;
   }
+
+  /** Taille du pion en px : `tokenScale` × case si la carte est quadrillée,
+   *  sinon repli sur le réglage de campagne en px (carte sans grille). */
+  function tokenSizePx(c: { tokenScale: number }): number {
+    const scale = c.tokenScale > 0 ? c.tokenScale : 1;
+    const base = activeGridSize ?? store.settings.tokenSize;
+    return Math.round(Math.max(12, base * scale));
+  }
+
+  /** PV en % (0..100) ; null = pas de barre (PV masqués par le serveur). */
+  function hpPercent(c: { pv: number | null; pvMax: number | null }): number | null {
+    if (c.pv === null || c.pvMax === null || c.pvMax <= 0) return null;
+    return Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100));
+  }
+
+  function initiativeScore(charId: string): number | null {
+    const combat = store.state.combat;
+    if (store.state.mode !== 'combat' || !combat || !combat.order) return null;
+    const score = combat.scores[charId];
+    return typeof score === 'number' ? score : null;
+  }
+
+  function scaleLabel(scale: number): string {
+    return scale === 0.5 ? '½ case' : `${scale} case${scale > 1 ? 's' : ''}`;
+  }
+
+  function setTokenScale(charId: string, e: Event) {
+    const scale = Number((e.currentTarget as HTMLSelectElement).value);
+    if (Number.isFinite(scale)) sendWs({ type: 'char.scale', charId, scale });
+  }
 </script>
 
 <div class="table-screen">
@@ -1438,7 +1535,7 @@
         onpointermove={onMapPointerMove}
         onpointerup={onMapPointerUp}
         onpointercancel={onMapPointerUp}
-        onpointerleave={onMapPointerUp}
+        onpointerleave={onMapPointerLeave}
         onclick={onMapClick}
         ondblclick={onMapDblClick}
         oncontextmenu={onFrameContextMenu}
@@ -1467,7 +1564,7 @@
           <div
             class="map-zoom"
             class:tool-hand={tool === 'hand'}
-            style="transform: translate({viewPanX}px, {viewPanY}px) scale({viewZoom})"
+            style="transform: translate({camera.panX}px, {camera.panY}px) scale({camera.zoom})"
           >
             <div
               bind:this={mapContainer}
@@ -1493,6 +1590,10 @@
               <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
             {/if}
 
+            {#if isMj && tool === 'fog' && fogOn && fogCursor}
+              <div class="fog-brush" style="left: {fogCursor.x}px; top: {fogCursor.y}px;"></div>
+            {/if}
+
             {#each displayMarkers as m (m.id)}
               <div
                 class="marker"
@@ -1512,15 +1613,30 @@
               {@const c = charById(t.charId)}
               {#if c}
                 {@const pUrl = portraitUrl(c.portrait)}
+                {@const tokSize = tokenSizePx(c)}
+                {@const hpPct = hpPercent(c)}
+                {@const hpState = hpPct === null ? null : hpPct >= 70 ? 'ok' : hpPct >= 30 ? 'mid' : 'low'}
+                {@const ini = initiativeScore(c.id)}
+                {@const down = c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
                 <div
                   class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
-                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; height: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
+                  class:token-dead={hpPct !== null && hpPct <= 0}
+                  class:token-down={down}
+                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
                   oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
                 >
                   {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
-                  <span class="token-label">{c.name}</span>
+                  {#if ini !== null}
+                    <span class="token-ini" class:is-turn={activeCharId === c.id}>{ini}</span>
+                  {/if}
+                  <div class="token-foot">
+                    {#if hpState}
+                      <span class="token-hp hp-{hpState}"><span class="token-hp-fill" style="width: {hpPct}%;"></span></span>
+                    {/if}
+                    <span class="token-label">{c.name}</span>
+                  </div>
                 </div>
               {/if}
             {/each}
@@ -1551,9 +1667,9 @@
             <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
             <button
               class="hud-fit"
-              class:off={viewZoom === 1 && viewPanX === 0 && viewPanY === 0}
+              class:off={camera.zoom === 1 && camera.panX === 0 && camera.panY === 0}
               title="Revenir à la carte entière"
-              onclick={resetView}>{Math.round(viewZoom * 100)}%</button
+              onclick={resetView}>{Math.round(camera.zoom * 100)}%</button
             >
             <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
           </div>
@@ -1639,6 +1755,16 @@
           <div class="card-row stats">
             <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
           </div>
+          {#if isMj}
+            <div class="card-row size-row">
+              <span class="size-label">Taille du pion</span>
+              <select class="size-select" value={String(c.tokenScale)} onchange={(e) => setTokenScale(c.id, e)}>
+                {#each TOKEN_SCALES as s (s)}
+                  <option value={String(s)}>{scaleLabel(s)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           {#if isMj && activeMap && !hasToken(c.id)}
             <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
           {/if}
@@ -1694,6 +1820,16 @@
               <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
             </div>
           {/if}
+          {#if isMj}
+            <div class="card-row size-row">
+              <span class="size-label">Taille du pion</span>
+              <select class="size-select" value={String(c.tokenScale)} onchange={(e) => setTokenScale(c.id, e)}>
+                {#each TOKEN_SCALES as s (s)}
+                  <option value={String(s)}>{scaleLabel(s)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           {#if isMj && activeMap && !hasToken(c.id)}
             <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
           {/if}
@@ -1722,9 +1858,15 @@
         <div class="combat-bandeau surface-raised">
           <span class="combat-title">Initiative</span>
           {#each initChips as e, i (e.id)}
-            <span class="init-chip {activeCharId === e.id ? 'active' : ''}" style="border-radius: {i % 2 ? '3px 12px 3px 10px' : '10px 3px 12px 3px'};">
+            <button
+              type="button"
+              class="init-chip {activeCharId === e.id ? 'active' : ''}"
+              style="border-radius: {i % 2 ? '3px 12px 3px 10px' : '10px 3px 12px 3px'};"
+              title="Recentrer la carte sur ce pion"
+              onclick={() => focusToken(e.id)}
+            >
               {e.score !== undefined ? `${e.score} · ` : ''}{e.c?.name}
-            </span>
+            </button>
           {/each}
           {#if store.state.combat.phase === 'init'}
             {#each pendingInit as pid (pid)}
@@ -2327,6 +2469,13 @@
     border: 2px dashed var(--border); border-radius: 8px; background: transparent; color: var(--text-2);
     cursor: pointer; max-width: 74px;
   }
+  .size-row { align-items: center; justify-content: space-between; gap: 6px; }
+  .size-label { font-size: 11.5px; color: var(--text-3); }
+  .size-select {
+    font-family: var(--font-body); font-size: 12px; padding: 1px 4px;
+    border: 2px dashed var(--border); border-radius: 8px; background: transparent;
+    color: var(--text-2); cursor: pointer;
+  }
   .del-btn {
     font-family: var(--font-body); font-weight: 700; font-size: 10.5px; width: 18px; height: 18px; padding: 0;
     background: transparent; border: 2px dashed var(--border); border-radius: 6px; color: var(--text-2);
@@ -2404,8 +2553,9 @@
   }
   .combat-title { font-size: 14.5px; font-weight: 700; color: var(--heading); }
   .init-chip {
-    font-size: 12px; padding: 4px 10px;
+    font-family: var(--font-body); font-size: 12px; padding: 4px 10px;
     background: var(--panel); color: var(--text); border: 2px solid var(--border);
+    cursor: pointer;
   }
   .init-chip.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent-border); }
   .roll-init-btn {
@@ -2667,6 +2817,13 @@
     mix-blend-mode: normal;
   }
   .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: var(--z-fog); }
+  /* Cercle de brosse : suit le pointeur, à l'échelle exacte du trou découpé. */
+  .fog-brush {
+    position: absolute; width: 136px; height: 136px; margin: -68px 0 0 -68px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.85); border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    pointer-events: none; z-index: var(--z-fog);
+  }
 
   .marker {
     position: absolute; transform: translate(-50%, -100%);
@@ -2684,12 +2841,21 @@
   }
   .marker-remove:hover { color: var(--accent-text); }
 
+  /* Pion « objet de jeu » (Penpot : Game/Token) : disque plein, anneau à la
+     couleur du personnage, barre de PV dessous, plaque de nom au survol.
+     La taille vient de --tok-size (échelle de cases, voir tokenSizePx). */
   .token {
     position: absolute;
     transform: translate(-50%, -50%);
     display: flex; align-items: center; justify-content: center;
     font-family: var(--font-title); cursor: grab; user-select: none; z-index: var(--z-tokens);
     touch-action: none;
+    box-sizing: border-box;
+    background: var(--map-token-bg);
+    border: max(2px, calc(var(--tok-size) * 0.055)) solid var(--token-color);
+    border-radius: 50%;
+    color: var(--map-token-fg);
+    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
   }
   .token-img {
     position: absolute;
@@ -2700,27 +2866,65 @@
     border-radius: inherit;
     pointer-events: none;
   }
-  .token-pj {
-    background: var(--map-token-bg);
-    border: 2.5px solid var(--token-color);
-    border-radius: 48% 52% 50% 50% / 52% 48% 52% 48%;
-    color: var(--map-token-fg);
-    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
+  /* Tour actif (Penpot : TokenActive) : double anneau, liseré de fond entre les deux. */
+  .token-active {
+    --ring: max(3px, calc(var(--tok-size) * 0.047));
+    box-shadow:
+      0 0 0 var(--ring) var(--map-token-bg),
+      0 0 0 calc(var(--ring) * 2) var(--accent),
+      0 0 0 calc(var(--ring) * 2.6) var(--map-token-bg),
+      0 0 0 calc(var(--ring) * 3.1) var(--accent);
   }
-  .token-pnj {
-    background: var(--accent);
-    border: 2.5px solid var(--accent-border);
-    border-radius: 50% 48% 52% 50% / 48% 52% 48% 52%;
-    color: var(--accent-fg);
-    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
+  /* 0 PV : grisé et translucide ; état couchant : voile (sans grisé). */
+  .token-dead { filter: grayscale(0.7); opacity: 0.5; }
+  .token-down::after {
+    content: ''; position: absolute; inset: -1px; border-radius: inherit;
+    background: radial-gradient(circle at 50% 18%, rgba(27, 25, 23, 0.5), rgba(27, 25, 23, 0.12) 72%);
+    pointer-events: none;
   }
-  .token-active { box-shadow: 0 0 0 3px var(--map-token-bg), 0 0 0 6px var(--accent); }
+  .token-foot {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    margin-top: max(2px, calc(var(--tok-size) * 0.045));
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    pointer-events: none;
+  }
+  /* Le double anneau du tour actif déborde : la barre passe en dessous. */
+  .token-active .token-foot { margin-top: max(6px, calc(var(--tok-size) * 0.2)); }
+  .token-hp {
+    display: block; box-sizing: border-box;
+    width: max(24px, calc(var(--tok-size) * 0.84));
+    height: clamp(4px, calc(var(--tok-size) * 0.125), 8px);
+    background: #2b2822; border: 1px solid #3a352d;
+    border-radius: 4px; overflow: hidden;
+  }
+  .token-hp-fill {
+    display: block; height: 100%; border-radius: 2px;
+    background: var(--hp-ok);
+    transition: width 200ms var(--ease-out);
+  }
+  .token-hp.hp-mid .token-hp-fill { background: var(--hp-mid); }
+  .token-hp.hp-low .token-hp-fill { background: var(--hp-low); }
+  .token-ini {
+    position: absolute; top: 0; right: 0; transform: translate(35%, -35%);
+    min-width: max(16px, calc(var(--tok-size) * 0.32));
+    height: max(16px, calc(var(--tok-size) * 0.32));
+    padding: 0 4px; box-sizing: border-box;
+    display: grid; place-items: center;
+    font-family: var(--font-body); font-weight: 700;
+    font-size: clamp(9px, calc(var(--tok-size) * 0.19), 13px);
+    color: var(--heading); background: #1b1917;
+    border: 1.5px solid var(--token-color); border-radius: var(--radius-full);
+    pointer-events: none;
+  }
+  .token-ini.is-turn { background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
   .token-label {
-    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px;
-    font-size: 12px; color: #2b2822;
-    background: var(--map-label-bg); border-radius: 8px; padding: 0 6px;
+    font-family: var(--font-ui); font-size: 12px; line-height: 1.4;
+    color: #f2ede0; background: #1b1917;
+    border-radius: var(--radius-full); padding: 0 8px;
     white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity 140ms var(--ease-out);
   }
+  .token:hover .token-label { opacity: 1; }
 
   .ping {
     position: absolute; width: 70px; height: 70px;

@@ -371,3 +371,137 @@ test.describe("Carte : grille et vue", () => {
     await ctx.close();
   });
 });
+
+test.describe("Pions vivants (Lot 3)", () => {
+  test("le MJ place un PNJ : barre de PV pour lui, absente pour le joueur", async ({
+    page,
+    browser,
+  }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    const mjToken = page.locator(".token", { hasText: "Gobelin" });
+    await expect(mjToken).toBeVisible();
+    await expect(mjToken.locator(".token-hp")).toHaveCount(1);
+
+    // Le joueur voit le pion (le brouillard n'est pas actif) mais jamais ses PV :
+    // pnjPvVisible=false par défaut, le serveur envoie pv=null.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+
+    const plToken = p2.locator(".token", { hasText: "Gobelin" });
+    await expect(plToken).toBeVisible();
+    await expect(plToken.locator(".token-hp")).toHaveCount(0);
+
+    await ctx.close();
+  });
+
+  test("la plaque de nom n'apparaît qu'au survol du pion", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    const label = token.locator(".token-label");
+    await expect(label).toHaveCSS("opacity", "0");
+    await token.hover();
+    await expect(label).toHaveCSS("opacity", "1");
+  });
+
+  test("l'initiative recadre : sans effet à 100 %, centrage une fois zoomé", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    await page.locator(".mode-btn", { hasText: "Combat" }).click();
+
+    // Lance l'initiative de chaque PJ en attente.
+    for (let round = 0; round < 3; round += 1) {
+      const btns = page.locator(".roll-init-btn:not([disabled])");
+      const n = await btns.count();
+      for (let i = 0; i < n; i += 1) {
+        await btns.nth(0).click();
+        await page.waitForTimeout(120);
+      }
+    }
+    const chips = page.locator(".init-chip");
+    await expect(chips.first()).toBeVisible();
+
+    // La carte tient entièrement dans le cadre : cliquer ne doit RIEN changer.
+    const before = (await page.locator(".map-surface").boundingBox())!;
+    await chips.first().click();
+    await page.waitForTimeout(700);
+    const after = (await page.locator(".map-surface").boundingBox())!;
+    expect(Math.abs(after.x - before.x)).toBeLessThan(2);
+    expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+
+    // Zoomée : le pion du chip vient au centre du cadre (animation 400 ms).
+    const chipText = (await chips.first().textContent()) ?? "";
+    const name = chipText.split("·").pop()!.trim();
+    const token = page.locator(".token", { hasText: name });
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
+    await page.mouse.wheel(0, -600);
+    await page.waitForTimeout(200);
+    await chips.first().click();
+    await expect
+      .poll(async () => {
+        const b = (await token.boundingBox())!;
+        return Math.hypot(
+          b.x + b.width / 2 - (frame.x + frame.width / 2),
+          b.y + b.height / 2 - (frame.y + frame.height / 2),
+        );
+      })
+      .toBeLessThan(24);
+  });
+
+  test("la taille du pion suit la grille : 2 cases = 2 × gridSize pour tous", async ({
+    page,
+    browser,
+  }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const card = page.locator(".pj-card", { hasText: "Kaelith" });
+    await card.getByRole("button", { name: "Placer sur la carte" }).click();
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await expect(token).toBeVisible();
+    // Grille du seed : 32 px ; échelle par défaut : 1 case.
+    await expect.poll(async () => Math.round((await token.boundingBox())!.width)).toBe(32);
+
+    // Un joueur suit le changement (le réglage est diffusé, pas local).
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    const plToken = p2.locator(".token", { hasText: "Kaelith" });
+
+    await card.locator(".size-select").selectOption("2");
+    await expect.poll(async () => Math.round((await token.boundingBox())!.width)).toBe(64);
+    await expect.poll(async () => Math.round((await plToken.boundingBox())!.width)).toBe(64);
+
+    await ctx.close();
+  });
+});

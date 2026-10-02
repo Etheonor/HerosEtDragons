@@ -45,6 +45,12 @@ export const charConditionSchema = z.object({
   on: z.boolean({ error: "on attendu" }),
 });
 
+export const charScaleSchema = z.object({
+  type: z.literal("char.scale"),
+  charId: id,
+  scale: z.number({ error: "échelle attendue" }).min(0.25).max(4),
+});
+
 export const tokenMoveSchema = z.object({
   type: z.literal("token.move"),
   tokenId: id,
@@ -196,6 +202,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   diceRollSchema,
   charHpSchema,
   charConditionSchema,
+  charScaleSchema,
   tokenMoveSchema,
   tokenPutSchema,
   tokenRemoveSchema,

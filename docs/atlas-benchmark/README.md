@@ -28,15 +28,17 @@ interface **de jeu** plutôt qu'une interface web.
 
 ### Les décisions
 
-| Décision                 | Contenu                                                                                                                                                                            | Où          |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| **Direction artistique** | Hybride : **structure Atlas, peau carnet**. On prend la densité, la hiérarchie et les patterns d'Atlas ; on garde l'identité encre/papier, les rayons organic et la typo Vidaloka. | §3          |
-| **Cible d'usage**        | PC de bureau, grand écran, clavier-souris. **Aucun chantier responsive.** Le seul point conservé est la hauteur (`100vh` → `100dvh`), qui mord même sur un 1440p.                  | `07` §Lot 9 |
-| **Librairie d'UI**       | `bits-ui` 2.19.3, adoptée et **validée sur trois moteurs**.                                                                                                                        | §6bis       |
-| **Rendu de la carte**    | **DOM**, pas WebGL. Le débat est documenté, avec porte de sortie (`<MapLayer>` isolé).                                                                                             | `05` §6     |
-| **Licence**              | Atlas est AGPL-3.0-only. Le projet est privé et non distribué ; l'usage de ce qui intéresse est assumé. Ce dossier reste une description de patterns, pas une copie de code.       | en-tête     |
-| **États des lignes**     | Une ligne cliquable (initiative, inventaire, listes) réagit au survol : fond éclairci **+ liseré accent**. L'état actif garde sa barre gauche rouge.                               | `06` §7.3   |
-| **Branche**              | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                          | §6bis       |
+| Décision                    | Contenu                                                                                                                                                                            | Où          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| **Direction artistique**    | Hybride : **structure Atlas, peau carnet**. On prend la densité, la hiérarchie et les patterns d'Atlas ; on garde l'identité encre/papier, les rayons organic et la typo Vidaloka. | §3          |
+| **Cible d'usage**           | PC de bureau, grand écran, clavier-souris. **Aucun chantier responsive.** Le seul point conservé est la hauteur (`100vh` → `100dvh`), qui mord même sur un 1440p.                  | `07` §Lot 9 |
+| **Librairie d'UI**          | `bits-ui` 2.19.3, adoptée et **validée sur trois moteurs**.                                                                                                                        | §6bis       |
+| **Rendu de la carte**       | **DOM**, pas WebGL. Le débat est documenté, avec porte de sortie (`<MapLayer>` isolé).                                                                                             | `05` §6     |
+| **Licence**                 | Atlas est AGPL-3.0-only. Le projet est privé et non distribué ; l'usage de ce qui intéresse est assumé. Ce dossier reste une description de patterns, pas une copie de code.       | en-tête     |
+| **États des lignes**        | Une ligne cliquable (initiative, inventaire, listes) réagit au survol : fond éclairci **+ liseré accent**. L'état actif garde sa barre gauche rouge.                               | `06` §7.3   |
+| **Taille des pions**        | `tokenScale` par personnage, en cases (multiplicateur de `gridSize`) ; repli sur `tokenSize` px si la carte n'a pas de grille. Réglage MJ dans la Compagnie.                       | `04` §1     |
+| **PV des PNJ (vue joueur)** | Barre **absente** quand le serveur masque les PV (`pnjPvVisible=false`) ; le MJ les reçoit toujours. Le réglage de campagne fait office d'option MJ.                               | `04` §1     |
+| **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                          | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
 
@@ -102,11 +104,14 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
-**Livrés au 01/10/2026 : lots 0, 1 et 2** — fondations de surfaces ; carte plein
-écran, panneaux flottants ; barre d'outils, command palette et raccourcis. Le
-design system Penpot est la source (19 couleurs, 17 typographies,
-37 composants) ; ses écrans `01`/`02` décrivent la suite, en commençant par le
-**lot 3** (vie sur la carte : PV et états des pions, caméra).
+**Livrés au 01/10/2026 : lots 0, 1, 2 et 3** — fondations de surfaces ; carte
+plein écran, panneaux flottants ; barre d'outils, command palette et raccourcis ;
+puis la vie sur la carte : caméra animée persistée par carte, barres de PV sur
+les pions (seuils Penpot, jamais diffusées hors droit serveur), pastille
+d'initiative, état mort/couché, taille de pion en cases (`tokenScale`), plaque de
+nom au survol et curseur de brosse. Le design system Penpot est la source
+(19 couleurs, 17 typographies, 37 composants) ; ses écrans `01`/`02` décrivent
+la suite, en commençant par l'**undo (lot 4)**.
 
 ---
 
@@ -307,10 +312,11 @@ Les lots sont dans `07`. Trois choses à savoir avant d'ouvrir le premier :
 1. **Le filet de test est déjà en place.** 323 tests (dont 31 d'intégration
    API), 23 tests e2e Playwright sur la fixture `dev-camp`. `pnpm check` doit
    être vert à chaque commit — c'est la seule condition à ne pas négocier.
-2. **Les lots 0, 1 et 2 sont livrés** : `bits-ui` et `@lucide/svelte` dans
+2. **Les lots 0, 1, 2 et 3 sont livrés** : `bits-ui` et `@lucide/svelte` dans
    `web/package.json`, surfaces et tokens en place, carte plein écran, panneaux
-   flottants, barre d'outils, command palette et raccourcis. La suite est le
-   lot 3, puis l'undo.
+   flottants, barre d'outils, command palette et raccourcis, pion « objet de
+   jeu » (PV, initiative, états, échelle) et caméra animée. La suite est
+   l'undo (lot 4).
 3. **Les trois pièges du §0** sont à respecter dès la première ligne de code,
    pas découverts en chemin.
 

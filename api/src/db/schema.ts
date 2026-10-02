@@ -2,6 +2,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   index,
   uniqueIndex,
   primaryKey,
@@ -174,6 +175,8 @@ export const characters = sqliteTable(
     pvMax: integer("pv_max").notNull().default(0),
     pvTemp: integer("pv_temp").notNull().default(0),
     conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
+    tokenScale: real("token_scale").notNull().default(1),
     /** Sac d'inventaire (R9) : { items: [{name, qty}], money: {po, pa, pc} }.
      *  Privé : jamais diffusé dans CharacterCard, seulement au socket concerné. */
     inventory: text("inventory", { mode: "json" })
@@ -288,6 +291,7 @@ export const npcTemplates = sqliteTable(
     initBonus: integer("init_bonus").notNull().default(0),
     color: text("color").notNull().default("#C0392B"),
     conditions: text("conditions", { mode: "json" }).$type<string[]>().notNull().default([]),
+    tokenScale: real("token_scale").notNull().default(1),
     notes: text("notes").notNull().default(""),
     // { category, slug } vers le compendium (phase 8) — null pour un modèle maison.
     source: text("source", { mode: "json" }).$type<{ category: string; slug: string } | null>(),

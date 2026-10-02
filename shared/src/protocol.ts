@@ -102,6 +102,8 @@ export interface CharacterCard {
   pvMax: number | null;
   pvTemp: number;
   conditions: string[];
+  /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
+  tokenScale: number;
 }
 
 export interface TableSettings {
@@ -186,6 +188,13 @@ export interface CharConditionMsg {
   charId: string;
   cond: string;
   on: boolean;
+}
+
+export interface CharScaleMsg {
+  type: "char.scale";
+  charId: string;
+  /** Multiplicateur de case du pion (0,25 à 4 ; presets ½/1/2/3/4). */
+  scale: number;
 }
 
 export interface NpcAddMsg {
@@ -326,6 +335,7 @@ export type ClientMessage =
   | NpcSaveAsTemplateMsg
   | CharHpMsg
   | CharConditionMsg
+  | CharScaleMsg
   | NpcAddMsg
   | NpcAddFromMonsterMsg
   | NpcRemoveMsg
@@ -461,6 +471,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "npc.saveAsTemplate",
     "char.hp",
     "char.condition",
+    "char.scale",
     "npc.add",
     "npc.addFromMonster",
     "npc.remove",

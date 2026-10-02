@@ -95,7 +95,7 @@ app.post("/seed", async (c) => {
     // Le sac du PJ est réécrit plus bas ; on repart aussi des PV pleins.
     await db
       .update(schema.characters)
-      .set({ pv: 45, pvMax: 45, pvTemp: 0, conditions: [] })
+      .set({ pv: 45, pvMax: 45, pvTemp: 0, conditions: [], tokenScale: 1 })
       .where(eq(schema.characters.campaignId, campaign.id));
   }
 

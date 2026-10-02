@@ -140,6 +140,8 @@ export interface NpcTemplate {
   conditions: string[];
   notes: string;
   source: { category: string; slug: string } | null;
+  /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
+  tokenScale: number;
   updatedAt: string;
 }
 

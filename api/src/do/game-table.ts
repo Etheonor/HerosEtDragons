@@ -118,6 +118,7 @@ const JOURNAL_RETENTION_MAX = 5000;
 type DiceRollMsg = Extract<ClientMessageInput, { type: "dice.roll" }>;
 type CharHpMsg = Extract<ClientMessageInput, { type: "char.hp" }>;
 type CharConditionMsg = Extract<ClientMessageInput, { type: "char.condition" }>;
+type CharScaleMsg = Extract<ClientMessageInput, { type: "char.scale" }>;
 type TokenMoveMsg = Extract<ClientMessageInput, { type: "token.move" }>;
 type TokenPutMsg = Extract<ClientMessageInput, { type: "token.put" }>;
 type TokenRemoveMsg = Extract<ClientMessageInput, { type: "token.remove" }>;
@@ -359,6 +360,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        tokenScale: ch.tokenScale,
       };
     }
     return out;
@@ -590,6 +592,9 @@ export class GameTableDO extends DurableObject<Env> {
         case "char.condition":
           await this.handleCharCondition(ws, attachment, m);
           break;
+        case "char.scale":
+          await this.handleCharScale(attachment, m);
+          break;
         case "token.move":
           await this.handleTokenMove(ws, attachment, m);
           break;
@@ -780,6 +785,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: ch.pvMax,
       pvTemp: ch.pvTemp,
       conditions: ch.conditions,
+      tokenScale: ch.tokenScale,
     };
     this.broadcastRoleAware({ characters: { [charId]: card } });
     // Le sac a pu changer en REST (fiche, etc.) : on le repousse filtré.
@@ -999,6 +1005,33 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ characters: { [charId]: { conditions } } });
   }
 
+  /** Taille du pion (multiplicateur de case) : réglage de confort, réservé MJ,
+   *  sans journal — mais diffusé à tous car l'échelle fait partie du rendu. */
+  private async handleCharScale(att: WsAttachment, msg: CharScaleMsg) {
+    if (att.role !== "mj") return;
+    const { charId } = msg;
+    const scale = Math.round(Math.min(4, Math.max(0.25, msg.scale)) * 100) / 100;
+
+    const db = this.getDb();
+    const [char] = await db
+      .select({ id: schema.characters.id })
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
+      .limit(1);
+    if (!char) return;
+
+    await db
+      .update(schema.characters)
+      .set({ tokenScale: scale, updatedAt: new Date() })
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
+
+    this.broadcastRoleAware({ characters: { [charId]: { tokenScale: scale } } });
+  }
+
   private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: NpcAddMsg) {
     if (att.role !== "mj") return;
     const name = (msg.name.trim() || "PNJ").slice(0, 80);
@@ -1058,6 +1091,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: pv,
       pvTemp: 0,
       conditions: [],
+      tokenScale: 1,
     };
 
     const patch: Record<string, unknown> = { characters: { [id]: card } };
@@ -1142,6 +1176,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: tpl.pvMax,
         pvTemp: 0,
         conditions: [...tpl.conditions],
+        tokenScale: tpl.tokenScale,
       });
       this.npcIds.add(id);
       ids.push(id);
@@ -1161,6 +1196,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: tpl.pvMax,
         pvTemp: 0,
         conditions: [...tpl.conditions],
+        tokenScale: tpl.tokenScale,
       };
     }
 
@@ -1240,6 +1276,7 @@ export class GameTableDO extends DurableObject<Env> {
       initBonus: char.sheet.initiativeBonus,
       color: char.color,
       conditions: [...char.conditions],
+      tokenScale: char.tokenScale,
       notes: "",
       source: null,
       createdAt: now,
@@ -1494,6 +1531,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: src.pvMax,
       pvTemp: src.pvTemp,
       conditions: [...src.conditions],
+      tokenScale: src.tokenScale,
     });
     this.npcIds.add(id);
 
@@ -1512,6 +1550,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: src.pvMax,
       pvTemp: src.pvTemp,
       conditions: [...src.conditions],
+      tokenScale: src.tokenScale,
     };
 
     const patch: Record<string, unknown> = { characters: { [id]: card } };
@@ -2254,6 +2293,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        tokenScale: ch.tokenScale,
       }));
 
     const rawTokens = this.tokensOf(state);

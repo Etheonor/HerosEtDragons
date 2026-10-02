@@ -26,6 +26,13 @@ export const HOTKEYS: readonly HotkeyDef[] = [
   { id: "palette.open", label: "Command palette", group: "Carte", key: " " },
   { id: "map.hand", label: "Main — déplacer la carte", group: "Carte", key: "h" },
   { id: "map.reset", label: "Recadrer la carte", group: "Carte", key: "0" },
+  {
+    id: "camera.focus",
+    label: "Recentrer sur le pion actif",
+    group: "Carte",
+    key: "c",
+    keywords: ["caméra", "centrer", "focus", "pion"],
+  },
   { id: "chat.focus", label: "Écrire dans le journal", group: "Carte", key: "/" },
   { id: "help.open", label: "Aide clavier", group: "Carte", key: "?" },
 

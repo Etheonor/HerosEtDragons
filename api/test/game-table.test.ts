@@ -315,6 +315,43 @@ describe("GameTableDO — intégration", () => {
     }
   });
 
+  it("char.scale : le MJ change la taille du pion (diffusé et persisté), borné, refusé aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect({ ...PLAYER, charId: "pj-1" });
+    await player.ready();
+
+    // Réservé au MJ : un joueur qui tente n'obtient aucun delta.
+    player.send({ type: "char.scale", charId: "pj-1", scale: 2 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(player.messages.some((m) => m.type === "delta")).toBe(false);
+
+    // Le MJ passe le PJ à 2 cases : le MJ et le joueur reçoivent la carte.
+    mj.send({ type: "char.scale", charId: "pj-1", scale: 2 });
+    const mjCard = (
+      (await mj.next("delta")).patch as { characters: Record<string, { tokenScale: number }> }
+    ).characters["pj-1"]!;
+    expect(mjCard.tokenScale).toBe(2);
+    const plCard = (
+      (await player.next("delta")).patch as { characters: Record<string, { tokenScale: number }> }
+    ).characters["pj-1"]!;
+    expect(plCard.tokenScale).toBe(2);
+
+    // Persisté en D1 (le snapshot d'un rechargement doit le retrouver).
+    const [row] = await d()
+      .select({ tokenScale: schema.characters.tokenScale })
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pj-1"))
+      .limit(1);
+    expect(row?.tokenScale).toBe(2);
+
+    // Hors bornes : refusé par la validation partagée.
+    mj.send({ type: "char.scale", charId: "pj-1", scale: 10 });
+    const err = await mj.next("error");
+    expect((err as { code: string }).code).toBe("INVALID");
+  });
+
   it("combat : lancement avec initiative PNJ automatique, jet du PJ, tours qui avancent", async () => {
     await setupWorld();
     const mj = await connect(MJ);
