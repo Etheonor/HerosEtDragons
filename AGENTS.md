@@ -193,9 +193,10 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
 
 Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
 refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
-jeu » plutôt que « web ». **Lots 0 à 6 livrés** : liens entre cartes (voyage
-partagé, passages secrets, liens déplaçables), aperçu au survol et notes
-épinglées compris. Prochain : **lot 7** (feuille, compendium, accueil), puis le
+jeu » plutôt que « web ». **Lots 0 à 6 livrés.** **Lot 7 entamé** : feuilles de
+PNJ réservées au MJ (API + tests) et compendium en **grande fenêtre par-dessus la
+table** (la route `/compendium` reste pour les liens directs) ; restent la feuille
+en panneau, la surbrillance des modifications (reportée) et l'accueil. Ensuite :
 **lot peaux Penpot** (`docs/atlas-benchmark/10-lot-peaux-penpot.md`).
 
 | Document                                             | Contenu                                                                                                     |

@@ -1000,3 +1000,45 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect.poll(names).toEqual([order[1], order[0]]);
   });
 });
+
+test.describe("Compendium par-dessus la table (Lot 7)", () => {
+  test("la fenêtre s'ouvre sans quitter la séance, et se ferme", async ({ page }) => {
+    await openTable(page, MJ);
+    const urlAvant = page.url();
+
+    await page.getByRole("button", { name: "Compendium", exact: true }).click();
+    const win = page.locator(".compendium-window");
+    await expect(win).toBeVisible();
+    await expect(win.locator(".rail-item").first()).toBeVisible();
+    expect(page.url()).toBe(urlAvant);
+
+    await page.keyboard.press("Escape");
+    await expect(win).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+  });
+
+  test("un partage du journal rouvre la fenêtre sur la fiche", async ({ page }) => {
+    await openTable(page, MJ);
+
+    await page.getByRole("button", { name: "Compendium", exact: true }).click();
+    const win = page.locator(".compendium-window");
+    const premiere = win.locator(".list .row").first();
+    await expect(premiere).toBeVisible();
+    await premiere.click();
+    const titre = await win.locator(".entry-head h2").innerText();
+
+    await win.getByRole("button", { name: "Partager au journal" }).click();
+    await expect(win.getByText("partagée au journal")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(win).toHaveCount(0);
+
+    const chip = page.locator(".share-chip");
+    await expect(chip).toBeVisible();
+    await expect(chip).toHaveText(titre);
+    await chip.click();
+
+    await expect(win).toBeVisible();
+    await expect(win.locator(".entry-head h2")).toHaveText(titre);
+    expect(new URL(page.url()).pathname).toContain(`/campaigns/${CAMPAIGN}/table`);
+  });
+});

@@ -47,6 +47,7 @@ interface **de jeu** plutôt qu'une interface web.
 | **Liens entre cartes**      | Entité `MapLink` par carte, création au clic droit (sous-menu des cartes), **liens déplaçables** (drag MJ), **voyage ouvert à tout membre** (`link.travel`) avec point d'arrivée. **Pas de retour automatique** : le MJ pose le retour à la main (décidé le 02/10). `hidden` (passage secret) : jamais diffusé aux joueurs, voyage refusé, journal réservé au MJ. Onglet Liens dans la bibliothèque (badge « caché »). Pas d'undo (documenté).                                                           | `07` §6     |
 | **Aperçu au survol**        | `Cmd/Ctrl + survol` d'un pion : portrait, nom, CA, PV, conditions — non cliquable, suit le curseur. L'extrait compendium attend un lien fiche→compendium.                                                                                                                                                                                                                                                                                                                                                | `07` §6.6   |
 | **Notes épinglées**         | `MapPin` par carte (MJ), visibles par tous (notes de lieu ; le privé reste au dashboard / notes REST). Panneau non-modal `<Panel>` avec rendu markdown-lite, édition en place, drag du pin, clic droit (ouvrir, renommer, supprimer).                                                                                                                                                                                                                                                                    | `07` §6.7   |
+| **Compendium**              | Ouvert en **grande fenêtre** (Dialog `1440×900` max) **par-dessus la table** — la route `/compendium` reste pour les liens directs et les deep links. Feuilles de **PNJ réservées au MJ** (détail + liste).                                                                                                                                                                                                                                                                                              | `10` §2.3   |
 | **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                                                                                                                                                                                                                                                                                                                                                | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -113,21 +114,28 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
-**Livrés au 02/10/2026 : lots 0 à 5, et lot 6 entamé** — fondations de surfaces ;
-carte plein écran, panneaux flottants ; barre d'outils, command palette et
-raccourcis ; la vie sur la carte : caméra animée persistée par carte, barres de
-PV sur les pions (seuils Penpot, jamais diffusées hors droit serveur), pastille
-d'initiative, état mort/couché, taille de pion en cases (`tokenScale`), plaque de
-nom au survol et curseur de brosse ; l'**undo/redo transactionnel** (DO source de
-vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; puis le **lot 5** :
-`<Panel>` drag/resize/persisté, menu contextuel unique, initiative **verticale**
+**Livrés au 03/10/2026 : lots 0 à 6.** Fondations de surfaces ; carte plein
+écran, panneaux flottants ; barre d'outils, command palette et raccourcis ; la
+vie sur la carte : caméra animée persistée par carte, barres de PV sur les pions
+(seuils Penpot, jamais diffusées hors droit serveur), pastille d'initiative,
+état mort/couché, taille de pion en cases (`tokenScale`), plaque de nom au survol
+et curseur de brosse ; l'**undo/redo transactionnel** (DO source de vérité, un
+geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; le **lot 5** : `<Panel>`
+drag/resize/persisté, menu contextuel unique, initiative **verticale**
 réordonnable, **asset manager** (Cartes/PNJ/Personnages/Liens, pose ×N) et
-**dashboard MJ** (PNJ de la scène + notes de carte) ; puis le **lot 6 complet** :
+**dashboard MJ** (PNJ de la scène + notes de carte) ; le **lot 6 complet** :
 **liens entre cartes** (voyage partagé, point d'arrivée, liens déplaçables,
 passages secrets, onglet Liens), **aperçu au survol** et **notes épinglées**
 (panneau markdown-lite). Le design system Penpot est la source (19 couleurs,
-17 typographies, 37 composants). Prochain : **lot 7** (feuille, compendium,
-accueil), puis le **lot peaux Penpot du chrome**.
+17 typographies, 37 composants).
+
+**Lot 7 entamé** : **7.0** — les feuilles de PNJ sont réservées au MJ (API :
+détail + liste filtrés, tests REST) ; **7.3** — le compendium s'ouvre en
+**grande fenêtre par-dessus la table** (même `CompendiumView` que la route
+`/compendium`, conservée pour les liens directs ; tooltip d'état, partages du
+journal et commande palette branchés dessus). Restent **7.1** (feuille en
+panneau), **7.2** (surbrillance des modifications, reporté) et **7.4** (accueil).
+Ensuite : le **lot peaux Penpot du chrome**.
 
 ---
 

@@ -6,11 +6,13 @@
     campaign,
     category,
     slug,
+    onOpen,
     children,
   }: {
     campaign: string;
     category: string;
     slug: string;
+    onOpen?: () => void;
     children: import('svelte').Snippet;
   } = $props();
 
@@ -54,9 +56,13 @@
     <span class="tip-card surface-raised" role="tooltip">
       <span class="tip-title">{entry.title}</span>
       <span class="tip-text">{excerpt(entry)}</span>
-      <a class="tip-link" href="/compendium?campaign={campaign}&cat={entry.category}&slug={entry.slug}">
-        Ouvrir dans le compendium →
-      </a>
+      {#if onOpen}
+        <button class="tip-link" type="button" onclick={onOpen}>Ouvrir dans le compendium →</button>
+      {:else}
+        <a class="tip-link" href="/compendium?campaign={campaign}&cat={entry.category}&slug={entry.slug}">
+          Ouvrir dans le compendium →
+        </a>
+      {/if}
     </span>
   {/if}
 </span>
@@ -89,10 +95,16 @@
     color: var(--text);
   }
   .tip-link {
+    font-family: var(--font-body);
     font-size: 11.5px;
     font-weight: 700;
     color: var(--accent-text);
     text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
   }
   .tip-link:hover {
     color: var(--accent-link-hover);

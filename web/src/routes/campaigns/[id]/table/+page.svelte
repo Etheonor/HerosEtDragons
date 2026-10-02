@@ -36,6 +36,7 @@
   import ContextMenu from '$lib/table/ContextMenu.svelte';
   import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
+  import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -191,6 +192,13 @@
   let paletteOpen = $state(false);
   let helpOpen = $state(false);
   let assetManagerOpen = $state(false);
+  let compendiumOpen = $state(false);
+  let compendiumDeep = $state<{ category: string; slug: string } | null>(null);
+
+  function openCompendium(category?: string, slug?: string) {
+    compendiumDeep = category && slug ? { category, slug } : null;
+    compendiumOpen = true;
+  }
   /** Incrémenté après suppression d'un modèle : l'asset manager recharge. */
   let templatesRevision = $state(0);
   /** Boîte « demander une valeur » (renommage de carte, etc.). */
@@ -300,9 +308,7 @@
         label: 'Ouvrir le compendium',
         group: 'Actions',
         keywords: ['règles', 'fiches'],
-        run: () => {
-          globalThis.location.href = `/compendium?campaign=${campaignId}`;
-        },
+        run: () => openCompendium(),
       },
     ];
 
@@ -2448,7 +2454,7 @@
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <a href="/compendium?campaign={campaignId}" class="compendium-link">Compendium</a>
+    <button class="compendium-link" onclick={() => openCompendium()}>Compendium</button>
     <div class="grow"></div>
     <div class="quick-dice">
       <span class="qd-label">Lancer</span>
@@ -2526,7 +2532,7 @@
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)} onOpen={() => openCompendium('etats', slugify(cond))}>
                 <span
                   class="cond-chip"
                   role={isMj ? 'button' : undefined}
@@ -2591,7 +2597,7 @@
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)} onOpen={() => openCompendium('etats', slugify(cond))}>
                 <span class="cond-chip">{cond}</span>
               </CompendiumTooltip>
             {/each}
@@ -2935,10 +2941,11 @@
                 {:else if entry.kind === 'share'}
                   <span class="journal-system">✦ {entry.who ?? 'Le MJ'} a partagé</span>
                   {#if entry.ref?.type === 'compendium'}
-                    <a
+                    {@const ref = entry.ref}
+                    <button
                       class="share-chip"
-                      href="/compendium?campaign={campaignId}&cat={entry.ref.category}&slug={entry.ref.slug}"
-                    >{entry.ref.title ?? entry.text}</a>
+                      onclick={() => openCompendium(ref.category, ref.slug)}
+                    >{ref.title ?? entry.text}</button>
                   {:else}
                     <span class="journal-text">{entry.text}</span>
                   {/if}
@@ -3210,6 +3217,13 @@
     />
   {/if}
 
+  <CompendiumWindow
+    open={compendiumOpen}
+    onOpenChange={(o) => (compendiumOpen = o)}
+    {campaignId}
+    deep={compendiumDeep}
+  />
+
   {#if prompt}
     <PromptDialog
       open={true}
@@ -3320,7 +3334,11 @@
   }
   .asset-btn:hover { color: var(--heading); background: var(--selected); }
 
-  .compendium-link { font-size: 14px; font-weight: 700; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+  .compendium-link {
+    font-family: var(--font-body); font-size: 14px; font-weight: 700;
+    color: var(--accent-text); text-decoration: none; white-space: nowrap;
+    background: none; border: none; padding: 0; cursor: pointer;
+  }
   .compendium-link:hover { color: var(--accent-link-hover); }
 
   .quick-dice { display: flex; gap: 6px; align-items: center; }
@@ -4153,9 +4171,10 @@
   .journal-text { color: var(--text); }
   .journal-entry.entry-system .journal-system { font-style: italic; color: var(--text-2); }
   .share-chip {
-    font-size: 12px; font-weight: 700; text-decoration: none;
+    font-family: var(--font-body); font-size: 12px; font-weight: 700; text-decoration: none;
     color: var(--accent-text); border: 1.5px solid var(--accent-border);
     border-radius: var(--sketchy-badge); padding: 1px 8px;
+    background: none; cursor: pointer;
   }
   .share-chip:hover { background: var(--bg); }
   .roll-card {
