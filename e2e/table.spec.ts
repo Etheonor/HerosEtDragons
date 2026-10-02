@@ -668,6 +668,68 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(dialog.locator('.asset-card[data-kind="template"]')).toHaveCount(0);
   });
 
+  test("bibliothèque : upload d'une carte et renommage par le menu", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await expect(dialog).toBeVisible();
+
+    // Upload : la tuile « Nouvelle carte… » ouvre le sélecteur de fichier.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      dialog.getByRole("button", { name: "Nouvelle carte…" }).click(),
+    ]);
+    await chooser.setFiles({ name: "crypte.png", mimeType: "image/png", buffer: png });
+    await expect(dialog.locator('.asset-card[data-kind="map"]', { hasText: "crypte" })).toHaveCount(
+      1,
+    );
+
+    // Renommage par le menu contextuel.
+    await dialog
+      .locator('.asset-card[data-kind="map"]', { hasText: "Carte illustrée" })
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: /Renommer/ }).click();
+    const prompt = page.getByRole("dialog", { name: "Renommer la carte" });
+    await expect(prompt).toBeVisible();
+    await prompt.getByLabel("Nom").fill("Crypte oubliée");
+    await prompt.getByRole("button", { name: "Renommer" }).click();
+    await expect(
+      dialog.locator('.asset-card[data-kind="map"]', { hasText: "Crypte oubliée" }),
+    ).toHaveCount(1);
+  });
+
+  test("bibliothèque : changer l'avatar d'un PNJ (upload)", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /PNJ/ }).click();
+
+    const card = dialog.locator('.asset-card[data-kind="pnj"]', { hasText: "Gobelin" });
+    await expect(card).toBeVisible();
+    await card.click({ button: "right" });
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByRole("menuitem", { name: /Changer l'avatar/ }).click(),
+    ]);
+    await chooser.setFiles({ name: "gobelin.png", mimeType: "image/png", buffer: png });
+
+    // La fiche est repoussée par le DO (broadcast) : la vignette montre
+    // l'image, et elle se CHARGE réellement (naturalWidth > 0, pas un 404).
+    await expect(card.locator("img")).toHaveCount(1);
+    await expect
+      .poll(async () => card.locator("img").evaluate((el) => (el as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+  });
+
   test("le tableau de bord MJ liste les PNJ de la scène et garde les notes de carte", async ({
     page,
   }) => {

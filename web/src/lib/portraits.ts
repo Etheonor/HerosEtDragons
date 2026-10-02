@@ -15,9 +15,21 @@ export function isPortraitKey(v: unknown): v is string {
 }
 
 export function portraitUrl(key: string | null | undefined): string | null {
+  if (!key) return null;
+  // Avatar importé (asset manager) : `custom:<charId>:<version>` → route REST.
+  if (key.startsWith("custom:")) {
+    const [, id, version] = key.split(":");
+    if (!id) return null;
+    return `/api/characters/${encodeURIComponent(id)}/portrait?v=${encodeURIComponent(version ?? "0")}`;
+  }
   if (!isPortraitKey(key)) return null;
   const [race, code] = key.split("/");
   return `/portraits/${encodeURIComponent(race as string)}/${encodeURIComponent(code as string)}.webp`;
+}
+
+/** Vrai si la clé vient d'un avatar importé (pas de la bibliothèque Penpot). */
+export function isCustomPortrait(key: string | null | undefined): boolean {
+  return typeof key === "string" && key.startsWith("custom:");
 }
 
 let cached: PortraitEntry[] | null = null;

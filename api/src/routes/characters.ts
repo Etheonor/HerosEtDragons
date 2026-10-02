@@ -9,6 +9,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, type AuthVariables } from "../middleware";
 import { createSheet, characterSheetSchema } from "@rollwith/shared/sheet";
+import { sniffImageType } from "./maps";
 
 /** Notifie le DO de la campagne après une mutation REST d'un personnage (§3.4). */
 async function notifyTable(c: AppContext, campaignId: string, charId: string): Promise<void> {
@@ -316,6 +317,67 @@ app.put("/:charId/sheet", requireAuth, memberOfChar, sheetPutBody, async (c) => 
 
   await notifyTable(c, char.campaignId, char.id);
   return c.json<{ ok: true; updatedAt: string }>({ ok: true, updatedAt: updatedAt.toISOString() });
+});
+
+// ── Avatar d'un personnage (upload sans recadrage) ────────────
+// L'image vit dans R2 (clé déterministe sans extension : le type vient des
+// métadonnées de l'objet) ; la feuille ne stocke qu'un marqueur versionné
+// `custom:<charId>:<version>` que `portraitUrl` sait résoudre (cache-busting).
+
+const MAX_PORTRAIT_BYTES = 4 * 1024 * 1024;
+
+app.put("/:charId/portrait", requireAuth, memberOfChar, async (c) => {
+  const char = c.get("character")!;
+  const userId = c.get("user").id;
+  const isOwner = char.ownerId === userId;
+  const isMj = c.get("memberRole") === "mj";
+  if (!isOwner && !isMj) return c.json({ error: "Accès refusé" }, 403);
+
+  const form = await c.req.formData().catch(() => null);
+  const entry = form?.get("image");
+  if (!entry || typeof entry === "string") {
+    return c.json({ error: "Image manquante" }, 400);
+  }
+  const file = entry as File;
+  if (file.size === 0) return c.json({ error: "Image manquante" }, 400);
+  if (file.size > MAX_PORTRAIT_BYTES) {
+    return c.json({ error: "Image trop lourde (max 4 Mo)" }, 400);
+  }
+  const sniffed = await sniffImageType(file);
+  if (!sniffed) {
+    return c.json({ error: "Contenu d'image invalide (signature inconnue)" }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  const contentType = sniffed === "jpg" ? "image/jpeg" : `image/${sniffed}`;
+  await c.env.MAPS.put(`portraits/${char.campaignId}/${char.id}`, await file.arrayBuffer(), {
+    httpMetadata: { contentType },
+  });
+
+  const portrait = `custom:${char.id}:${Date.now()}`;
+  await db
+    .update(schema.characters)
+    .set({ sheet: { ...char.sheet, portrait }, updatedAt: new Date() })
+    .where(eq(schema.characters.id, char.id));
+  await notifyTable(c, char.campaignId, char.id);
+  return c.json<{ portrait: string }>({ portrait });
+});
+
+app.get("/:charId/portrait", requireAuth, memberOfChar, async (c) => {
+  const char = c.get("character")!;
+  const key = char.sheet.portrait ?? "";
+  if (!key.startsWith("custom:")) return c.json({ error: "Avatar introuvable" }, 404);
+
+  const obj = await c.env.MAPS.get(`portraits/${char.campaignId}/${char.id}`);
+  if (!obj) return c.json({ error: "Avatar introuvable" }, 404);
+
+  return new Response(obj.body, {
+    headers: {
+      "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      // L'URL porte la version : le même objet peut être écrasé sans douleur.
+      "cache-control": "private, max-age=31536000, immutable",
+    },
+  });
 });
 
 export default app;

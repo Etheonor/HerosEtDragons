@@ -221,6 +221,16 @@ app.post("/seed", async (c) => {
   // Le gridSize est REMIS à 32 à chaque seed : un test qui vient de retirer la
   // grille ne doit pas polluer les suivants (l'upsert ne le ferait pas).
   await db.update(schema.maps).set({ gridSize: 32 }).where(eq(schema.maps.campaignId, campaign.id));
+  // Idem pour les noms : un test qui vient de renommer « Carte illustrée » ne
+  // doit pas casser les suivants.
+  await db
+    .update(schema.maps)
+    .set({ name: "Carte illustrée" })
+    .where(and(eq(schema.maps.campaignId, campaign.id), eq(schema.maps.id, "map-image")));
+  await db
+    .update(schema.maps)
+    .set({ name: "Carte quadrillée" })
+    .where(and(eq(schema.maps.campaignId, campaign.id), eq(schema.maps.id, "map-grid")));
 
   if (!(await c.env.MAPS.head("dev-camp/map-image.png"))) {
     await c.env.MAPS.put("dev-camp/map-image.png", CARD_PNG, {

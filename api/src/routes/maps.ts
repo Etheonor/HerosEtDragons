@@ -98,8 +98,9 @@ const updateMapForm = zValidator(
 );
 
 /** Vérifie la signature réelle du fichier (magic bytes), pas seulement le
- *  Content-Type déclaré par le client (audit §5.6). Retourne l'extension ou null. */
-async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null> {
+ *  Content-Type déclaré par le client (audit §5.6). Retourne l'extension ou null.
+ *  Exporté : les avatars de personnage (characters.ts) appliquent le même contrôle. */
+export async function sniffImageType(file: File): Promise<"png" | "jpg" | "webp" | null> {
   const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   const ascii = (from: number, to: number) => String.fromCharCode(...head.slice(from, to));
   if (head[0] === 0x89 && ascii(1, 4) === "PNG") return "png";

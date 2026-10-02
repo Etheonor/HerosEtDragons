@@ -40,6 +40,8 @@
   /** Incrémenté par la page après suppression d'un modèle → rechargement. */
   templatesRevision: number;
     onPickMap: (id: string) => void;
+    /** Ouvre le sélecteur d'image pour créer une carte (la page s'en charge). */
+    onNewMap: () => void;
     onPlaceTemplate: (tpl: NpcTemplate, count: number) => void;
     onPlaceChar: (charId: string) => void;
     onContextMenu: (e: MouseEvent, target: AssetTarget) => void;
@@ -56,6 +58,7 @@
     isMj,
     templatesRevision,
     onPickMap,
+    onNewMap,
     onPlaceTemplate,
     onPlaceChar,
     onContextMenu,
@@ -256,8 +259,8 @@
         {/snippet}
 
         {#if tab === 'maps'}
-          {#if filteredMaps.length === 0}
-            <p class="asset-empty">Aucune carte.</p>
+          {#if filteredMaps.length === 0 && search.trim() !== ''}
+            <p class="asset-empty">Aucune carte pour cette recherche.</p>
           {:else}
             <div class="asset-grid">
               {#each filteredMaps as m (m.id)}
@@ -291,6 +294,16 @@
                   {#if m.id === activeMapId}<span class="asset-badge">à l'écran</span>{/if}
                 </div>
               {/each}
+
+              <button
+                class="asset-card asset-new"
+                type="button"
+                title="Importer une image de carte"
+                onclick={onNewMap}
+              >
+                <span class="asset-thumb asset-new-thumb">＋</span>
+                <span class="asset-name">Nouvelle carte…</span>
+              </button>
             </div>
           {/if}
         {:else if tab === 'npcs'}
@@ -448,6 +461,20 @@
   }
   .asset-card:hover { background: var(--surface-raised-hover); border-color: var(--border); }
   .asset-card.on-map { border-color: var(--accent-border); }
+  .asset-new {
+    justify-content: center;
+    background: transparent;
+    border-style: dashed;
+    color: var(--text-2);
+  }
+  .asset-new:hover { color: var(--heading); }
+  .asset-new-thumb {
+    font-size: 30px;
+    color: var(--text-3);
+    background: transparent;
+    border-style: dashed;
+  }
+  .asset-new:hover .asset-new-thumb { color: var(--accent-text); border-color: var(--accent-border); }
   .asset-thumb {
     width: 84px;
     height: 84px;

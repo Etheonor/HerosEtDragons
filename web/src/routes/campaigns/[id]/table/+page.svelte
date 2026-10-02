@@ -30,6 +30,7 @@
   import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
+  import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -185,6 +186,14 @@
   let assetManagerOpen = $state(false);
   /** Incrémenté après suppression d'un modèle : l'asset manager recharge. */
   let templatesRevision = $state(0);
+  /** Boîte « demander une valeur » (renommage de carte, etc.). */
+  let prompt = $state<{
+    title: string;
+    label: string;
+    initial: string;
+    confirmLabel?: string;
+    onSubmit: (value: string) => void;
+  } | null>(null);
   let toolbarWidth = $state(1280);
 
   function onToolbarResize(node: HTMLElement) {
@@ -1493,6 +1502,18 @@
             assetManagerOpen = false;
           },
         },
+        {
+          id: 'rename',
+          label: 'Renommer…',
+          separatorBefore: true,
+          onSelect: () => openRenameMapPrompt(t.mapId),
+        },
+        {
+          id: 'replace-image',
+          label: "Remplacer l'image…",
+          onSelect: () =>
+            pickFile(IMAGE_ACCEPT, (f) => void replaceMapImage(t.mapId, f)),
+        },
       ];
     }
     if (t.kind === 'asset-template') {
@@ -1522,14 +1543,21 @@
       const items: ContextMenuItem[] = placed
         ? [{ id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) }]
         : [{ id: 'place', label: 'Placer sur la carte', onSelect: () => placeOnMap(t.charId) }];
-      items.push({
-        id: 'sheet',
-        label: 'Ouvrir la feuille',
-        separatorBefore: true,
-        onSelect: () => {
-          globalThis.location.href = `/characters/${t.charId}`;
+      items.push(
+        {
+          id: 'portrait',
+          label: "Changer l'avatar…",
+          separatorBefore: true,
+          onSelect: () => pickFile(IMAGE_ACCEPT, (f) => void changePortrait(t.charId, f)),
         },
-      });
+        {
+          id: 'sheet',
+          label: 'Ouvrir la feuille',
+          onSelect: () => {
+            globalThis.location.href = `/characters/${t.charId}`;
+          },
+        },
+      );
       return items;
     }
 
@@ -1654,6 +1682,71 @@
   function armTemplate(templateId: string, name: string, count: number) {
     tool = 'move';
     pendingPlace = { templateId, name, count };
+  }
+
+  // ── Bibliothèque : import et renommage (lot 5.4, compléments) ──
+  /** Sélecteur de fichier programmatique (pas d'input permanent à l'écran). */
+  function pickFile(accept: string, onPick: (file: File) => void) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) onPick(f);
+    };
+    input.click();
+  }
+
+  const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp';
+
+  function mapNameFromFile(name: string): string {
+    return name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Nouvelle carte';
+  }
+
+  async function createMapFromFile(file: File) {
+    try {
+      await api.maps.create(campaignId, mapNameFromFile(file.name), file);
+      await refreshMaps();
+    } catch {
+      toast = "Import de la carte impossible";
+    }
+  }
+
+  async function replaceMapImage(mapId: string, file: File) {
+    try {
+      await api.maps.update(mapId, { image: file });
+      await refreshMaps();
+    } catch {
+      toast = "Remplacement de l'image impossible";
+    }
+  }
+
+  async function renameMap(mapId: string, name: string) {
+    try {
+      await api.maps.update(mapId, { name });
+      await refreshMaps();
+    } catch {
+      toast = 'Renommage impossible';
+    }
+  }
+
+  function openRenameMapPrompt(mapId: string) {
+    const map = maps.find((m) => m.id === mapId);
+    prompt = {
+      title: 'Renommer la carte',
+      label: 'Nom',
+      initial: map?.name ?? '',
+      confirmLabel: 'Renommer',
+      onSubmit: (v) => void renameMap(mapId, v),
+    };
+  }
+
+  async function changePortrait(charId: string, file: File) {
+    try {
+      await api.characters.updatePortrait(charId, file);
+    } catch {
+      toast = "Import de l'avatar impossible";
+    }
   }
 
   async function deleteTemplate(templateId: string) {
@@ -2634,9 +2727,24 @@
       {isMj}
       {templatesRevision}
       onPickMap={selectMap}
+      onNewMap={() => pickFile(IMAGE_ACCEPT, (f) => void createMapFromFile(f))}
       onPlaceTemplate={(tpl, count) => armTemplate(tpl.id, tpl.name, count)}
       onPlaceChar={placeCharFromLibrary}
       onContextMenu={openAssetMenu}
+    />
+  {/if}
+
+  {#if prompt}
+    <PromptDialog
+      open={true}
+      title={prompt.title}
+      label={prompt.label}
+      initial={prompt.initial}
+      confirmLabel={prompt.confirmLabel}
+      onOpenChange={(o) => {
+        if (!o) prompt = null;
+      }}
+      onConfirm={(v) => prompt?.onSubmit(v)}
     />
   {/if}
 

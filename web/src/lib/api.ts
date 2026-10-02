@@ -121,6 +121,11 @@ export const api = {
         body: JSON.stringify(sheet),
         headers: ifMatch ? { "If-Match": ifMatch } : undefined,
       }),
+    updatePortrait: (id: string, file: File) => {
+      const form = new FormData();
+      form.set("image", file);
+      return fetchForm<{ portrait: string }>(`/api/characters/${id}/portrait`, form, "PUT");
+    },
   },
   compendium: {
     categories: (campaignId: string) =>
