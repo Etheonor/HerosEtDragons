@@ -637,13 +637,14 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height / 2);
     await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(2);
 
-    // Clic droit sur la vignette : le menu unique s'ouvre.
+    // Clic droit sur la vignette : le menu unique s'ouvre AU-DESSUS de la
+    // bibliothèque (il doit être cliquable, pas seulement visible).
     await page.getByRole("button", { name: "Bibliothèque" }).click();
     await expect(dialog).toBeVisible();
     await dialog.getByRole("tab", { name: /PNJ/ }).click();
     await dialog.locator(".asset-card", { hasText: "Gobelin" }).click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "Supprimer le modèle" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.getByRole("menuitem", { name: "Supprimer le modèle" }).click();
+    await expect(dialog.locator(".asset-card", { hasText: "Gobelin" })).toHaveCount(0);
   });
 
   test("le tableau de bord MJ liste les PNJ de la scène et garde les notes de carte", async ({

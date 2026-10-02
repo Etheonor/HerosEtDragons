@@ -64,6 +64,12 @@
     pointer-events: none;
   }
   :global(.ctx-menu) {
+    /* `position` + `z-index` : bits-ui recopie le z-index calculé du contenu
+       sur son wrapper flottant. Sans ça le wrapper reste en `auto` et un
+       Dialog ouvert après lui (top layer applicatif, ex. la bibliothèque) le
+       recouvre — le menu doit être au-dessus de tous les overlays. */
+    position: relative;
+    z-index: var(--z-toast);
     min-width: 210px;
     padding: 4px;
     display: flex;
