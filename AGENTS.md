@@ -177,6 +177,11 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
   respecter ce filtre, sinon on réintroduit la fuite de noms.
 - **CSP (S3)** volontairement permissive (`'unsafe-inline'`) pour ne pas casser
   le bootstrap SvelteKit ; c'est un garde-fou, pas une politique dure.
+- **Commentaires de doc d'un `.svelte`** : tout texte placé **avant**
+  `<script>` est du contenu rendu par Svelte (un `/** … */` en tête de fichier
+  s'affiche sur la carte !). Les commentaires de composant vont **dans** le
+  `<script lang="ts">`. Test e2e garde-fou dans « un joueur arrive sur la
+  table ».
 - **Instances `wrangler dev` orphelines** : deux workers sur le même SQLite de
   DO échouent en `SQLITE_BUSY`, et les lignes de commande réelles
   (`wrangler.js dev`, `wrangler-dist/cli.js dev`) ne matchent pas un

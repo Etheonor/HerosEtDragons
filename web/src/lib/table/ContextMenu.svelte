@@ -1,12 +1,12 @@
-/**
- * Menu contextuel unique de la table (lot 5).
- *
- * Une seule instance, pilotée par la page : chaque surface (pion, repère, vide
- * de carte, et plus tard l'asset manager) l'ouvre à la position du pointeur
- * avec ses propres entrées. bits-ui gère le focus, les flèches, Échap et le
- * clic extérieur ; l'ancre est un point de 1 px posé à (x, y).
- */
 <script lang="ts">
+  /**
+   * Menu contextuel unique de la table (lot 5).
+   *
+   * Une seule instance, pilotée par la page : chaque surface (pion, repère, vide
+   * de carte, et plus tard l'asset manager) l'ouvre à la position du pointeur
+   * avec ses propres entrées. bits-ui gère le focus, les flèches, Échap et le
+   * clic extérieur ; l'ancre est un point de 1 px posé à (x, y).
+   */
   import { DropdownMenu } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';
   import type { ContextMenuItem } from './context-menu';

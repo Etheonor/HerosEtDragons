@@ -1,23 +1,23 @@
-/**
- * Asset manager (lot 5.4) : overlay à trois onglets — Cartes, PNJ, Personnages.
- *
- * Filtrage strict : l'onglet **Personnages** ne contient que les PJ ; l'onglet
- * **PNJ** contient les PNJ de la campagne **et** les modèles réutilisables
- * (deux sections).
- *
- * - grille de vignettes + recherche texte simple ;
- * - **double-clic = poser** (carte : l'afficher ; modèle PNJ : armer la pose
- *   ×N ; personnage : le poser sur la carte active, ou le recentrer s'il y
- *   est déjà) ;
- * - badge `− ×N +` sur les modèles, badge « sur la carte » sur les personnages
- *   présents sur la carte active ;
- * - **clic droit délégué au menu unique de la page** : ce composant ne rend
- *   jamais de menu, il décrit la cible.
- *
- * Les `MapManager` / `NpcLibrary` restent dans la barre d'outils en secours
- * le temps de valider cette surface.
- */
 <script lang="ts">
+  /**
+   * Asset manager (lot 5.4) : overlay à trois onglets — Cartes, PNJ, Personnages.
+   *
+   * Filtrage strict : l'onglet **Personnages** ne contient que les PJ ; l'onglet
+   * **PNJ** contient les PNJ de la campagne **et** les modèles réutilisables
+   * (deux sections).
+   *
+   * - grille de vignettes + recherche texte simple ;
+   * - **double-clic = poser** (carte : l'afficher ; modèle PNJ : armer la pose
+   *   ×N ; personnage : le poser sur la carte active, ou le recentrer s'il y
+   *   est déjà) ;
+   * - badge `− ×N +` sur les modèles, badge « sur la carte » sur les personnages
+   *   présents sur la carte active ;
+   * - **clic droit délégué au menu unique de la page** : ce composant ne rend
+   *   jamais de menu, il décrit la cible.
+   *
+   * Les `MapManager` / `NpcLibrary` restent dans la barre d'outils en secours
+   * le temps de valider cette surface.
+   */
   import { Dialog } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';
   import CloseButton from '$lib/ds/CloseButton.svelte';
@@ -37,8 +37,8 @@
     /** Ids des personnages ayant un pion sur la carte active. */
     tokenCharIds: string[];
     isMj: boolean;
-    /** Incrémenté par la page après suppression d'un modèle → rechargement. */
-    templatesRevision: number;
+  /** Incrémenté par la page après suppression d'un modèle → rechargement. */
+  templatesRevision: number;
     onPickMap: (id: string) => void;
     onPlaceTemplate: (tpl: NpcTemplate, count: number) => void;
     onPlaceChar: (charId: string) => void;

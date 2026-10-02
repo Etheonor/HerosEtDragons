@@ -1,15 +1,15 @@
-/**
- * Shell de panneau flottant (lot 5).
- *
- * - drag par l'en-tête, redimensionnement par 8 poignées ;
- * - z-order : le panneau cliqué passe au-dessus des autres ;
- * - snap aux bords du viewport (12 px) ;
- * - persistance localStorage **en fraction du viewport** (un layout sauvé sur
- *   un grand écran reste utilisable sur un petit), avec version de schéma ;
- * - la fermeture reste gérée par la page (`onClose`), qui possède aussi
- *   l'état ouvert/fermé (`panelsOpen`).
- */
 <script lang="ts">
+  /**
+   * Shell de panneau flottant (lot 5).
+   *
+   * - drag par l'en-tête, redimensionnement par 8 poignées ;
+   * - z-order : le panneau cliqué passe au-dessus des autres ;
+   * - snap aux bords du viewport (12 px) ;
+   * - persistance localStorage **en fraction du viewport** (un layout sauvé sur
+   *   un grand écran reste utilisable sur un petit), avec version de schéma ;
+   * - la fermeture reste gérée par la page (`onClose`), qui possède aussi
+   *   l'état ouvert/fermé (`panelsOpen`).
+   */
   import { onMount, type Snippet } from 'svelte';
   import CloseButton from '$lib/ds/CloseButton.svelte';
   import { bringToFront, panelZ } from './panelStack.svelte';

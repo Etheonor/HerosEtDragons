@@ -18,6 +18,15 @@ test.describe("Connexion et table", () => {
   test("un joueur arrive sur la table et voit sa compagnie", async ({ page }) => {
     await openTable(page, KAELITH);
     await expect(page.getByText("Campagne de dev")).toBeVisible();
+
+    // Garde-fou : les commentaires de doc des composants ne doivent jamais être
+    // rendus (en Svelte, du texte avant <script> devient du contenu affiché).
+    const leaked = await page.evaluate(() =>
+      /Asset manager|Shell de panneau|Menu contextuel unique|Tableau de bord MJ/.test(
+        document.body.innerText,
+      ),
+    );
+    expect(leaked).toBe(false);
     // Les deux PJ sont dans la colonne de gauche, le sien en particulier.
     await expect(page.locator(".compagnie")).toContainText("Kaelith");
     await expect(page.locator(".compagnie")).toContainText("Ragnar");

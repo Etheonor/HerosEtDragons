@@ -1,12 +1,12 @@
-/**
- * Tableau de bord MJ (lot 5.5) : ce que le MJ doit avoir sous les yeux pendant
- * une scène — les PNJ présents sur la carte active (PV, CA, états, accès à la
- * fiche) et les notes épinglées de la carte.
- *
- * Rendu dans un panneau flottant par la page ; MJ uniquement. Les notes vivent
- * en REST (`api.notes`, targetType « map ») et sont enregistrées à la demande.
- */
 <script lang="ts">
+  /**
+   * Tableau de bord MJ (lot 5.5) : ce que le MJ doit avoir sous les yeux pendant
+   * une scène — les PNJ présents sur la carte active (PV, CA, états, accès à la
+   * fiche) et les notes épinglées de la carte.
+   *
+   * Rendu dans un panneau flottant par la page ; MJ uniquement. Les notes vivent
+   * en REST (`api.notes`, targetType « map ») et sont enregistrées à la demande.
+   */
   import { api, type MapSummary } from '$lib/api';
   import type { CharacterCard } from '@rollwith/shared/protocol';
   import { portraitUrl } from '$lib/portraits';
