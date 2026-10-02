@@ -7,7 +7,7 @@
 
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { createSheet } from "@rollwith/shared/sheet";
 import { DEV_COOKIE, isLocalHost } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
@@ -97,6 +97,25 @@ app.post("/seed", async (c) => {
       .update(schema.characters)
       .set({ pv: 45, pvMax: 45, pvTemp: 0, conditions: [], tokenScale: 1 })
       .where(eq(schema.characters.campaignId, campaign.id));
+    // Les tests créent des fiches (duplication, etc.) : on repart d'un monde
+    // strictement seedé, sinon les runs suivants voient des personnages en trop.
+    await db
+      .delete(schema.characters)
+      .where(
+        and(
+          eq(schema.characters.campaignId, campaign.id),
+          notInArray(schema.characters.id, ["pj-kaelith", "pj-ragnar", "pnj-gobelin"]),
+        ),
+      );
+    // Idem pour les cartes créées par les tests (import d'image, etc.).
+    await db
+      .delete(schema.maps)
+      .where(
+        and(
+          eq(schema.maps.campaignId, campaign.id),
+          notInArray(schema.maps.id, ["map-image", "map-grid"]),
+        ),
+      );
   }
 
   for (const u of [{ id: mj.id, name: mj.name }, ...players]) {

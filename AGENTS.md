@@ -188,11 +188,10 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
 
 Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
 refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
-jeu » plutôt que « web ». **Lots 0 à 4 livrés** (fondations de surfaces, carte
-plein écran, chrome : barre d'outils, palette, raccourcis ; vie sur la carte :
-caméra animée, PV/états des pions, échelle en cases ; undo/redo transactionnel
-dans le DO). Le **lot 5** (panneaux, context menus, initiative verticale, asset
-manager) est le prochain.
+jeu » plutôt que « web ». **Lots 0 à 4 livrés**, **lot 5 en cours** : le shell
+`<Panel>` (drag/resize/snap/persistance), le menu contextuel unique (bits-ui) et
+l'**initiative verticale** réordonnable sont livrés ; restent l'**asset manager**
+(5.4) et le **dashboard MJ** (5.5).
 
 | Document                                             | Contenu                                                         |
 | ---------------------------------------------------- | --------------------------------------------------------------- |

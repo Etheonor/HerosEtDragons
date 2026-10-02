@@ -420,6 +420,20 @@ describe("GameTableDO — intégration", () => {
       (m) => (m.patch as { combat?: { turn: number } } | undefined)?.combat?.turn === 1,
     );
     expect((next.patch as { combat: { turn: number } }).combat.turn).toBe(1);
+
+    // Réordonnancement (lot 5) : monter le dernier échange sa place avec le 2e,
+    // et le tour actif suit le combattant qui l'occupait.
+    const beforeOrder = finalCombat.order;
+    const moved = beforeOrder[2]!;
+    const activeBefore = beforeOrder[1]!;
+    mj.send({ type: "combat.reorder", charId: moved, up: true });
+    const reordered = await mj.nextWhere(
+      (m) =>
+        (m.patch as { combat?: { order?: string[] } } | undefined)?.combat?.order?.[1] === moved,
+    );
+    const rc = (reordered.patch as { combat: { order: string[]; turn: number } }).combat;
+    expect(rc.order).toEqual([beforeOrder[0], moved, activeBefore]);
+    expect(rc.order[rc.turn]).toBe(activeBefore);
   });
 
   it("brouillard : les pions PNJ non révélés sont filtrés pour les joueurs, visibles pour le MJ", async () => {

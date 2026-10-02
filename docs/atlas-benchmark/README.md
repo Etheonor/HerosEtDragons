@@ -39,6 +39,9 @@ interface **de jeu** plutôt qu'une interface web.
 | **Taille des pions**        | `tokenScale` par personnage, en cases (multiplicateur de `gridSize`) ; repli sur `tokenSize` px si la carte n'a pas de grille. Réglage MJ dans la Compagnie.                                                                                                                                                   | `04` §1     |
 | **PV des PNJ (vue joueur)** | Barre **absente** quand le serveur masque les PV (`pnjPvVisible=false`) ; le MJ les reçoit toujours. Le réglage de campagne fait office d'option MJ.                                                                                                                                                           | `04` §1     |
 | **Undo**                    | Pile **dans le DO** (source de vérité, 50 pas, persistée), annulation = mutation normale journalisée + diffusée. **Un geste = un pas** (drag de pion/repère, trait de brouillard). Réservé MJ ; les clients ne reçoivent que `canUndo`/`canRedo` (jamais la pile). `map.settings` (REST) reste hors périmètre. | `03` §12    |
+| **Panneaux flottants**      | Shell unique `<Panel>` : drag par l'en-tête, 8 poignées de resize, snap aux bords, z-order partagé **sous `--z-overlay`** (les popovers legacy restent au-dessus), persistance **en fraction du viewport** avec version de schéma.                                                                             | `07` §5.1   |
+| **Menu contextuel**         | Un seul `<ContextMenu>` (bits-ui, ancré au pointeur) : pion, repère, vide de carte. Un pan au clic droit le referme (macOS dispatche `contextmenu` au mousedown).                                                                                                                                              | `07` §5.2   |
+| **Initiative**              | **Verticale** à droite (remplace le bandeau horizontal) : PV, vaincu, réordonnancement ▲▼ (`combat.reorder`), clic = recadrage caméra, tourniquet d'auto-roll conservé.                                                                                                                                        | `07` §5.3   |
 | **Branche**                 | Tout le chantier est sur `feat/uiv2`. `main` est intacte.                                                                                                                                                                                                                                                      | §6bis       |
 
 ### Ce qui a été validé par des mesures, pas par des avis
@@ -105,17 +108,17 @@ toute intervention dans le fichier Penpot.
 là qu'est le basculement de paradigme. Le Lot 4 (undo) est le plus risqué
 techniquement, et c'est aussi le plus cher en usage réel.
 
-**Livrés au 01/10/2026 : lots 0, 1, 2, 3 et 4** — fondations de surfaces ; carte
-plein écran, panneaux flottants ; barre d'outils, command palette et raccourcis ;
-puis la vie sur la carte : caméra animée persistée par carte, barres de PV sur
-les pions (seuils Penpot, jamais diffusées hors droit serveur), pastille
-d'initiative, état mort/couché, taille de pion en cases (`tokenScale`), plaque de
-nom au survol et curseur de brosse ; enfin l'**undo/redo transactionnel** (DO
-source de vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`, boutons de
-barre d'outils). Le design system Penpot est la source (19 couleurs,
-17 typographies, 37 composants) ; ses écrans `01`/`02` décrivent la suite, qui
-est désormais le **lot 5 (panneaux, context menus, initiative verticale, asset
-manager)**.
+**Livrés au 01/10/2026 : lots 0, 1, 2, 3 et 4, et lot 5 partiel** — fondations de
+surfaces ; carte plein écran, panneaux flottants ; barre d'outils, command
+palette et raccourcis ; la vie sur la carte : caméra animée persistée par carte,
+barres de PV sur les pions (seuils Penpot, jamais diffusées hors droit serveur),
+pastille d'initiative, état mort/couché, taille de pion en cases (`tokenScale`),
+plaque de nom au survol et curseur de brosse ; l'**undo/redo transactionnel**
+(DO source de vérité, un geste = un pas, `Ctrl/⌘ Z` et `Ctrl/⌘ ⇧ Z`) ; puis le
+**lot 5 en cours** : `<Panel>` drag/resize/persisté, menu contextuel unique,
+initiative **verticale** réordonnable. Restent du lot 5 : l'**asset manager**
+(5.4) et le **dashboard MJ** (5.5). Le design system Penpot est la source
+(19 couleurs, 17 typographies, 37 composants).
 
 ---
 
@@ -316,12 +319,13 @@ Les lots sont dans `07`. Trois choses à savoir avant d'ouvrir le premier :
 1. **Le filet de test est déjà en place.** 323 tests (dont 31 d'intégration
    API), 23 tests e2e Playwright sur la fixture `dev-camp`. `pnpm check` doit
    être vert à chaque commit — c'est la seule condition à ne pas négocier.
-2. **Les lots 0 à 4 sont livrés** : `bits-ui` et `@lucide/svelte` dans
-   `web/package.json`, surfaces et tokens en place, carte plein écran, panneaux
-   flottants, barre d'outils, command palette et raccourcis, pion « objet de
-   jeu » (PV, initiative, états, échelle), caméra animée et undo/redo
-   transactionnel. La suite est le lot 5 (panneaux, context menus, initiative
-   verticale, asset manager).
+2. **Les lots 0 à 4 sont livrés, le lot 5 est entamé** : `bits-ui` et
+   `@lucide/svelte` dans `web/package.json`, surfaces et tokens en place, carte
+   plein écran, panneaux flottants déplaçables/redimensionnables, barre
+   d'outils, command palette et raccourcis, pion « objet de jeu » (PV,
+   initiative, états, échelle), caméra animée, undo/redo transactionnel, menu
+   contextuel unique et initiative verticale. La suite immédiate : l'asset
+   manager (5.4) puis le dashboard MJ (5.5).
 3. **Les trois pièges du §0** sont à respecter dès la première ligne de code,
    pas découverts en chemin.
 

@@ -116,12 +116,14 @@ test.describe("Chrome : palette et aide (Lot 2)", () => {
     await page.getByRole("option", { name: /Grille : 48 px/ }).click();
     await expect(input).toHaveCount(0);
 
-    // Le réglage est RENDU sur la carte, pas seulement stocké.
+    // Le réglage est RENDU sur la carte, pas seulement stocké (le PATCH REST
+    // et le refresh de la liste sont asynchrones → on poll).
     await expect(page.locator(".map-grid--overlay")).toBeVisible();
-    const size = await page
-      .locator(".map-grid--overlay")
-      .evaluate((el) => getComputedStyle(el).backgroundSize);
-    expect(size).toContain("48px");
+    await expect
+      .poll(async () =>
+        page.locator(".map-grid--overlay").evaluate((el) => getComputedStyle(el).backgroundSize),
+      )
+      .toContain("48px");
   });
 
   test("? ouvre l'aide clavier générée depuis la table, Échap la ferme", async ({ page }) => {
@@ -435,35 +437,33 @@ test.describe("Pions vivants (Lot 3)", () => {
       .click();
     await page.locator(".mode-btn", { hasText: "Combat" }).click();
 
-    // Lance l'initiative de chaque PJ en attente.
-    for (let round = 0; round < 3; round += 1) {
-      const btns = page.locator(".roll-init-btn:not([disabled])");
-      const n = await btns.count();
-      for (let i = 0; i < n; i += 1) {
-        await btns.nth(0).click();
-        await page.waitForTimeout(120);
-      }
+    // Lance l'initiative de chaque PJ en attente : le bouton n'arrive qu'avec
+    // le mode combat, on l'attend avant de cliquer.
+    const pendingRoll = page.locator(".roll-init-btn:not([disabled])");
+    await expect(pendingRoll.first()).toBeVisible();
+    for (let round = 0; round < 3 && (await pendingRoll.count()) > 0; round += 1) {
+      await pendingRoll.first().click();
+      await page.waitForTimeout(150);
     }
-    const chips = page.locator(".init-chip");
-    await expect(chips.first()).toBeVisible();
+    const rows = page.locator(".init-row");
+    await expect(rows.first()).toBeVisible();
 
     // La carte tient entièrement dans le cadre : cliquer ne doit RIEN changer.
     const before = (await page.locator(".map-surface").boundingBox())!;
-    await chips.first().click();
+    await rows.first().click();
     await page.waitForTimeout(700);
     const after = (await page.locator(".map-surface").boundingBox())!;
     expect(Math.abs(after.x - before.x)).toBeLessThan(2);
     expect(Math.abs(after.y - before.y)).toBeLessThan(2);
 
-    // Zoomée : le pion du chip vient au centre du cadre (animation 400 ms).
-    const chipText = (await chips.first().textContent()) ?? "";
-    const name = chipText.split("·").pop()!.trim();
+    // Zoomée : le pion de la ligne vient au centre du cadre (animation 400 ms).
+    const name = (await rows.first().getAttribute("data-name")) ?? "";
     const token = page.locator(".token", { hasText: name });
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
     await page.mouse.wheel(0, -600);
     await page.waitForTimeout(200);
-    await chips.first().click();
+    await rows.first().click();
     await expect
       .poll(async () => {
         const b = (await token.boundingBox())!;
@@ -564,5 +564,100 @@ test.describe("Historique (Lot 4)", () => {
     await expect
       .poll(async () => Math.abs((await token.boundingBox())!.x - before.x))
       .toBeLessThan(2);
+  });
+});
+
+test.describe("Panneaux et initiative (Lot 5)", () => {
+  test("le panneau Compagnie se déplace et garde sa position au rechargement", async ({ page }) => {
+    await openTable(page, MJ);
+    const panel = page.locator(".compagnie");
+    await expect(panel).toBeVisible();
+    const before = (await panel.boundingBox())!;
+
+    const header = panel.locator(".panel-head");
+    const hb = (await header.boundingBox())!;
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hb.x + hb.width / 2 + 130, hb.y + hb.height / 2 + 60, { steps: 10 });
+    await page.mouse.up();
+
+    const moved = (await panel.boundingBox())!;
+    expect(moved.x - before.x).toBeGreaterThan(100);
+
+    // Persistance normalisée : un rechargement restitue la même position.
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    const after = (await page.locator(".compagnie").boundingBox())!;
+    expect(Math.abs(after.x - moved.x)).toBeLessThan(3);
+    expect(Math.abs(after.y - moved.y)).toBeLessThan(3);
+  });
+
+  test("clic droit sur un pion : menu contextuel unique (dupliquer)", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    const token = page.locator(".token", { hasText: "Gobelin" });
+    await expect(token).toBeVisible();
+    await token.click({ button: "right" });
+
+    await expect(page.getByRole("menuitem", { name: "Dupliquer le PNJ" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /Taille : 1 case/ })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Dupliquer le PNJ" }).click();
+    await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(2);
+  });
+
+  test("clic droit dans le vide : menu de carte (outils MJ)", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height - 140, {
+      button: "right",
+    });
+    await expect(page.getByRole("menuitem", { name: "Outil PNJ" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitem", { name: "Outil PNJ" })).toHaveCount(0);
+  });
+
+  test("l'initiative verticale montre les PV et se réordonne (▲)", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    await page
+      .locator(".pnj-card", { hasText: "Gobelin" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+    await page.locator(".mode-btn", { hasText: "Combat" }).click();
+
+    const pendingRoll = page.locator(".roll-init-btn:not([disabled])");
+    await expect(pendingRoll.first()).toBeVisible();
+    for (let round = 0; round < 3 && (await pendingRoll.count()) > 0; round += 1) {
+      await pendingRoll.first().click();
+      await page.waitForTimeout(150);
+    }
+
+    const rows = page.locator(".init-row");
+    await expect(rows).toHaveCount(2);
+    await expect(page.locator(".init-move").first()).toBeVisible();
+    // Le MJ voit les barres de PV sur les lignes.
+    await expect(rows.first().locator(".init-hp")).toHaveCount(1);
+
+    const names = () => rows.evaluateAll((els) => els.map((e) => e.getAttribute("data-name")));
+    const order = await names();
+    await rows
+      .last()
+      .getByRole("button", { name: /^Monter/ })
+      .click();
+    await expect.poll(names).toEqual([order[1], order[0]]);
   });
 });

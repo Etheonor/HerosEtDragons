@@ -153,6 +153,7 @@ type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
 type InvGiveMsg = Extract<ClientMessageInput, { type: "inv.give" }>;
 type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
+type CombatReorderMsg = Extract<ClientMessageInput, { type: "combat.reorder" }>;
 
 function defaultLiveState(): LiveState {
   return {
@@ -1138,6 +1139,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "combat.next":
           await this.handleCombatNext(ws, attachment);
+          break;
+        case "combat.reorder":
+          await this.handleCombatReorder(attachment, m);
           break;
         default:
           // inv.* (phase 7) : validés mais non câblés — même réponse qu'avant.
@@ -2780,6 +2784,28 @@ export class GameTableDO extends DurableObject<Env> {
     );
     this.appendJournal(entry, visibility);
     this.broadcastJournal(entry, visibility);
+    this.broadcastRoleAware({ combat: newCombat });
+  }
+
+  /** Déplace un combattant d'un cran dans l'ordre d'initiative (MJ). Le tour
+   *  actif suit le combattant déplacé : on reprojette `turn` sur le nouveau rang. */
+  private async handleCombatReorder(att: WsAttachment, msg: CombatReorderMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const combat = state.combat;
+    if (state.mode !== "combat" || !combat || combat.phase !== "run" || !combat.order) return;
+
+    const order = [...combat.order];
+    const from = order.indexOf(msg.charId);
+    if (from < 0) return;
+    const to = msg.up ? from - 1 : from + 1;
+    if (to < 0 || to >= order.length) return;
+    [order[from], order[to]] = [order[to]!, order[from]!];
+
+    const activeId = combat.order[combat.turn];
+    const turn = activeId ? Math.max(0, order.indexOf(activeId)) : combat.turn;
+    const newCombat: CombatState = { ...combat, order, turn };
+    await this.patchState({ combat: newCombat });
     this.broadcastRoleAware({ combat: newCombat });
   }
 

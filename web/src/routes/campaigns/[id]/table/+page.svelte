@@ -25,6 +25,9 @@
   import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
   import { ICONS } from '$lib/ds/icons';
+  import Panel from '$lib/table/Panel.svelte';
+  import ContextMenu from '$lib/table/ContextMenu.svelte';
+  import type { ContextMenuItem } from '$lib/table/context-menu';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
 
   let { params } = $props();
@@ -865,6 +868,10 @@
     sendWs({ type: 'combat.next' });
   }
 
+  function reorderCombat(charId: string, up: boolean) {
+    sendWs({ type: 'combat.reorder', charId, up });
+  }
+
   onMount(() => {
     commandRegistry.register('table', buildCommands);
     return () => commandRegistry.unregister('table');
@@ -1128,16 +1135,27 @@
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
 
-  /** Sur la carte, le clic droit panoramique : on supprime le menu natif, mais
-   *  pas celui des pions (qui passe par `onTokenContextMenu`). */
+  /** Clic droit sur la carte : ouvre le menu contextuel du vide (sauf sur un
+   *  pion/repère, qui a le sien), et n'ouvre rien si un panoramique vient de
+   *  se terminer — sinon chaque déplacement laisserait un menu derrière lui. */
   function onFrameContextMenu(e: MouseEvent) {
     if (isOnToken(e)) return;
     e.preventDefault();
+    if (Date.now() - panMovedAt < 400) return;
+    ctxMenu = { kind: 'map', x: e.clientX, y: e.clientY };
   }
 
   function onFramePointerMove(e: PointerEvent) {
     if (!panning || panning.id !== e.pointerId) return;
-    camera.panBy(e.clientX - panning.x, e.clientY - panning.y);
+    const dx = e.clientX - panning.x;
+    const dy = e.clientY - panning.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      panMovedAt = Date.now();
+      // macOS dispatche contextmenu au mousedown : le menu de carte s'ouvre
+      // avant qu'on sache que c'est un pan — on le referme dès le mouvement.
+      if (ctxMenu?.kind === 'map') ctxMenu = null;
+    }
+    camera.panBy(dx, dy);
     panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: panning.btn };
   }
 
@@ -1422,44 +1440,133 @@
   }
 
 
-  // ── Menu contextuel sur les pions (MJ) ───────────────────────
-  let ctxMenu = $state<{ x: number; y: number; charId: string; kind: 'pj' | 'pnj' } | null>(null);
-  let ctxEl: HTMLDivElement | null = null;
+  // ── Menu contextuel unique (Lot 5) ───────────────────────────
+  // Une seule instance pilotée par la page ; chaque surface l'ouvre au
+  // pointeur avec ses entrées. bits-ui gère focus, flèches, Échap et clic
+  // extérieur (l'ancien menu maison a été retiré avec son listener global).
+  type CtxTarget =
+    | { kind: 'token'; charId: string; charKind: 'pj' | 'pnj'; x: number; y: number }
+    | { kind: 'marker'; id: string; x: number; y: number }
+    | { kind: 'map'; x: number; y: number };
 
-  function onTokenContextMenu(e: MouseEvent, charId: string, kind: 'pj' | 'pnj') {
-    if (!isMj) return;
+  let ctxMenu = $state<CtxTarget | null>(null);
+  /** Un panoramique au clic droit ne doit pas ouvrir le menu au relâchement. */
+  let panMovedAt = 0;
+
+  const ctxItems = $derived.by<ContextMenuItem[]>(() => {
+    const t = ctxMenu;
+    if (!t) return [];
+
+    if (t.kind === 'token') {
+      const c = charById(t.charId);
+      const items: ContextMenuItem[] = [
+        { id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) },
+      ];
+      if (isMj) {
+        for (const s of TOKEN_SCALES) {
+          items.push({
+            id: `size.${s}`,
+            label: `Taille : ${scaleLabel(s)}`,
+            separatorBefore: s === TOKEN_SCALES[0],
+            disabled: c?.tokenScale === s,
+            onSelect: () => sendWs({ type: 'char.scale', charId: t.charId, scale: s }),
+          });
+        }
+        if (t.charKind === 'pnj') {
+          items.push({
+            id: 'dup',
+            label: 'Dupliquer le PNJ',
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'npc.duplicate', charId: t.charId }),
+          });
+        }
+        items.push({
+          id: 'remove-token',
+          label: 'Retirer de la carte',
+          onSelect: () => sendWs({ type: 'token.remove', charId: t.charId }),
+        });
+        if (t.charKind === 'pnj') {
+          items.push({
+            id: 'delete-npc',
+            label: 'Supprimer le PNJ',
+            danger: true,
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'npc.remove', charId: t.charId }),
+          });
+        }
+      }
+      return items;
+    }
+
+    if (t.kind === 'marker') {
+      const focusMarker = () => {
+        const m = store.state.markers.find((x) => x.id === t.id);
+        if (m) camera.centerOn(m.x / 100, m.y / 100);
+      };
+      const items: ContextMenuItem[] = [
+        { id: 'focus', label: 'Recentrer la caméra', onSelect: focusMarker },
+      ];
+      if (isMj) {
+        items.push(
+          {
+            id: 'remove',
+            label: 'Supprimer le repère',
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'marker.remove', id: t.id }),
+          },
+          {
+            id: 'clear',
+            label: 'Effacer tous les repères',
+            danger: true,
+            onSelect: () => sendWs({ type: 'marker.clear' }),
+          },
+        );
+      }
+      return items;
+    }
+
+    // Vide de carte.
+    const items: ContextMenuItem[] = [];
+    if (myCharId && store.state.tokens[myCharId]) {
+      items.push({
+        id: 'focus-me',
+        label: 'Recentrer sur mon pion',
+        onSelect: () => focusToken(myCharId),
+      });
+    }
+    items.push({ id: 'fit', label: 'Recadrer la carte', onSelect: resetView });
+    if (isMj) {
+      items.push(
+        {
+          id: 'tool.move',
+          label: 'Outil Déplacer',
+          separatorBefore: true,
+          onSelect: () => toolSelect('move'),
+        },
+        { id: 'tool.pnj', label: 'Outil PNJ', onSelect: () => toolSelect('pnj') },
+        { id: 'tool.marker', label: 'Outil Repère', onSelect: () => toolSelect('marker') },
+        {
+          id: 'fog.toggle',
+          label: fogOn ? 'Brouillard : désactiver' : 'Brouillard : activer',
+          separatorBefore: true,
+          onSelect: fogToggle,
+        },
+      );
+    }
+    return items;
+  });
+
+  function openTokenMenu(e: MouseEvent, charId: string, charKind: 'pj' | 'pnj') {
     e.preventDefault();
     e.stopPropagation();
-    ctxMenu = { x: e.clientX, y: e.clientY, charId, kind };
+    ctxMenu = { kind: 'token', charId, charKind, x: e.clientX, y: e.clientY };
   }
 
-  function ctxDuplicate() {
-    if (ctxMenu) sendWs({ type: 'npc.duplicate', charId: ctxMenu.charId });
-    ctxMenu = null;
+  function openMarkerMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'marker', id, x: e.clientX, y: e.clientY };
   }
-  function ctxRemoveToken() {
-    if (ctxMenu) sendWs({ type: 'token.remove', charId: ctxMenu.charId });
-    ctxMenu = null;
-  }
-  function ctxDeleteNpc() {
-    if (ctxMenu) sendWs({ type: 'npc.remove', charId: ctxMenu.charId });
-    ctxMenu = null;
-  }
-
-  $effect(() => {
-    if (!ctxMenu) return;
-    const close = (e: Event) => {
-      if (ctxEl && e.target instanceof Node && ctxEl.contains(e.target)) return;
-      ctxMenu = null;
-    };
-    // en capture : la fermeture précède le pointerdown du drag sur un autre pion
-    window.addEventListener('pointerdown', close, true);
-    window.addEventListener('contextmenu', close, true);
-    return () => {
-      window.removeEventListener('pointerdown', close, true);
-      window.removeEventListener('contextmenu', close, true);
-    };
-  });
 
   // ── Raccourcis clavier ───────────────────────────────────────
   function focusChat() {
@@ -1656,6 +1763,7 @@
                 class="marker"
                 style="left: {m.x}%; top: {m.y}%;"
                 onpointerdown={(e) => markerPointerDown(m.id, e)}
+                oncontextmenu={(e) => openMarkerMenu(e, m.id)}
                 role={isMj ? 'button' : undefined}
                 tabindex={isMj ? 0 : undefined}
               >
@@ -1682,7 +1790,7 @@
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
-                  oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
+                  oncontextmenu={(e) => openTokenMenu(e, c.id, c.kind)}
                 >
                   {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
                   {#if ini !== null}
@@ -1773,13 +1881,17 @@
     </div>
   </header>
 
-    <!-- Compagnie : panneau flottant, refermable, persistant (Lot 1). -->
+    <!-- Compagnie : panneau flottant, déplaçable et redimensionnable (Lot 5). -->
     {#if panelsOpen.compagnie}
-    <aside class="compagnie surface-raised">
-      <div class="panel-head">
-        <span class="panel-title">Compagnie</span>
-        <CloseButton label="Fermer la compagnie" onclick={() => setPanelOpen('compagnie', false)} />
-      </div>
+    <Panel
+      id="compagnie"
+      title="Compagnie"
+      campaignId={campaignId}
+      onClose={() => setPanelOpen('compagnie', false)}
+      closeLabel="Fermer la compagnie"
+      initial={{ x: 16, y: 56, w: 288, h: 640 }}
+      class="compagnie"
+    >
       <div class="panel-body scroll-area" use:scrollArea>
       {#if pjCards.length === 0}
         <div class="compagnie-empty">Aucun personnage joueur pour l'instant.</div>
@@ -1908,52 +2020,117 @@
         </div>
       {/each}
       </div>
-    </aside>
+    </Panel>
     {/if}
 
+      <div class="map-header surface-raised" class:shifted={panelsOpen.compagnie}>
+        <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
+        <span class="explore-label">
+          {store.state.mode === 'combat'
+            ? 'Mode combat — initiative en cours'
+            : 'Mode exploration — déplacez-vous librement'}
+        </span>
+        <div class="spacer"></div>
+        <span class="scale-label">1 case ≈ 1,50 m</span>
+      </div>
+
       {#if store.state.mode === 'combat' && store.state.combat}
-        <div class="combat-bandeau surface-raised">
-          <span class="combat-title">Initiative</span>
-          {#each initChips as e, i (e.id)}
-            <button
-              type="button"
-              class="init-chip {activeCharId === e.id ? 'active' : ''}"
-              style="border-radius: {i % 2 ? '3px 12px 3px 10px' : '10px 3px 12px 3px'};"
-              title="Recentrer la carte sur ce pion"
-              onclick={() => focusToken(e.id)}
-            >
-              {e.score !== undefined ? `${e.score} · ` : ''}{e.c?.name}
-            </button>
-          {/each}
+        <aside
+          class="initiative-rail surface-raised"
+          class:behind-panel={panelsOpen.panel}
+          aria-label="Initiative"
+        >
+          <div class="init-head">
+            <span class="init-title">Initiative</span>
+            <span class="round-badge">
+              {store.state.combat.phase === 'run' ? `round ${store.state.combat.round}` : 'à vos d20'}
+            </span>
+          </div>
+
           {#if store.state.combat.phase === 'init'}
-            {#each pendingInit as pid (pid)}
-              {@const pc = charById(pid)}
-              {#if pc}
-                <button
-                  class="roll-init-btn {canRollInitiative(pid) ? '' : 'waiting'}"
-                  disabled={!canRollInitiative(pid)}
-                  onclick={() => rollInitiative(pid)}
-                >{canRollInitiative(pid) ? `${pc.name} lance son initiative` : `${pc.name} n'a pas encore lancé…`}</button>
-              {/if}
+            <div class="init-pending">
+              {#each pendingInit as pid (pid)}
+                {@const pc = charById(pid)}
+                {#if pc}
+                  <button
+                    class="roll-init-btn {canRollInitiative(pid) ? '' : 'waiting'}"
+                    disabled={!canRollInitiative(pid)}
+                    onclick={() => rollInitiative(pid)}
+                  >{canRollInitiative(pid) ? `${pc.name} lance son initiative` : `${pc.name} n'a pas encore lancé…`}</button>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+
+          <div class="init-list scroll-area" use:scrollArea>
+            {#each initChips as e, i (e.id)}
+              {@const c = e.c}
+              {@const pct = c && c.pv !== null && c.pvMax !== null && c.pvMax > 0
+                ? Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100))
+                : null}
+              {@const down = pct !== null && pct <= 0}
+              <div
+                class="init-row"
+                class:active={activeCharId === e.id}
+                class:defeated={down}
+                role="button"
+                tabindex="0"
+                data-name={c?.name ?? ''}
+                title="Recentrer la carte sur ce pion"
+                onclick={() => focusToken(e.id)}
+                onkeydown={(ev) => {
+                  if (ev.key === 'Enter') focusToken(e.id);
+                }}
+              >
+                {#if c && portraitUrl(c.portrait)}
+                  <img class="init-portrait" src={portraitUrl(c.portrait)} alt="" draggable="false" />
+                {:else}
+                  <span class="init-initial" style="--token-color: {c?.color ?? 'var(--accent)'};">
+                    {(c?.name ?? '?').slice(0, 1).toUpperCase()}
+                  </span>
+                {/if}
+                <span class="init-body">
+                  <span class="init-name">{c?.name}</span>
+                  {#if pct !== null}
+                    <span class="init-hp">
+                      <span class="init-hp-fill {pct >= 70 ? 'ok' : pct >= 30 ? 'mid' : 'low'}" style="width: {pct}%;"></span>
+                    </span>
+                  {/if}
+                </span>
+                {#if down}<span class="init-down">vaincu</span>{/if}
+                <span class="init-score">{e.score ?? '—'}</span>
+                {#if isMj && store.state.combat.phase === 'run' && store.state.combat.order}
+                  <span class="init-move">
+                    <button
+                      type="button"
+                      aria-label="Monter {c?.name}"
+                      title="Monter dans l'initiative"
+                      disabled={i === 0}
+                      onclick={(ev) => {
+                        ev.stopPropagation();
+                        reorderCombat(e.id, true);
+                      }}>▲</button
+                    >
+                    <button
+                      type="button"
+                      aria-label="Descendre {c?.name}"
+                      title="Descendre dans l'initiative"
+                      disabled={i === initChips.length - 1}
+                      onclick={(ev) => {
+                        ev.stopPropagation();
+                        reorderCombat(e.id, false);
+                      }}>▼</button
+                    >
+                  </span>
+                {/if}
+              </div>
             {/each}
-          {/if}
-          <div class="spacer"></div>
-          {#if store.state.combat.phase === 'run'}
-            <span class="round-label">round {store.state.combat.round}</span>
-          {:else}
-            <span class="round-label">à vos d20</span>
-          {/if}
+          </div>
+
           {#if isMj && store.state.combat.phase === 'run'}
             <button class="next-turn-btn" onclick={combatNext}>Tour suivant →</button>
           {/if}
-        </div>
-      {:else}
-        <div class="map-header surface-raised" class:shifted={panelsOpen.compagnie}>
-          <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
-          <span class="explore-label">Mode exploration — déplacez-vous librement</span>
-          <div class="spacer"></div>
-          <span class="scale-label">1 case ≈ 1,50 m</span>
-        </div>
+        </aside>
       {/if}
 
       <!-- Barre d'outils ancrée en bas, centrée, sortie par priorité (Lot 2). -->
@@ -2109,11 +2286,15 @@
 
     <!-- Panneau à onglets : flottant, refermable, persistant. -->
     {#if panelsOpen.panel}
-    <aside class="panel surface-raised">
-      <div class="panel-head">
-        <span class="panel-title">Séance</span>
-        <CloseButton label="Fermer le panneau" onclick={() => setPanelOpen('panel', false)} />
-      </div>
+    <Panel
+      id="panel"
+      title="Séance"
+      campaignId={campaignId}
+      onClose={() => setPanelOpen('panel', false)}
+      closeLabel="Fermer le panneau"
+      initial={{ x: Math.max(16, innerWidth - 324 - 16), y: 56, w: 324, h: 640 }}
+      class="panel"
+    >
       <div class="tabs">
         <button class="tab {activeTab === 'journal' ? 'active' : ''}" onclick={() => (activeTab = 'journal')}>Journal</button>
         <button class="tab {activeTab === 'dice' ? 'active' : ''}" onclick={() => (activeTab = 'dice')}>Dés</button>
@@ -2289,7 +2470,7 @@
           {/if}
         </div>
       {/if}
-    </aside>
+    </Panel>
     {/if}
 
   <!-- Couche popups : éléments flottants non portalés (le reste passe par
@@ -2299,24 +2480,15 @@
     <div class="toast" role="status">{toast}</div>
   {/if}
 
-  {#if ctxMenu}
-    <div
-      class="ctx-menu"
-      bind:this={ctxEl}
-      role="menu"
-      style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;"
-      onclick={(e) => e.stopPropagation()}
-      onpointerdown={(e) => e.stopPropagation()}
-    >
-      {#if ctxMenu.kind === 'pnj'}
-        <button class="ctx-item" onclick={ctxDuplicate}>Dupliquer le PNJ</button>
-      {/if}
-      <button class="ctx-item" onclick={ctxRemoveToken}>Retirer de la carte</button>
-      {#if ctxMenu.kind === 'pnj'}
-        <button class="ctx-item danger" onclick={ctxDeleteNpc}>Supprimer le PNJ</button>
-      {/if}
-    </div>
-  {/if}
+  <ContextMenu
+    open={ctxMenu !== null}
+    x={ctxMenu?.x ?? 0}
+    y={ctxMenu?.y ?? 0}
+    items={ctxItems}
+    onOpenChange={(o) => {
+      if (!o) ctxMenu = null;
+    }}
+  />
   </div>
 
   <CommandPalette open={paletteOpen} onOpenChange={(o) => (paletteOpen = o)} commands={paletteCommands} />
@@ -2424,22 +2596,7 @@
     color: var(--text); white-space: nowrap;
   }
 
-  /* ── Panneaux flottants ── */
-  .panel-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 6px 6px 6px 12px;
-    border-bottom: 2px solid var(--border);
-    flex: none;
-  }
-  .panel-title {
-    font-family: var(--font-title);
-    font-size: 15px;
-    color: var(--heading);
-    white-space: nowrap;
-  }
+  /* ── Panneaux flottants : le chrome est dans <Panel>, ici le contenu. ── */
   .panel-body {
     flex: 1;
     overflow-y: auto;
@@ -2471,18 +2628,8 @@
   .panel-toggle.right { right: 0; border-right: none; border-radius: var(--radius-md) 0 0 var(--radius-md); }
   .panel-toggle:hover { background: var(--selected); color: var(--heading); }
 
-  /* ── Compagnie ── */
+  /* ── Compagnie : la surface est le <Panel>, on ne garde que le papier ligné. ── */
   .compagnie {
-    position: absolute;
-    top: 56px;
-    left: 16px;
-    bottom: 16px;
-    width: var(--w-compagnie);
-    z-index: var(--z-panels);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
     background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
   }
   .compagnie-title {
@@ -2588,27 +2735,6 @@
     box-shadow: 3px 4px 0 var(--shadow-1);
   }
 
-  .ctx-menu {
-    position: fixed;
-    z-index: var(--z-overlay);
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: 0 10px 30px var(--shadow-2);
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 170px;
-  }
-  .ctx-item {
-    font-family: var(--font-body); font-size: 13px; text-align: left;
-    padding: 6px 10px; background: transparent; border: none; border-radius: 8px;
-    color: var(--text); cursor: pointer;
-  }
-  .ctx-item:hover { background: var(--selected); color: var(--heading); }
-  .ctx-item.danger:hover { background: var(--accent); color: var(--accent-fg); }
-
   /* ── Carte ── */
   .map-header {
     position: absolute;
@@ -2623,23 +2749,88 @@
   .scale-label { font-size: 12px; color: var(--text-3); }
   .spacer { flex: 1; }
 
-  .combat-bandeau {
+  /* ── Initiative verticale (Lot 5) ─────────────────────────────── */
+  .initiative-rail {
     position: absolute;
     top: 56px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: var(--z-map-hud);
-    display: flex; align-items: center; gap: 7px; padding: 7px 14px;
-    flex-wrap: wrap;
-    max-width: calc(100vw - 32px);
+    right: 12px;
+    width: 264px;
+    max-height: calc(100% - 132px);
+    z-index: var(--z-chrome);
+    display: flex; flex-direction: column;
+    overflow: hidden;
   }
-  .combat-title { font-size: 14.5px; font-weight: 700; color: var(--heading); }
-  .init-chip {
-    font-family: var(--font-body); font-size: 12px; padding: 4px 10px;
-    background: var(--panel); color: var(--text); border: 2px solid var(--border);
+  /* Le panneau de séance (à droite par défaut) ouvert : la rail se décale. */
+  .initiative-rail.behind-panel { right: 340px; }
+  .init-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 12px; border-bottom: 2px solid var(--border); flex: none;
+  }
+  .init-title { font-family: var(--font-title); font-size: 15px; color: var(--heading); }
+  .round-badge {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--accent-text);
+  }
+  .init-pending {
+    display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
+    border-bottom: 1.5px solid var(--border-soft); flex: none;
+  }
+  .init-pending .roll-init-btn { width: 100%; }
+  .init-list { display: flex; flex-direction: column; gap: 3px; padding: 8px; overflow-y: auto; }
+  .init-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 7px;
+    border: 1.5px solid transparent; border-left: 3px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--panel);
     cursor: pointer;
   }
-  .init-chip.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent-border); }
+  .init-row:hover { background: var(--surface-raised-hover); }
+  .init-row.active {
+    border-color: var(--accent-border); border-left: 3px solid var(--accent);
+    background: color-mix(in oklab, var(--panel), var(--accent) 12%);
+  }
+  .init-row.defeated { filter: grayscale(0.7); opacity: 0.55; }
+  .init-portrait {
+    width: 28px; height: 28px; flex: none; object-fit: cover;
+    border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
+  }
+  .init-initial {
+    width: 28px; height: 28px; flex: none;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 14px;
+    color: var(--map-token-fg); background: var(--map-token-bg);
+    border: 2px solid var(--token-color, var(--accent)); border-radius: 50%;
+  }
+  .init-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .init-name {
+    font-family: var(--font-title); font-size: 13.5px; color: var(--heading);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .init-hp {
+    display: block; height: 5px; border-radius: 3px;
+    background: #2b2822; border: 1px solid #3a352d; overflow: hidden;
+  }
+  .init-hp-fill { display: block; height: 100%; background: var(--hp-ok); }
+  .init-hp-fill.mid { background: var(--hp-mid); }
+  .init-hp-fill.low { background: var(--hp-low); }
+  .init-down {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--hp-low);
+  }
+  .init-score {
+    font-family: var(--font-body); font-size: 13px; font-weight: 700; color: var(--text-2);
+    min-width: 20px; text-align: right;
+  }
+  .init-row.active .init-score { color: var(--heading); }
+  .init-move { display: flex; flex-direction: column; gap: 1px; }
+  .init-move button {
+    font-size: 8px; line-height: 1; width: 18px; height: 12px; padding: 0;
+    background: transparent; border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text-2); cursor: pointer;
+  }
+  .init-move button:hover:not(:disabled) { background: var(--selected); color: var(--heading); }
+  .init-move button:disabled { opacity: 0.3; cursor: default; }
   .roll-init-btn {
     font-family: var(--font-body); font-size: 12.5px; padding: 5px 12px;
     background: var(--accent); color: var(--accent-fg); border: 2px solid var(--accent-border);
@@ -2649,7 +2840,6 @@
   .roll-init-btn.waiting {
     background: transparent; border: 2px dashed var(--border); color: var(--text-2); cursor: default;
   }
-  .round-label { font-size: 14px; font-weight: 700; color: var(--accent-text); }
   .next-turn-btn {
     font-family: var(--font-body); font-size: 13px; padding: 6px 14px;
     background: var(--selected); color: var(--heading); border: 2px solid var(--border);
@@ -3028,18 +3218,6 @@
   }
 
   /* ── Panneau ── */
-  .panel {
-    position: absolute;
-    top: 56px;
-    right: 16px;
-    bottom: 16px;
-    width: var(--w-panel);
-    z-index: var(--z-panels);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-height: 0;
-  }
   .tabs {
     display: flex;
     border-bottom: 2px solid var(--border);

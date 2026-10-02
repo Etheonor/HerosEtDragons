@@ -298,6 +298,13 @@ export interface CombatNextMsg {
   type: "combat.next";
 }
 
+export interface CombatReorderMsg {
+  type: "combat.reorder";
+  charId: string;
+  /** true = monte d'une position dans l'ordre d'initiative, false = descend. */
+  up: boolean;
+}
+
 export interface ChatSayMsg {
   type: "chat.say";
   text: string;
@@ -366,6 +373,7 @@ export type ClientMessage =
   | ModeSetMsg
   | InitiativeRollMsg
   | CombatNextMsg
+  | CombatReorderMsg
   | ChatSayMsg
   | DiceRollMsg
   | InvGiveMoneyMsg
@@ -504,6 +512,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "mode.set",
     "initiative.roll",
     "combat.next",
+    "combat.reorder",
     "chat.say",
     "dice.roll",
     "inv.give",

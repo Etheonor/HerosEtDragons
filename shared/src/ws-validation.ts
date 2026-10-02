@@ -162,6 +162,12 @@ export const initiativeRollSchema = z.object({
 
 export const combatNextSchema = z.object({ type: z.literal("combat.next") });
 
+export const combatReorderSchema = z.object({
+  type: z.literal("combat.reorder"),
+  charId: id,
+  up: z.boolean({ error: "up attendu" }),
+});
+
 // Messages d'inventaire (R9). `inv.give` couvre l'argent ET les objets via un
 // champ `kind` : le discriminant externe du union reste `type`, donc on ne peut
 // pas imbriquer un second discriminatedUnion — d'où la refinement « xor ».
@@ -227,6 +233,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   modeSetSchema,
   initiativeRollSchema,
   combatNextSchema,
+  combatReorderSchema,
   invGiveSchema,
   invAddSchema,
   invDropSchema,
