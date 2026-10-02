@@ -598,6 +598,16 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
     await expect(dialog).toBeVisible();
 
+    // Filtrage strict : les PNJ ne sont PAS dans Personnages.
+    await dialog.getByRole("tab", { name: /Personnages/ }).click();
+    await expect(dialog.locator('.asset-card[data-kind="pnj"]')).toHaveCount(0);
+    await expect(dialog.locator('.asset-card[data-kind="pj"]')).toHaveCount(2);
+    await dialog.getByRole("tab", { name: /PNJ/ }).click();
+    await expect(
+      dialog.locator('.asset-card[data-kind="pnj"]', { hasText: "Gobelin" }),
+    ).toHaveCount(1);
+    await dialog.getByRole("tab", { name: /Cartes/ }).click();
+
     // Recherche : seule « Carte quadrillée » reste.
     const search = dialog.getByLabel("Rechercher dans la bibliothèque");
     await search.fill("quadr");
@@ -625,7 +635,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole("tab", { name: /PNJ/ }).click();
 
-    const card = dialog.locator(".asset-card", { hasText: "Gobelin" });
+    const card = dialog.locator('.asset-card[data-kind="template"]', { hasText: "Gobelin" });
     await expect(card).toBeVisible();
     await card.getByRole("button", { name: "Plus" }).click();
     await expect(card.locator(".asset-qty-n")).toHaveText("×2");
@@ -642,9 +652,11 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await page.getByRole("button", { name: "Bibliothèque" }).click();
     await expect(dialog).toBeVisible();
     await dialog.getByRole("tab", { name: /PNJ/ }).click();
-    await dialog.locator(".asset-card", { hasText: "Gobelin" }).click({ button: "right" });
+    await dialog
+      .locator('.asset-card[data-kind="template"]', { hasText: "Gobelin" })
+      .click({ button: "right" });
     await page.getByRole("menuitem", { name: "Supprimer le modèle" }).click();
-    await expect(dialog.locator(".asset-card", { hasText: "Gobelin" })).toHaveCount(0);
+    await expect(dialog.locator('.asset-card[data-kind="template"]')).toHaveCount(0);
   });
 
   test("le tableau de bord MJ liste les PNJ de la scène et garde les notes de carte", async ({

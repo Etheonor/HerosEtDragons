@@ -1,10 +1,16 @@
 /**
  * Asset manager (lot 5.4) : overlay à trois onglets — Cartes, PNJ, Personnages.
  *
+ * Filtrage strict : l'onglet **Personnages** ne contient que les PJ ; l'onglet
+ * **PNJ** contient les PNJ de la campagne **et** les modèles réutilisables
+ * (deux sections).
+ *
  * - grille de vignettes + recherche texte simple ;
- * - **double-clic = poser** (carte : l'afficher ; PNJ : armer la pose ×N ;
- *   personnage : le poser sur la carte active) ;
- * - badge `− ×N +` sur les modèles PNJ ;
+ * - **double-clic = poser** (carte : l'afficher ; modèle PNJ : armer la pose
+ *   ×N ; personnage : le poser sur la carte active, ou le recentrer s'il y
+ *   est déjà) ;
+ * - badge `− ×N +` sur les modèles, badge « sur la carte » sur les personnages
+ *   présents sur la carte active ;
  * - **clic droit délégué au menu unique de la page** : ce composant ne rend
  *   jamais de menu, il décrit la cible.
  *
@@ -28,6 +34,8 @@
     maps: MapSummary[];
     activeMapId: string | null;
     characters: CharacterCard[];
+    /** Ids des personnages ayant un pion sur la carte active. */
+    tokenCharIds: string[];
     isMj: boolean;
     /** Incrémenté par la page après suppression d'un modèle → rechargement. */
     templatesRevision: number;
@@ -44,6 +52,7 @@
     maps,
     activeMapId,
     characters,
+    tokenCharIds,
     isMj,
     templatesRevision,
     onPickMap,
@@ -89,21 +98,31 @@
     return q === '' || name.toLowerCase().includes(q);
   }
 
+  const pjChars = $derived(characters.filter((c) => c.kind === 'pj'));
+  const pnjChars = $derived(characters.filter((c) => c.kind === 'pnj'));
+
   const filteredMaps = $derived(maps.filter((m) => matches(m.name)));
   const filteredTemplates = $derived(templates.filter((t) => matches(t.name)));
-  const filteredChars = $derived(characters.filter((c) => matches(c.name)));
+  const filteredPj = $derived(pjChars.filter((c) => matches(c.name)));
+  const filteredPnj = $derived(pnjChars.filter((c) => matches(c.name)));
 
   function placeChar(charId: string) {
     onPlaceChar(charId);
     onOpenChange(false);
   }
 
+  function armTemplate(t: NpcTemplate) {
+    onPlaceTemplate(t, countOf(t.id));
+    onOpenChange(false);
+  }
+
+  const pnjCount = $derived(templates.length + pnjChars.length);
   const filteredCount = $derived(
     tab === 'maps'
       ? filteredMaps.length
       : tab === 'npcs'
-        ? filteredTemplates.length
-        : filteredChars.length,
+        ? filteredTemplates.length + filteredPnj.length
+        : filteredPj.length,
   );
 </script>
 
@@ -140,7 +159,7 @@
           role="tab"
           aria-selected={tab === 'npcs'}
           onclick={() => (tab = 'npcs')}
-          disabled={!isMj}>PNJ <span class="asset-count">{templates.length}</span></button
+          disabled={!isMj}>PNJ <span class="asset-count">{pnjCount}</span></button
         >
         <button
           class="asset-tab"
@@ -148,11 +167,94 @@
           role="tab"
           aria-selected={tab === 'chars'}
           onclick={() => (tab = 'chars')}
-          >Personnages <span class="asset-count">{characters.length}</span></button
+          >Personnages <span class="asset-count">{pjChars.length}</span></button
         >
       </div>
 
       <div class="asset-body scroll-area">
+        {#snippet templateCard(t: NpcTemplate)}
+          <div
+            class="asset-card"
+            data-kind="template"
+            role="button"
+            tabindex="0"
+            title="Double-clic : armer la pose de {countOf(t.id)} × {t.name}"
+            ondblclick={() => armTemplate(t)}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') armTemplate(t);
+            }}
+            oncontextmenu={(e) =>
+              onContextMenu(e, {
+                kind: 'asset-template',
+                templateId: t.id,
+                name: t.name,
+                count: countOf(t.id),
+              })}
+          >
+            <span class="asset-thumb">
+              <span class="asset-initial" style="--token-color: {t.color};">
+                {t.name.slice(0, 1).toUpperCase()}
+              </span>
+            </span>
+            <span class="asset-name">{t.name}</span>
+            <span class="asset-stats">CA {t.ca} · PV {t.pvMax}</span>
+            <span class="asset-qty" aria-label="Quantité à poser">
+              <button
+                type="button"
+                aria-label="Moins"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  bump(t.id, -1);
+                }}>−</button
+              >
+              <span class="asset-qty-n">×{countOf(t.id)}</span>
+              <button
+                type="button"
+                aria-label="Plus"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  bump(t.id, 1);
+                }}>+</button
+              >
+            </span>
+          </div>
+        {/snippet}
+
+        {#snippet charCard(c: CharacterCard)}
+          <div
+            class="asset-card"
+            data-kind={c.kind}
+            class:on-map={tokenCharIds.includes(c.id)}
+            role="button"
+            tabindex="0"
+            title={isMj ? 'Double-clic : poser sur la carte' : c.name}
+            ondblclick={() => {
+              if (isMj) placeChar(c.id);
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' && isMj) placeChar(c.id);
+            }}
+            oncontextmenu={(e) => onContextMenu(e, { kind: 'asset-char', charId: c.id })}
+          >
+            <span class="asset-thumb">
+              {#if portraitUrl(c.portrait)}
+                <img src={portraitUrl(c.portrait)} alt="" draggable="false" />
+              {:else}
+                <span class="asset-initial" style="--token-color: {c.color};">
+                  {c.name.slice(0, 1).toUpperCase()}
+                </span>
+              {/if}
+            </span>
+            <span class="asset-name">{c.name}</span>
+            <span class="asset-stats">
+              {c.kind === 'pj' ? 'PJ' : 'PNJ'} · CA {c.ca}
+              {#if c.pv !== null && c.pvMax !== null}· PV {c.pv}/{c.pvMax}{/if}
+            </span>
+            {#if c.sub}<span class="asset-sub">{c.sub}</span>{/if}
+            {#if tokenCharIds.includes(c.id)}<span class="asset-badge">sur la carte</span>{/if}
+          </div>
+        {/snippet}
+
         {#if tab === 'maps'}
           {#if filteredMaps.length === 0}
             <p class="asset-empty">Aucune carte.</p>
@@ -161,6 +263,7 @@
               {#each filteredMaps as m (m.id)}
                 <div
                   class="asset-card"
+                  data-kind="map"
                   class:on-map={m.id === activeMapId}
                   role="button"
                   tabindex="0"
@@ -191,99 +294,38 @@
             </div>
           {/if}
         {:else if tab === 'npcs'}
-          {#if filteredTemplates.length === 0}
-            <p class="asset-empty">Aucun modèle — « Enregistrer comme modèle » dans la Compagnie.</p>
+          {#if filteredTemplates.length === 0 && filteredPnj.length === 0}
+            <p class="asset-empty">
+              Aucun PNJ — créez-en sur la carte, ou « Enregistrer comme modèle » dans la Compagnie.
+            </p>
           {:else}
-            <div class="asset-grid">
-              {#each filteredTemplates as t (t.id)}
-                <div
-                  class="asset-card"
-                  role="button"
-                  tabindex="0"
-                  title="Double-clic : armer la pose de {countOf(t.id)} × {t.name}"
-                  ondblclick={() => {
-                    onPlaceTemplate(t, countOf(t.id));
-                    onOpenChange(false);
-                  }}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') {
-                      onPlaceTemplate(t, countOf(t.id));
-                      onOpenChange(false);
-                    }
-                  }}
-                  oncontextmenu={(e) =>
-                    onContextMenu(e, {
-                      kind: 'asset-template',
-                      templateId: t.id,
-                      name: t.name,
-                      count: countOf(t.id),
-                    })}
-                >
-                  <span class="asset-thumb">
-                    <span
-                      class="asset-initial"
-                      style="--token-color: {t.color};">{t.name.slice(0, 1).toUpperCase()}</span
-                    >
-                  </span>
-                  <span class="asset-name">{t.name}</span>
-                  <span class="asset-stats">CA {t.ca} · PV {t.pvMax}</span>
-                  <span class="asset-qty" aria-label="Quantité à poser">
-                    <button
-                      type="button"
-                      aria-label="Moins"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        bump(t.id, -1);
-                      }}>−</button
-                    >
-                    <span class="asset-qty-n">×{countOf(t.id)}</span>
-                    <button
-                      type="button"
-                      aria-label="Plus"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        bump(t.id, 1);
-                      }}>+</button
-                    >
-                  </span>
-                </div>
-              {/each}
-            </div>
+            {#if filteredTemplates.length > 0}
+              <h4 class="asset-section">
+                Modèles réutilisables <span class="asset-count">{templates.length}</span>
+              </h4>
+              <div class="asset-grid">
+                {#each filteredTemplates as t (t.id)}
+                  {@render templateCard(t)}
+                {/each}
+              </div>
+            {/if}
+            {#if filteredPnj.length > 0}
+              <h4 class="asset-section">
+                PNJ de la campagne <span class="asset-count">{pnjChars.length}</span>
+              </h4>
+              <div class="asset-grid">
+                {#each filteredPnj as c (c.id)}
+                  {@render charCard(c)}
+                {/each}
+              </div>
+            {/if}
           {/if}
-        {:else if filteredChars.length === 0}
-          <p class="asset-empty">Aucun personnage.</p>
+        {:else if filteredPj.length === 0}
+          <p class="asset-empty">Aucun personnage joueur.</p>
         {:else}
           <div class="asset-grid">
-            {#each filteredChars as c (c.id)}
-              <div
-                class="asset-card"
-                role="button"
-                tabindex="0"
-                title={isMj ? 'Double-clic : poser sur la carte' : c.name}
-                ondblclick={() => {
-                  if (isMj) placeChar(c.id);
-                }}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' && isMj) placeChar(c.id);
-                }}
-                oncontextmenu={(e) => onContextMenu(e, { kind: 'asset-char', charId: c.id })}
-              >
-                <span class="asset-thumb">
-                  {#if portraitUrl(c.portrait)}
-                    <img src={portraitUrl(c.portrait)} alt="" draggable="false" />
-                  {:else}
-                    <span class="asset-initial" style="--token-color: {c.color};">
-                      {c.name.slice(0, 1).toUpperCase()}
-                    </span>
-                  {/if}
-                </span>
-                <span class="asset-name">{c.name}</span>
-                <span class="asset-stats">
-                  {c.kind === 'pj' ? 'PJ' : 'PNJ'} · CA {c.ca}
-                  {#if c.pv !== null && c.pvMax !== null}· PV {c.pv}/{c.pvMax}{/if}
-                </span>
-                {#if c.sub}<span class="asset-sub">{c.sub}</span>{/if}
-              </div>
+            {#each filteredPj as c (c.id)}
+              {@render charCard(c)}
             {/each}
           </div>
         {/if}
@@ -373,6 +415,19 @@
   }
   .asset-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
   .asset-empty { color: var(--text-3); font-style: italic; font-size: 13px; margin: 8px 0; }
+  .asset-section {
+    margin: 4px 0 10px;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .asset-section + .asset-grid { margin-bottom: 18px; }
   .asset-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));

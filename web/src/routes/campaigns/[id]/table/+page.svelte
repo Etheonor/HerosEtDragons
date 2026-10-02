@@ -2630,6 +2630,7 @@
       {maps}
       activeMapId={store.state.mapId}
       characters={store.characters}
+      tokenCharIds={Object.keys(store.state.tokens)}
       {isMj}
       {templatesRevision}
       onPickMap={selectMap}

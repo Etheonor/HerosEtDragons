@@ -116,6 +116,8 @@ app.post("/seed", async (c) => {
           notInArray(schema.maps.id, ["map-image", "map-grid"]),
         ),
       );
+    // Et pour les modèles PNJ enregistrés par les tests.
+    await db.delete(schema.npcTemplates).where(eq(schema.npcTemplates.campaignId, campaign.id));
   }
 
   for (const u of [{ id: mj.id, name: mj.name }, ...players]) {
