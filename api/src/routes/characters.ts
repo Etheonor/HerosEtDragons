@@ -64,6 +64,7 @@ app.get(
   requireMemberOf((c) => c.req.param("campaignId")),
   async (c) => {
     const campaignId = c.get("membership")!.campaignId;
+    const isMj = c.get("memberRole") === "mj";
     const db = createDb(c.env.DB);
 
     const chars = await db
@@ -71,25 +72,29 @@ app.get(
       .from(schema.characters)
       .where(eq(schema.characters.campaignId, campaignId));
 
+    // B5 : un joueur ne voit jamais un PNJ par la voie REST (le temps réel est
+    // déjà filtré par le DO).
     return c.json<{ characters: CharacterSummary[] }>({
-      characters: chars.map((ch) => ({
-        id: ch.id,
-        name: ch.name,
-        kind: ch.kind,
-        ownerId: ch.ownerId,
-        color: ch.color,
-        active: ch.active,
-        ca: ch.sheet.ca,
-        sub:
-          ch.kind === "pj"
-            ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
-            : "",
-        initiativeBonus: ch.sheet.initiativeBonus,
-        pv: ch.pv,
-        pvMax: ch.pvMax,
-        pvTemp: ch.pvTemp,
-        conditions: ch.conditions,
-      })),
+      characters: chars
+        .filter((ch) => isMj || ch.kind !== "pnj")
+        .map((ch) => ({
+          id: ch.id,
+          name: ch.name,
+          kind: ch.kind,
+          ownerId: ch.ownerId,
+          color: ch.color,
+          active: ch.active,
+          ca: ch.sheet.ca,
+          sub:
+            ch.kind === "pj"
+              ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
+              : "",
+          initiativeBonus: ch.sheet.initiativeBonus,
+          pv: ch.pv,
+          pvMax: ch.pvMax,
+          pvTemp: ch.pvTemp,
+          conditions: ch.conditions,
+        })),
     });
   },
 );
@@ -102,6 +107,9 @@ app.get("/:charId", requireAuth, memberOfChar, async (c) => {
 
   const isOwner = char.ownerId === userId;
   const isMj = c.get("memberRole") === "mj";
+  if (char.kind === "pnj" && !isMj) {
+    return c.json({ error: "Fiche de PNJ réservée au MJ" }, 403);
+  }
   const canEdit = isOwner || isMj;
 
   return c.json<CharacterDetail>({

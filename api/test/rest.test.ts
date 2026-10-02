@@ -91,6 +91,22 @@ async function seedWorld() {
       conditions: [],
     })
     .onConflictDoNothing();
+  await d
+    .insert(schema.characters)
+    .values({
+      id: "rest-pj",
+      campaignId: CAMPAIGN,
+      ownerId: OTHER,
+      kind: "pj",
+      name: "Héros",
+      color: "#111",
+      sheet: createSheet({ identite: { nom: "Héros" } }),
+      pv: 10,
+      pvMax: 10,
+      pvTemp: 0,
+      conditions: [],
+    })
+    .onConflictDoNothing();
   return d;
 }
 
@@ -269,6 +285,34 @@ describe("REST — en-têtes de sécurité et garde-fou JSON (S3/N3)", () => {
     const huge = "x".repeat(300_000);
     const r = await patch(`/api/characters/rest-pnj/sheet`, { identite: { nom: huge } }, MISTRESS);
     expect(r.status).toBe(413);
+  });
+});
+
+describe("REST — feuilles de PNJ réservées au MJ (B5 étendu)", () => {
+  beforeEach(async () => {
+    await seedWorld();
+  });
+
+  it("un joueur reçoit 403 sur le détail d'un PNJ, le MJ le lit", async () => {
+    expect((await get("/api/characters/rest-pnj", OTHER)).status).toBe(403);
+    expect((await get("/api/characters/rest-pnj", MISTRESS)).status).toBe(200);
+  });
+
+  it("un joueur lit toujours la fiche d'un PJ (la sienne ou celle d'un autre)", async () => {
+    expect((await get("/api/characters/rest-pj", OTHER)).status).toBe(200);
+    expect((await get("/api/characters/rest-pj", MISTRESS)).status).toBe(200);
+  });
+
+  it("la liste d'une campagne masque les PNJ aux joueurs, pas au MJ", async () => {
+    const asPlayer = (await (await get(`/api/characters/campaigns/${CAMPAIGN}`, OTHER)).json()) as {
+      characters: { id: string }[];
+    };
+    expect(asPlayer.characters.map((c) => c.id)).toEqual(["rest-pj"]);
+
+    const asMj = (await (await get(`/api/characters/campaigns/${CAMPAIGN}`, MISTRESS)).json()) as {
+      characters: { id: string }[];
+    };
+    expect(asMj.characters.map((c) => c.id).sort()).toEqual(["rest-pj", "rest-pnj"]);
   });
 });
 
