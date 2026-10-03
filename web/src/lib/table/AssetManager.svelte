@@ -206,8 +206,7 @@
             oncontextmenu={(e) =>
               onContextMenu(e, {
                 kind: 'asset-template',
-                templateId: t.id,
-                name: t.name,
+                template: t,
                 count: countOf(t.id),
               })}
           >

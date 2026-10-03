@@ -667,6 +667,38 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(dialog.locator('.asset-card[data-kind="template"]')).toHaveCount(0);
   });
 
+  test("bibliothèque : modifier un modèle PNJ (nom, PV, CA)", async ({ page }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+    await placeFromLibrary(page, "PNJ", "Gobelin");
+    await page.locator(".gf", { hasText: "Gobelin" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Enregistrer comme modèle" }).click();
+
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /PNJ/ }).click();
+    await dialog
+      .locator('.asset-card[data-kind="template"]', { hasText: "Gobelin" })
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Modifier…" }).click();
+
+    const edit = page.getByRole("dialog", { name: "Modifier le modèle" });
+    await expect(edit).toBeVisible();
+    await edit.getByLabel("Nom").fill("Chef de meute");
+    await edit.getByLabel("PV max").fill("14");
+    await edit.getByLabel("CA").fill("16");
+    await edit.getByRole("button", { name: "Enregistrer" }).click();
+
+    const card = dialog.locator('.asset-card[data-kind="template"]', { hasText: "Chef de meute" });
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText("CA 16 · PV 14");
+
+    // Nettoyage : le test ×N suivant chercherait aussi « Gobelin ».
+    await card.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Supprimer le modèle" }).click();
+    await expect(dialog.locator('.asset-card[data-kind="template"]')).toHaveCount(0);
+  });
+
   test("bibliothèque : upload d'une carte et renommage par le menu", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Bibliothèque" }).click();

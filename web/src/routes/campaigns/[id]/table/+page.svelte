@@ -9,7 +9,7 @@
     DICE_REVEAL_MS,
     DICE_ROTATE_MS,
   } from '$lib/ws.svelte';
-  import { api, type MapSummary } from '$lib/api';
+  import { api, type MapSummary, type NpcTemplate } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
   import type {
     CharacterCard,
@@ -56,6 +56,7 @@
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import NpcTemplateDialog from '$lib/table/NpcTemplateDialog.svelte';
 
   let { params } = $props();
   let campaignId = params.id;
@@ -257,6 +258,7 @@
     danger?: boolean;
     onConfirm: () => void;
   } | null>(null);
+  let editTemplate = $state<NpcTemplate | null>(null);
   let toolbarWidth = $state(1280);
 
   function onToolbarResize(node: HTMLElement) {
@@ -1513,7 +1515,9 @@
     if (panning) return;
     if (e.pointerType === 'mouse' && PAN_BUTTONS.has(e.button)) {
       if (e.button === 2 && isOnToken(e)) return;
-      e.preventDefault();
+      // Pas de preventDefault sur le clic droit : sous Chromium il annule le
+      // `contextmenu` (un pan referme déjà le menu via `panMovedAt`).
+      if (e.button !== 2) e.preventDefault();
       panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: e.button };
       skipNextClick = true;
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -1929,14 +1933,20 @@
       return items;
     }
     if (t.kind === 'asset-template') {
+      const tpl = t.template;
       const items: ContextMenuItem[] = [
         {
           id: 'spawn',
           label: `Poser ×${t.count}`,
           onSelect: () => {
-            armTemplate(t.templateId, t.name, t.count);
+            armTemplate(tpl.id, tpl.name, t.count);
             assetManagerOpen = false;
           },
+        },
+        {
+          id: 'edit',
+          label: 'Modifier…',
+          onSelect: () => (editTemplate = tpl),
         },
       ];
       if (isMj) {
@@ -1945,7 +1955,7 @@
           label: 'Supprimer le modèle',
           danger: true,
           separatorBefore: true,
-          onSelect: () => void deleteTemplate(t.templateId),
+          onSelect: () => void deleteTemplate(tpl.id),
         });
       }
       return items;
@@ -3611,6 +3621,21 @@
         if (!o) confirmState = null;
       }}
       onConfirm={() => confirmState?.onConfirm()}
+    />
+  {/if}
+
+  {#if editTemplate}
+    <NpcTemplateDialog
+      open={true}
+      template={editTemplate}
+      onOpenChange={(o) => {
+        if (!o) editTemplate = null;
+      }}
+      onSaved={() => {
+        editTemplate = null;
+        templatesRevision += 1;
+        showToast('Modèle enregistré', 'success');
+      }}
     />
   {/if}
 

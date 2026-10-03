@@ -175,8 +175,9 @@ TopActions, DiceButton, fenêtres, HUD de zoom, historique, flèches d'initiativ
 et outils de la barre. Les panneaux **`MapManager` et `NpcLibrary` sont
 supprimés** : la bibliothèque (asset manager) fait tout — grille et couleur de
 la carte en clic droit, suppression avec confirmation, import qui affiche la
-carte. Les **repères** se posent sans sous-menu : clic sur la carte → nom au
-placement, double-clic ou clic droit pour renommer. L'**initiative est passée en
+carte — et les **modèles de PNJ s'éditent** (nom, PV, CA, init) par le clic
+droit dans l'onglet PNJ. Les **repères** se posent sans sous-menu : clic sur la
+carte → nom au placement, double-clic ou clic droit pour renommer. L'**initiative est passée en
 `<Panel>`** comme Séance :
 déplaçable, redimensionnable, réduisible, position persistée, fermable — et
 rouverte automatiquement à l'entrée en combat.

@@ -69,9 +69,10 @@ export async function selectMap(page: Page, name: string) {
   const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
   await dialog.getByRole("tab", { name: /Cartes/ }).click();
   await dialog.locator(".asset-card", { hasText: name }).first().dblclick();
-  // Attendre le démontage complet du portal (contenu ET scrim) : un clic
-  // immédiat tomberait sur le voile du dialogue.
+  // Attendre le démontage complet du portal (contenu ET scrim) et la fin du
+  // verrou bits-ui : un clic droit immédiat serait sinon avalé.
   await expect(dialog).toHaveCount(0);
   await expect(page.locator(".asset-scrim")).toHaveCount(0);
+  await expect(page.locator("body")).not.toHaveCSS("pointer-events", "none");
   await expect(page.locator(".map-frame")).toHaveAttribute("data-map", name);
 }
