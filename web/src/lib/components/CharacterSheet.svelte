@@ -3,6 +3,7 @@
   import { getNextXpThreshold, type CaracKey } from '$lib/char-utils';
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
+  import { focusTrap } from '$lib/ds/focus-trap';
   import { api } from '$lib/api';
   import { showToast } from '$lib/toast.svelte';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
@@ -501,6 +502,7 @@
         role="dialog"
         aria-modal="true"
         aria-label="Choisir un portrait"
+        use:focusTrap
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (pickerOpen = false)}
       >

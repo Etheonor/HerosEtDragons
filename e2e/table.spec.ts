@@ -1223,6 +1223,32 @@ test.describe("Repères (Lot 8)", () => {
   });
 });
 
+test.describe("Accessibilité (Lot 8)", () => {
+  test("le journal est une région live", async ({ page }) => {
+    await openTable(page, MJ);
+    await expect(page.locator(".journal-list")).toHaveAttribute("role", "log");
+    await expect(page.locator(".journal-list")).toHaveAttribute("aria-live", "polite");
+  });
+
+  test("un pion est focusable, se déplace aux flèches et se cible à Entrée", async ({ page }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+    await placePjFromFrame(page, "Kaelith");
+
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await token.focus();
+    const before = (await token.boundingBox())!;
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => Math.abs((await token.boundingBox())!.x - before.x))
+      .toBeGreaterThan(20);
+
+    // Entrée = même action que le clic : cibler (MJ).
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".target")).toContainText("Kaelith");
+  });
+});
+
 test.describe("Toasts et squelettes (Lot 8)", () => {
   test("une erreur réseau s'affiche dans le toast global", async ({ page }) => {
     await seed(page.request);

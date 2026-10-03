@@ -5,6 +5,7 @@
   import { auth, type Session } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
   import Skeleton from '$lib/ds/Skeleton.svelte';
+  import { focusTrap } from '$lib/ds/focus-trap';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import EncreSelector from '$lib/ds/EncreSelector.svelte';
   import CharacterCreateModal from '$lib/components/CharacterCreateModal.svelte';
@@ -252,6 +253,7 @@
         class="modal surface-overlay surface-lg"
         role="dialog"
         aria-modal="true"
+        use:focusTrap
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (createOpen = false)}
       >

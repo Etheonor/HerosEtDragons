@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
+  import { focusTrap } from '$lib/ds/focus-trap';
   import {
     CLASSES,
     RACES,
@@ -299,7 +300,14 @@
 />
 
 <div class="overlay" role="presentation" onclick={onClose}>
-  <div class="modal surface-overlay surface-lg" role="dialog" aria-modal="true" aria-label="Créer un personnage" onclick={(e) => e.stopPropagation()}>
+  <div
+    class="modal surface-overlay surface-lg"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Créer un personnage"
+    use:focusTrap
+    onclick={(e) => e.stopPropagation()}
+  >
     <div class="head">
       <div>
         <div class="title">Nouveau personnage</div>

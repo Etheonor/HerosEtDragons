@@ -1433,6 +1433,37 @@
     sendWs({ type: 'target.set', charId: store.state.target === charId ? null : charId });
   }
 
+  /** Clavier sur un pion : flèches = déplacer d'une case (Maj : 5), Entrée =
+   *  même action que le clic (cibler / recentrer). */
+  function tokenKeydown(charId: string, e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      tokenClick(charId);
+      return;
+    }
+    if (!canMoveToken(charId)) return;
+    const t = store.state.tokens[charId];
+    if (!t) return;
+    const step = (e.shiftKey ? 5 : 1) * (activeGridSize ?? store.settings.tokenSize);
+    const { w, h } = surfaceSize;
+    if (!w || !h) return;
+    let x = t.x;
+    let y = t.y;
+    if (e.key === 'ArrowLeft') x -= (step / w) * 100;
+    else if (e.key === 'ArrowRight') x += (step / w) * 100;
+    else if (e.key === 'ArrowUp') y -= (step / h) * 100;
+    else if (e.key === 'ArrowDown') y += (step / h) * 100;
+    else return;
+    e.preventDefault();
+    sendWs({
+      type: 'token.move',
+      tokenId: charId,
+      x: Math.min(98, Math.max(2, x)),
+      y: Math.min(97, Math.max(3, y)),
+      begin: true,
+    });
+  }
+
   function markerPointerDown(id: string, e: PointerEvent) {
     if (!isMj) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -2704,15 +2735,18 @@
                 {@const hpState = hpPct === null ? null : hpPct >= 70 ? 'ok' : hpPct >= 30 ? 'mid' : 'low'}
                 {@const ini = initiativeScore(c.id)}
                 {@const down = c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div
                   class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
                   class:token-dead={hpPct !== null && hpPct <= 0}
                   class:token-down={down}
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
+                  role="button"
+                  tabindex="0"
+                  aria-label={tokenTitle(c)}
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
                   onclick={() => tokenClick(c.id)}
+                  onkeydown={(e) => tokenKeydown(c.id, e)}
                   onpointermove={(e) => onTokenHover(c.id, e)}
                   onpointerleave={() => {
                     if (preview) preview = null;
@@ -3280,7 +3314,15 @@
       class="journal-panel"
     >
         <div class="journal-tab">
-          <div class="journal-list scroll-area" bind:this={journalEl} onscroll={onJournalScroll} use:scrollArea>
+          <div
+            class="journal-list scroll-area"
+            role="log"
+            aria-live="polite"
+            aria-label="Journal de la séance"
+            bind:this={journalEl}
+            onscroll={onJournalScroll}
+            use:scrollArea
+          >
             {#if hasMoreOlder}
               <button class="older-btn" disabled={loadingOlder} onclick={loadOlder}>
                 {loadingOlder ? '…' : 'Entrées antérieures'}
