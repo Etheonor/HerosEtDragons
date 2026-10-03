@@ -143,7 +143,7 @@
   <Dialog.Portal>
     <Dialog.Overlay class="asset-scrim" />
     <Dialog.Content
-      {...surfaceProps('overlay', 'asset-manager')}
+      {...surfaceProps('overlay', 'surface-opaque asset-manager')}
       aria-label="Bibliothèque de la campagne"
     >
       <div class="asset-head">

@@ -8,7 +8,10 @@ const OUT = process.env.SHOT_OUT || "/tmp";
   const W = Number(process.env.SHOT_W || 1920);
   const H = Number(process.env.SHOT_H || 1080);
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: W, height: H } });
+  const page = await browser.newPage({
+    viewport: { width: W, height: H },
+    deviceScaleFactor: Number(process.env.SHOT_DSF || 1),
+  });
   await page.request.post(`${URL}/api/dev/seed`, { data: { reset: true } });
   await page.request.post(`${URL}/api/dev/login`, { data: { user: USER } });
 
@@ -160,6 +163,21 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     }
     await page.screenshot({ path: `${OUT}/fog-lasso.png` });
     await page.mouse.up();
+
+    // Zoom ×~1,9 : les trous doivent rester alignés (canvas à résolution fixe).
+    p = at(50, 50);
+    await page.mouse.move(p.x, p.y);
+    for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -30);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${OUT}/fog-zoomed.png` });
+  }
+
+  if (process.env.SHOT_COMPENDIUM) {
+    await page.getByRole("button", { name: "Command palette (Espace)" }).click();
+    await page.locator(".palette-item", { hasText: "Ouvrir le compendium" }).click();
+    await page.locator(".comp .list .row").first().waitFor();
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${OUT}/compendium.png` });
   }
 
   if (process.env.SHOT_TIP) {

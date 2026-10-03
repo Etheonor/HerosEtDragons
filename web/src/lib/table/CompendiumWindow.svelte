@@ -19,7 +19,10 @@
 <Dialog.Root {open} {onOpenChange}>
   <Dialog.Portal>
     <Dialog.Overlay class="compendium-scrim" />
-    <Dialog.Content {...surfaceProps('overlay', 'compendium-window')} aria-label="Compendium">
+    <Dialog.Content
+      {...surfaceProps('overlay', 'surface-opaque compendium-window')}
+      aria-label="Compendium"
+    >
       <CompendiumView campaign={campaignId} {deep} onClose={() => onOpenChange(false)} />
     </Dialog.Content>
   </Dialog.Portal>

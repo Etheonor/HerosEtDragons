@@ -876,7 +876,6 @@
   let pendingPose = $state<CameraPose | null>(null);
 
   const camera = createCamera(() => {
-    scheduleFogRedraw();
     scheduleCameraSave();
   });
 
@@ -1750,7 +1749,6 @@
     if (!panning || (e && panning.id !== e.pointerId)) return;
     panning = null;
     skipNextClick = false;
-    scheduleFogRedraw();
   }
 
   // Filet de sécurité : si le pointeur est relâché hors du cadre (ou si le
@@ -1849,7 +1847,6 @@
   let fogDrawnMapId: string | null = null;
   let fogDrawnCount = 0;
   let fogScale = 1;
-  let fogScaleTimer: ReturnType<typeof setTimeout> | null = null;
   let fogCursor = $state<{ x: number; y: number } | null>(null);
 
   /** Rayon de la brosse, en px de surface (identique au trou découpé). */
@@ -1868,16 +1865,6 @@
       x: (e.clientX - r.left - camera.panX) / z - sx,
       y: (e.clientY - r.top - camera.panY) / z - sy,
     };
-  }
-
-  /** Repeint le brouillard à la nouvelle résolution (le zoom change l'échelle
-   *  de la backing store). Regroupé pour ne pas redessiner à chaque molette. */
-  function scheduleFogRedraw() {
-    if (fogScaleTimer) clearTimeout(fogScaleTimer);
-    fogScaleTimer = setTimeout(() => {
-      fogScaleTimer = null;
-      drawFog();
-    }, 140);
   }
 
   function cutFogHole(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
@@ -1929,10 +1916,14 @@
     // décalerait tous les trous de brouillard.
     const w = Math.max(2, mapContainer.offsetWidth);
     const h = Math.max(2, mapContainer.offsetHeight);
+    // Résolution FIXE (dpr, plafonnée à 2) : le canvas est déjà mis à
+    // l'échelle par la transformation de la caméra. Le suivre à chaque zoom
+    // imposait un redraw complet (~30 ms à 4 Mpx, plein de hitches) pour un
+    // voile quasi uni — seuls les bords des trous, déjà doux, perdent en
+    // netteté au-delà de ×2.
     const dpr = globalThis.devicePixelRatio || 1;
-    const nextScale = Math.min(3, Math.max(1, camera.zoom * dpr));
-    const scaleChanged = Math.abs(nextScale - fogScale) > 0.01;
-    fogScale = nextScale;
+    const scaleChanged = Math.abs(Math.min(2, Math.max(1, dpr)) - fogScale) > 0.01;
+    fogScale = Math.min(2, Math.max(1, dpr));
     const bw = Math.round(w * fogScale);
     const bh = Math.round(h * fogScale);
     const resized = fogCanvas.width !== bw || fogCanvas.height !== bh;

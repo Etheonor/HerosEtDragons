@@ -23,7 +23,10 @@
 <Dialog.Root {open} {onOpenChange}>
   <Dialog.Portal>
     <Dialog.Overlay class="help-scrim" />
-    <Dialog.Content class="{surfaceClass('overlay', 'help')} surface-lg" aria-label="Aide clavier">
+    <Dialog.Content
+      class="{surfaceClass('overlay', 'surface-opaque help')} surface-lg"
+      aria-label="Aide clavier"
+    >
       <div class="help-head">
         <span class="help-title">Aide clavier</span>
         <CloseButton label="Fermer l'aide" onclick={() => onOpenChange(false)} />

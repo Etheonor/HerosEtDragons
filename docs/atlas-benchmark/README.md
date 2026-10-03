@@ -200,6 +200,16 @@ contraste de `--text-3` relevé à 4,6:1. **8.7** — tutoriel MJ en 4 étapes
 pointillé pendant le geste, formes rasterisées côté client en un seul message
 `fog.revealArea` (un patch, un pas d'undo).
 
+**Passe perf** (mesurée au harnais `scripts/_perf-session.cjs` : rAF, long
+tasks, long animation frames, métriques CDP et traces, à dpr 2) : le brouillard
+ne suit plus le zoom (résolution fixe `dpr ≤ 2` — un redraw complet d'environ
+30 ms à 4 Mpx était déclenché à chaque palier : zoom désormais 60 fps stable,
+canvas plus léger) ; les grandes fenêtres à défilement interne (compendium,
+bibliothèque, aide) passent en surface **opaque** (`.surface-opaque`) car le
+`backdrop-filter` d'une fenêtre de 1 440 × 900 est recalculé à chaque frame de
+scroll : **42,6 → 60 fps, zéro frame ratée**. Menus, tooltips et petites boîtes
+gardent leur blur.
+
 ---
 
 ## 1. Le verdict en une page

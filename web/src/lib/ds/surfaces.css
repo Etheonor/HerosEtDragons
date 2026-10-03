@@ -28,6 +28,16 @@
   box-shadow: var(--shadow-overlay);
 }
 
+/* Grandes fenêtres à défilement INTERNE : le backdrop-filter est recalculé à
+   chaque frame de scroll (blur sur ~1,3 Mpx → 43 fps mesurés, 60 sans). Le
+   token de fond est déjà opaque à 92 % : on le rend opaque, le rendu change à
+   peine et le scroll repasse à 60 fps. Garder le blur pour les surfaces
+   compactes et transitoires (menus, tooltips, petites boîtes). */
+.surface-overlay.surface-opaque {
+  background: var(--surface-overlay);
+  backdrop-filter: none;
+}
+
 /* Modales et fenêtres flottantes : un cran au-dessus dans l'échelle. */
 .surface-lg {
   border-radius: var(--radius-lg);
