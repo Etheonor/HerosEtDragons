@@ -27,6 +27,8 @@ export interface TableState {
   pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. */
+  target: string | null;
 }
 
 export interface PresenceUser {
@@ -90,6 +92,7 @@ export const tableStore = $state<TableStore>({
     pins: [],
     fog: {},
     combat: null,
+    target: null,
   },
   characters: [],
   settings: DEFAULT_SETTINGS,
@@ -125,6 +128,7 @@ export function resetTableStore() {
     pins: [],
     fog: {},
     combat: null,
+    target: null,
   };
   tableStore.characters = [];
   tableStore.settings = DEFAULT_SETTINGS;
@@ -228,6 +232,7 @@ function handleMessage(msg: Record<string, unknown>) {
       if (patch.mode) tableStore.state.mode = patch.mode as "exploration" | "combat";
       if (patch.combat !== undefined)
         tableStore.state.combat = patch.combat as TableStore["state"]["combat"];
+      if (patch.target !== undefined) tableStore.state.target = patch.target as string | null;
       if (patch.tokens) {
         // Un patch contenant mapId est un CHANGEMENT DE CARTE : on remplace la
         // vue par celle de la nouvelle carte (le serveur envoie le dict complet).

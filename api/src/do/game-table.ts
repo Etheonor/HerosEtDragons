@@ -74,6 +74,8 @@ interface LiveState {
   pinsByMap: Record<string, MapPin[]>;
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
+  target: string | null;
 }
 
 const MAX_CHAT_LENGTH = 2000;
@@ -168,6 +170,7 @@ type InvGiveMsg = Extract<ClientMessageInput, { type: "inv.give" }>;
 type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
 type CombatReorderMsg = Extract<ClientMessageInput, { type: "combat.reorder" }>;
+type TargetSetMsg = Extract<ClientMessageInput, { type: "target.set" }>;
 
 function defaultLiveState(): LiveState {
   return {
@@ -179,6 +182,7 @@ function defaultLiveState(): LiveState {
     pinsByMap: {},
     fog: {},
     combat: null,
+    target: null,
   };
 }
 
@@ -236,12 +240,14 @@ export class GameTableDO extends DurableObject<Env> {
     if (!stored) return defaultLiveState();
     const legacy = stored as unknown as Record<string, unknown>;
     if (legacy.tokensByMap && legacy.markersByMap) {
-      // v2 → v3 (liens) → v4 (notes épinglées) : champs apparus après coup.
-      if (!legacy.linksByMap || !legacy.pinsByMap) {
+      // v2 → v3 (liens) → v4 (notes épinglées) → v5 (cible) : champs apparus
+      // après coup.
+      if (!legacy.linksByMap || !legacy.pinsByMap || legacy.target === undefined) {
         return {
           ...stored,
           linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
           pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
+          target: (legacy.target as string | null) ?? null,
         };
       }
       return stored;
@@ -256,6 +262,7 @@ export class GameTableDO extends DurableObject<Env> {
       pinsByMap: {},
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
+      target: null,
     };
   }
 
@@ -1175,6 +1182,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "pin.remove":
           await this.handlePinRemove(attachment, m);
+          break;
+        case "target.set":
+          await this.handleTargetSet(attachment, m);
           break;
         case "fog.enable":
           await this.handleFogEnable(ws, attachment);
@@ -2551,6 +2561,17 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "delta", patch: { pins: next } });
   }
 
+  private async handleTargetSet(att: WsAttachment, msg: TargetSetMsg) {
+    if (att.role !== "mj") return;
+    const target = msg.charId;
+    if (target) {
+      const cards = await this.loadCharacterCards([target]);
+      if (!cards[target]) return;
+    }
+    await this.patchState({ target });
+    this.broadcastRoleAware({ target });
+  }
+
   // ── Handlers : brouillard ───────────────────────────────────────
 
   private async handleFogEnable(ws: WebSocket, att: WsAttachment) {
@@ -3122,6 +3143,15 @@ export class GameTableDO extends DurableObject<Env> {
       hasCombat && this.liveState
         ? this.filterCombatForPlayers(patch.combat as CombatState | null, this.liveState)
         : undefined;
+    // B5 : une cible non révélée (ou un clear) part à null chez les joueurs.
+    const hasTarget = patch.target !== undefined;
+    const playerTarget =
+      hasTarget &&
+      patch.target !== null &&
+      this.liveState &&
+      this.isCharVisibleToPlayers(patch.target as string, this.liveState)
+        ? patch.target
+        : null;
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
       const isMj = att?.role === "mj";
@@ -3132,6 +3162,7 @@ export class GameTableDO extends DurableObject<Env> {
           ...(playerTokens ? { tokens: playerTokens } : {}),
           ...(playerCharacters ? { characters: playerCharacters } : {}),
           ...(hasCombat ? { combat: playerCombat ?? null } : {}),
+          ...(hasTarget ? { target: playerTarget } : {}),
         };
       }
       try {
@@ -3229,6 +3260,11 @@ export class GameTableDO extends DurableObject<Env> {
     const tokens =
       role === "mj" ? rawTokens : (this.filterTokensForPlayers(rawTokens) as typeof rawTokens);
     const combat = role === "mj" ? state.combat : this.filterCombatForPlayers(state.combat, state);
+    // B5 : une cible non révélée pour les joueurs est invisible (comme le combat).
+    const target =
+      role === "mj" || (state.target && this.isCharVisibleToPlayers(state.target, state))
+        ? state.target
+        : null;
 
     await this.ensureLegacyJournalImport();
     const journalTail = await this.getJournalTail(50, role);
@@ -3251,6 +3287,7 @@ export class GameTableDO extends DurableObject<Env> {
         pins: this.pinsOf(state),
         fog: state.fog,
         combat,
+        target,
       },
       characters,
       settings: campaign?.settings ?? DEFAULT_SETTINGS,

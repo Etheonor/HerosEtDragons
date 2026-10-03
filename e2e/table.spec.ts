@@ -1076,3 +1076,48 @@ test.describe("Compendium par-dessus la table (Lot 7)", () => {
     expect(new URL(page.url()).pathname).toContain(`/campaigns/${CAMPAIGN}/table`);
   });
 });
+
+test.describe("Cible partagée (Lot 10)", () => {
+  test("le MJ cible un pion : le cadre apparaît chez tous, seul le MJ le ferme", async ({
+    page,
+    browser,
+  }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Placer sur la carte" })
+      .click();
+
+    const token = page.locator(".token", { hasText: "Kaelith" });
+    await token.click();
+    const frame = page.locator(".target");
+    await expect(frame).toContainText("Kaelith");
+    await expect(frame).toContainText("CA");
+
+    // Le joueur voit la même cible, sans bouton de fermeture.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    const frame2 = p2.locator(".target");
+    await expect(frame2).toContainText("Kaelith");
+    await expect(p2.getByRole("button", { name: "Retirer la cible" })).toHaveCount(0);
+
+    // Un joueur ne cible pas : cliquer un autre pion ne change pas la cible.
+    await p2.locator(".token", { hasText: "Kaelith" }).click();
+    await p2.waitForTimeout(200);
+    await expect(frame2).toContainText("Kaelith");
+
+    // Le MJ ferme : le cadre disparaît partout.
+    await frame.getByRole("button", { name: "Retirer la cible" }).click();
+    await expect(frame).toHaveCount(0);
+    await expect(frame2).toHaveCount(0);
+
+    // Re-clic sur le pion : la cible revient (toggle).
+    await token.click();
+    await expect(frame).toContainText("Kaelith");
+    await ctx.close();
+  });
+});

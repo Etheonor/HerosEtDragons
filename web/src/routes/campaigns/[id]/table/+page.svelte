@@ -39,6 +39,7 @@
   import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
   import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
+  import TargetFrame from '$lib/table/TargetFrame.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -545,6 +546,8 @@
   } | null = null;
   /** Un drag de note ne doit pas ouvrir le panneau au relâchement. */
   let pinJustDragged = false;
+  /** Un drag de pion ne doit pas cibler (TargetFrame) au relâchement. */
+  let tokenJustDragged = false;
   let fogErasing = false;
   let skipNextClick = false;
   let lastFogPoint: { x: number; y: number } | null = null;
@@ -1013,6 +1016,7 @@
     return !!c && c.ownerId === session?.user.id;
   }
 
+  const targetCard = $derived(store.state.target ? charById(store.state.target) : null);
   const pjCards = $derived(store.characters.filter((c) => c.kind === 'pj' && c.active));
   const pnjCards = $derived(store.characters.filter((c) => c.kind === 'pnj'));
   const activeCharId = $derived(
@@ -1271,6 +1275,17 @@
     skipNextClick = true;
   }
 
+  /** Clic simple sur un pion : le MJ cible / retire la cible (TargetFrame).
+   *  Le clic remonte ensuite à `onMapClick`, qui l'avale via `skipNextClick`. */
+  function tokenClick(charId: string) {
+    if (tokenJustDragged) {
+      tokenJustDragged = false;
+      return;
+    }
+    if (!isMj || tool !== 'move') return;
+    sendWs({ type: 'target.set', charId: store.state.target === charId ? null : charId });
+  }
+
   function markerPointerDown(id: string, e: PointerEvent) {
     if (!isMj) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -1336,6 +1351,7 @@
       const { id, kind, moved } = drag;
       drag = null;
       if (kind === 'pin') pinJustDragged = moved;
+      if (kind === 'token') tokenJustDragged = moved;
       // `true` : la position finale part TOUJOURS, même si le throttle vient de
       //DROP la précédente — sinon le pion resterait en retard d'un mouvement.
       flushMove(true);
@@ -2390,6 +2406,7 @@
                 {@const hpState = hpPct === null ? null : hpPct >= 70 ? 'ok' : hpPct >= 30 ? 'mid' : 'low'}
                 {@const ini = initiativeScore(c.id)}
                 {@const down = c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div
                   class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
                   class:token-dead={hpPct !== null && hpPct <= 0}
@@ -2397,6 +2414,7 @@
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
                   title={tokenTitle(c)}
                   onpointerdown={(e) => tokenPointerDown(tokenId, e)}
+                  onclick={() => tokenClick(c.id)}
                   onpointermove={(e) => onTokenHover(c.id, e)}
                   onpointerleave={() => {
                     if (preview) preview = null;
@@ -2491,6 +2509,14 @@
       {/each}
     </div>
   </header>
+
+  {#if targetCard}
+    <TargetFrame
+      card={targetCard}
+      canClose={isMj}
+      onClose={() => sendWs({ type: 'target.set', charId: null })}
+    />
+  {/if}
 
     <!-- Compagnie : panneau flottant, déplaçable et redimensionnable (Lot 5). -->
     {#if panelsOpen.compagnie}

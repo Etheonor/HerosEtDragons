@@ -139,7 +139,10 @@ PV branchés sur la table ; la route `/characters/:id` reste en plein écran) ;
 **7.4** — l'**accueil** montre le PJ de l'utilisateur (« Feuille · nom » dans la
 carte, double-clic sur la carte pour ouvrir la table). Reste **7.2**
 (surbrillance des modifications, reporté). Ensuite : le **lot peaux Penpot du
-chrome**.
+chrome**. **Lot 10 entamé** : le **TargetFrame partagé** est livré (le MJ cible
+un pion — clic, re-clic retire ; tout le monde voit le cadre, croix MJ seule ;
+un PNJ non révélé cible ne sort jamais chez les joueurs, filtre B5 au snapshot
+et au broadcast).
 
 ---
 

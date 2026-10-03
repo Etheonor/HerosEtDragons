@@ -1189,4 +1189,46 @@ describe("GameTableDO — intégration", () => {
     expect((snap.state as { markers: unknown[] }).markers.length).toBe(2);
     expect(snap.history).toEqual({ canUndo: false, canRedo: true });
   });
+
+  it("target.set : cible partagée, PNJ caché filtré (B5), MJ seul la pose", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    const playerSnap = await player.next("snapshot");
+    expect((playerSnap.state as { target: string | null }).target).toBeNull();
+    await mj.next("presence");
+
+    // Le MJ cible un PJ : tout le monde reçoit la cible.
+    mj.send({ type: "target.set", charId: "pj-1" });
+    await mj.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pj-1");
+    await player.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pj-1");
+
+    // Un joueur ne peut pas cibler : un ping sert de barrière d'ordre (le DO
+    // traite les messages d'un même socket dans l'ordre) ; aucun delta non nul
+    // pour pj-2 ne doit se trouver avant.
+    player.send({ type: "target.set", charId: "pj-2" });
+    player.send({ type: "ping", x: 0, y: 0 });
+    await player.next("ping");
+    const leaked = player.messages.some(
+      (m) => (m.patch as { target?: string | null } | undefined)?.target === "pj-2",
+    );
+    expect(leaked).toBe(false);
+
+    // PNJ non révélé : le MJ le reçoit, le joueur reçoit un clear (B5).
+    mj.send({ type: "target.set", charId: "pnj-1" });
+    await mj.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pnj-1");
+    await player.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
+
+    // Le MJ referme : tout le monde reçoit null.
+    mj.send({ type: "target.set", charId: null });
+    await mj.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
+    await player.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
+  });
 });

@@ -92,6 +92,8 @@ export interface TableLiveState {
   pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
+  target: string | null;
 }
 
 export interface JournalEntry {
@@ -347,6 +349,11 @@ export interface PinRemoveMsg {
   id: string;
 }
 
+export interface TargetSetMsg {
+  type: "target.set";
+  charId: string | null;
+}
+
 export interface FogEnableMsg {
   type: "fog.enable";
 }
@@ -461,6 +468,7 @@ export type ClientMessage =
   | PinSetMsg
   | PinMoveMsg
   | PinRemoveMsg
+  | TargetSetMsg
   | FogEnableMsg
   | FogRevealMsg
   | FogCoverMsg
@@ -483,6 +491,8 @@ export interface TableDeltaPatch {
   mode?: TableLiveState["mode"];
   mapId?: string | null;
   combat?: TableLiveState["combat"];
+  /** Cible partagée (TargetFrame) — filtrée B5 côté joueurs. */
+  target?: string | null;
   markers?: Marker[];
   links?: MapLink[];
   pins?: MapPin[];
@@ -611,6 +621,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "pin.set",
     "pin.move",
     "pin.remove",
+    "target.set",
     "fog.enable",
     "fog.reveal",
     "fog.cover",

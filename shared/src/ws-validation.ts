@@ -178,6 +178,11 @@ export const pinRemoveSchema = z.object({
   id: id,
 });
 
+export const targetSetSchema = z.object({
+  type: z.literal("target.set"),
+  charId: id.nullable(),
+});
+
 export const markerRemoveSchema = z.object({
   type: z.literal("marker.remove"),
   id: id,
@@ -282,6 +287,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   pinSetSchema,
   pinMoveSchema,
   pinRemoveSchema,
+  targetSetSchema,
   markerRemoveSchema,
   markerClearSchema,
   fogEnableSchema,

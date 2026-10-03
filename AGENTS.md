@@ -197,8 +197,9 @@ jeu » plutôt que « web ». **Lots 0 à 6 livrés.** **Lot 7 quasi complet** :
 PNJ réservées au MJ (API + tests), compendium en **grande fenêtre par-dessus la
 table**, **fiche en panneau flottant** et **accueil** avec sélecteur de
 personnage (les routes `/compendium` et `/characters/:id` restent pour les liens
-directs) ; reste la surbrillance des modifications de feuille, reportée. Ensuite :
-**lot peaux Penpot** (`docs/atlas-benchmark/10-lot-peaux-penpot.md`).
+directs) ; reste la surbrillance des modifications de feuille, reportée.
+**Lot peaux Penpot entamé** : TargetFrame partagé livré (cible MJ filtrée B5).
+Référence : `docs/atlas-benchmark/10-lot-peaux-penpot.md`.
 
 | Document                                             | Contenu                                                                                                     |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
