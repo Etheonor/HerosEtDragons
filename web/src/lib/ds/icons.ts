@@ -27,6 +27,8 @@ import {
   MessageSquareText,
   Minus,
   MousePointer2,
+  Pause,
+  Play,
   Plus,
   Redo2,
   Settings,
@@ -60,6 +62,8 @@ export const ICONS = {
   attack: Swords,
   plus: Plus,
   minus: Minus,
+  play: Play,
+  pause: Pause,
   close: X,
   /** Historique (lot 4). */
   undo: Undo2,

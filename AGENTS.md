@@ -201,8 +201,10 @@ directs) ; reste la surbrillance des modifications de feuille, reportée.
 **Lot peaux Penpot livré** : TargetFrame partagé (cible MJ filtrée B5),
 GroupFrame (remplace la Compagnie), TopActions/Zoom, en-tête de fenêtre avec
 réduire, DicePad enrichi, toolbar en pilule d'icônes, header épuré, DiceButton
-flottant et resserrement de l'initiative. **Lot 8 entamé** : toast global
-(`$lib/toast.svelte` + `<Toaster>`) et squelettes de chargement. Référence :
+flottant et resserrement de l'initiative. **Lot 8 en cours** : toast global
+(`$lib/toast.svelte` + `<Toaster>`), squelettes, tooltips génériques, widgets
+de séance partagés (compteur/horloge/minuteur via le DO) et bibliothèque unique
+(édition des modèles PNJ incluse). Référence :
 `docs/atlas-benchmark/10-lot-peaux-penpot.md` et `07-parcours-implémentation.md`.
 
 | Document                                             | Contenu                                                                                                     |

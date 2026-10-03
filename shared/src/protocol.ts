@@ -94,6 +94,18 @@ export interface TableLiveState {
   combat: CombatState | null;
   /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
   target: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur), partagés MJ + joueurs. */
+  widgets: TableWidgets;
+}
+
+export interface TableWidgets {
+  /** Compteur 0-99. */
+  counter: number;
+  /** Horloge de progression : secteurs remplis, 0-12. */
+  clock: number;
+  /** Minuteur : `endsAt` (epoch ms) fait foi tant que `running` ; `initial`
+   *  est la durée de référence du bouton ↺. */
+  timer: { running: boolean; endsAt: number | null; remaining: number; initial: number };
 }
 
 export interface JournalEntry {
@@ -354,6 +366,23 @@ export interface TargetSetMsg {
   charId: string | null;
 }
 
+export interface WidgetCounterMsg {
+  type: "widget.counter";
+  value: number;
+}
+
+export interface WidgetClockMsg {
+  type: "widget.clock";
+  value: number;
+}
+
+export interface WidgetTimerMsg {
+  type: "widget.timer";
+  action: "start" | "pause" | "reset";
+  /** Durée en secondes (start/reset). */
+  seconds?: number;
+}
+
 export interface FogEnableMsg {
   type: "fog.enable";
 }
@@ -469,6 +498,9 @@ export type ClientMessage =
   | PinMoveMsg
   | PinRemoveMsg
   | TargetSetMsg
+  | WidgetCounterMsg
+  | WidgetClockMsg
+  | WidgetTimerMsg
   | FogEnableMsg
   | FogRevealMsg
   | FogCoverMsg
@@ -493,6 +525,8 @@ export interface TableDeltaPatch {
   combat?: TableLiveState["combat"];
   /** Cible partagée (TargetFrame) — filtrée B5 côté joueurs. */
   target?: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur). */
+  widgets?: TableWidgets;
   markers?: Marker[];
   links?: MapLink[];
   pins?: MapPin[];
@@ -622,6 +656,9 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "pin.move",
     "pin.remove",
     "target.set",
+    "widget.counter",
+    "widget.clock",
+    "widget.timer",
     "fog.enable",
     "fog.reveal",
     "fog.cover",

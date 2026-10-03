@@ -21,6 +21,7 @@ import type {
   CharacterCard,
   TableSettings,
   TableLiveState,
+  TableWidgets,
   HistoryState,
 } from "@rollwith/shared/protocol";
 import {
@@ -76,6 +77,8 @@ interface LiveState {
   combat: CombatState | null;
   /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
   target: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur). */
+  widgets: TableWidgets;
 }
 
 const MAX_CHAT_LENGTH = 2000;
@@ -171,6 +174,17 @@ type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
 type CombatReorderMsg = Extract<ClientMessageInput, { type: "combat.reorder" }>;
 type TargetSetMsg = Extract<ClientMessageInput, { type: "target.set" }>;
+type WidgetCounterMsg = Extract<ClientMessageInput, { type: "widget.counter" }>;
+type WidgetClockMsg = Extract<ClientMessageInput, { type: "widget.clock" }>;
+type WidgetTimerMsg = Extract<ClientMessageInput, { type: "widget.timer" }>;
+
+function defaultWidgets(): TableWidgets {
+  return {
+    counter: 0,
+    clock: 0,
+    timer: { running: false, endsAt: null, remaining: 0, initial: 0 },
+  };
+}
 
 function defaultLiveState(): LiveState {
   return {
@@ -183,6 +197,7 @@ function defaultLiveState(): LiveState {
     fog: {},
     combat: null,
     target: null,
+    widgets: defaultWidgets(),
   };
 }
 
@@ -240,14 +255,20 @@ export class GameTableDO extends DurableObject<Env> {
     if (!stored) return defaultLiveState();
     const legacy = stored as unknown as Record<string, unknown>;
     if (legacy.tokensByMap && legacy.markersByMap) {
-      // v2 → v3 (liens) → v4 (notes épinglées) → v5 (cible) : champs apparus
-      // après coup.
-      if (!legacy.linksByMap || !legacy.pinsByMap || legacy.target === undefined) {
+      // v2 → v3 (liens) → v4 (notes épinglées) → v5 (cible) → v6 (widgets) :
+      // champs apparus après coup.
+      if (
+        !legacy.linksByMap ||
+        !legacy.pinsByMap ||
+        legacy.target === undefined ||
+        !legacy.widgets
+      ) {
         return {
           ...stored,
           linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
           pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
           target: (legacy.target as string | null) ?? null,
+          widgets: (legacy.widgets as TableWidgets) ?? defaultWidgets(),
         };
       }
       return stored;
@@ -263,6 +284,7 @@ export class GameTableDO extends DurableObject<Env> {
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
       target: null,
+      widgets: defaultWidgets(),
     };
   }
 
@@ -1185,6 +1207,15 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "target.set":
           await this.handleTargetSet(attachment, m);
+          break;
+        case "widget.counter":
+          await this.handleWidgetCounter(attachment, m);
+          break;
+        case "widget.clock":
+          await this.handleWidgetClock(attachment, m);
+          break;
+        case "widget.timer":
+          await this.handleWidgetTimer(attachment, m);
           break;
         case "fog.enable":
           await this.handleFogEnable(ws, attachment);
@@ -2577,6 +2608,52 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ target });
   }
 
+  private async handleWidgetCounter(att: WsAttachment, msg: WidgetCounterMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), counter: msg.value };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
+  }
+
+  private async handleWidgetClock(att: WsAttachment, msg: WidgetClockMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), clock: msg.value };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
+  }
+
+  private async handleWidgetTimer(att: WsAttachment, msg: WidgetTimerMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const current = (state.widgets ?? defaultWidgets()).timer;
+    const now = Date.now();
+    let timer = current;
+    if (msg.action === "reset") {
+      const initial = msg.seconds ?? current.initial;
+      timer = { running: false, endsAt: null, remaining: initial, initial };
+    } else if (msg.action === "start") {
+      const remaining = msg.seconds ?? current.remaining;
+      if (remaining <= 0) return;
+      timer = {
+        running: true,
+        endsAt: now + remaining * 1000,
+        remaining,
+        initial: msg.seconds ?? current.initial,
+      };
+    } else {
+      const remaining =
+        current.running && current.endsAt
+          ? Math.max(0, Math.round((current.endsAt - now) / 1000))
+          : current.remaining;
+      timer = { running: false, endsAt: null, remaining, initial: current.initial };
+    }
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), timer };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
+  }
+
   // ── Handlers : brouillard ───────────────────────────────────────
 
   private async handleFogEnable(ws: WebSocket, att: WsAttachment) {
@@ -3293,6 +3370,7 @@ export class GameTableDO extends DurableObject<Env> {
         fog: state.fog,
         combat,
         target,
+        widgets: state.widgets ?? defaultWidgets(),
       },
       characters,
       settings: campaign?.settings ?? DEFAULT_SETTINGS,

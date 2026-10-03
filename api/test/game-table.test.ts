@@ -609,6 +609,59 @@ describe("GameTableDO — intégration", () => {
     ).toBeNull();
   });
 
+  it("widgets : le MJ pilote compteur/horloge/minuteur, un joueur ne peut pas", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    mj.send({ type: "widget.counter", value: 3 });
+    await player.nextWhere(
+      (m) => (m.patch as { widgets?: { counter: number } })?.widgets?.counter === 3,
+    );
+    mj.send({ type: "widget.clock", value: 7 });
+    await player.nextWhere(
+      (m) => (m.patch as { widgets?: { clock: number } })?.widgets?.clock === 7,
+    );
+
+    mj.send({ type: "widget.timer", action: "reset", seconds: 90 });
+    await player.nextWhere(
+      (m) =>
+        (m.patch as { widgets?: { timer: { remaining: number } } })?.widgets?.timer?.remaining ===
+        90,
+    );
+    mj.send({ type: "widget.timer", action: "start" });
+    const started = await player.nextWhere(
+      (m) =>
+        (m.patch as { widgets?: { timer: { running: boolean } } })?.widgets?.timer?.running ===
+        true,
+    );
+    expect(
+      (started.patch as { widgets: { timer: { endsAt: number } } }).widgets.timer.endsAt,
+    ).toBeGreaterThan(Date.now());
+
+    // Le joueur ne pilote pas : un ping sert de barrière d'ordre.
+    player.send({ type: "widget.counter", value: 99 });
+    player.send({ type: "ping", x: 0, y: 0 });
+    await player.next("ping");
+    const leaked = player.messages.some(
+      (m) => (m.patch as { widgets?: { counter: number } } | undefined)?.widgets?.counter === 99,
+    );
+    expect(leaked).toBe(false);
+
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const widgets = (
+      snap.state as {
+        widgets: { counter: number; clock: number; timer: { running: boolean } };
+      }
+    ).widgets;
+    expect(widgets.counter).toBe(3);
+    expect(widgets.clock).toBe(7);
+    expect(widgets.timer.running).toBe(true);
+  });
+
   it("marker.set avec un id existant renomme le repère au lieu de le dupliquer", async () => {
     await setupWorld();
     const mj = await connect(MJ);

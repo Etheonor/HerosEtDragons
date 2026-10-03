@@ -13,6 +13,7 @@ import type {
   CombatState,
   CharacterCard,
   TableSettings,
+  TableWidgets,
   HistoryState,
 } from "@rollwith/shared/protocol";
 import type { Inventory } from "@rollwith/shared/inventory";
@@ -29,6 +30,16 @@ export interface TableState {
   combat: CombatState | null;
   /** Cible partagée (TargetFrame) : charId, ou null. */
   target: string | null;
+  /** Widgets de séance (compteur, horloge, minuteur). */
+  widgets: TableWidgets;
+}
+
+export function defaultWidgets(): TableWidgets {
+  return {
+    counter: 0,
+    clock: 0,
+    timer: { running: false, endsAt: null, remaining: 0, initial: 0 },
+  };
 }
 
 export interface PresenceUser {
@@ -99,6 +110,7 @@ export const tableStore = $state<TableStore>({
     fog: {},
     combat: null,
     target: null,
+    widgets: defaultWidgets(),
   },
   characters: [],
   settings: DEFAULT_SETTINGS,
@@ -135,6 +147,7 @@ export function resetTableStore() {
     fog: {},
     combat: null,
     target: null,
+    widgets: defaultWidgets(),
   };
   tableStore.characters = [];
   tableStore.settings = DEFAULT_SETTINGS;
@@ -239,6 +252,7 @@ function handleMessage(msg: Record<string, unknown>) {
       if (patch.combat !== undefined)
         tableStore.state.combat = patch.combat as TableStore["state"]["combat"];
       if (patch.target !== undefined) tableStore.state.target = patch.target as string | null;
+      if (patch.widgets) tableStore.state.widgets = patch.widgets as TableWidgets;
       if (patch.tokens) {
         // Un patch contenant mapId est un CHANGEMENT DE CARTE : on remplace la
         // vue par celle de la nouvelle carte (le serveur envoie le dict complet).

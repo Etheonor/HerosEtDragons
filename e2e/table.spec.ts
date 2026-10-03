@@ -1117,6 +1117,50 @@ test.describe("GroupFrame (Lot 10)", () => {
   });
 });
 
+test.describe("Widgets (Lot 8)", () => {
+  test("le MJ pilote compteur/horloge/minuteur, le joueur voit sans contrôler", async ({
+    page,
+    browser,
+  }) => {
+    await openTable(page, MJ);
+
+    // Compteur.
+    await page.getByRole("button", { name: "Augmenter le compteur" }).click();
+    await page.getByRole("button", { name: "Augmenter le compteur" }).click();
+    await expect(page.locator(".widget", { hasText: "compteur" }).locator(".w-value")).toHaveText(
+      "2",
+    );
+
+    // Horloge : cliquer le 5e secteur la remplit jusqu'à 5.
+    await page.locator(".clock path").nth(4).click();
+    await expect(page.locator(".clock")).toHaveAttribute("aria-label", /: 5 sur 12$/);
+
+    // Minuteur : durée 0:05 puis lecture/pause.
+    await page.locator(".timer-value").dblclick();
+    const input = page.getByLabel("Durée du minuteur");
+    await input.fill("0:05");
+    await input.press("Enter");
+    await page.getByRole("button", { name: "Démarrer" }).click();
+    await expect(page.getByRole("button", { name: "Mettre en pause" })).toBeVisible();
+    await page.waitForTimeout(1200);
+    await page.getByRole("button", { name: "Mettre en pause" }).click();
+    await expect(page.locator(".timer-value")).toHaveText(/0:0[1-5]/);
+
+    // Le joueur reçoit les valeurs mais n'a aucun contrôle.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.locator(".clock")).toHaveAttribute("aria-label", /: 5 sur 12$/);
+    await expect(p2.locator(".widget", { hasText: "compteur" }).locator(".w-value")).toHaveText(
+      "2",
+    );
+    await expect(p2.getByRole("button", { name: "Augmenter le compteur" })).toHaveCount(0);
+    await expect(p2.getByRole("button", { name: "Démarrer" })).toHaveCount(0);
+    await ctx.close();
+  });
+});
+
 test.describe("Repères (Lot 8)", () => {
   test("poser un repère demande son nom, le double-clic le renomme", async ({ page }) => {
     await openTable(page, MJ);

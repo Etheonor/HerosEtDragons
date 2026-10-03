@@ -172,8 +172,11 @@ liste et fiche du compendium) et erreurs auparavant silencieuses remontées au
 toast (cartes, journal, notes MJ, modèles PNJ, inspiration, niveau) ;
 **8.3** — `<Tooltip>` générique bits-ui (label + `<kbd>`), appliqué au chrome :
 TopActions, DiceButton, fenêtres, HUD de zoom, historique, flèches d'initiative
-et outils de la barre. Les panneaux **`MapManager` et `NpcLibrary` sont
-supprimés** : la bibliothèque (asset manager) fait tout — grille et couleur de
+et outils de la barre. **8.5** — barre de **widgets de séance** dans le header
+(compteur, horloge de progression à 12 secteurs, minuteur lisible par tous) :
+valeurs partagées par le DO, pilotage MJ seul, auto-repli local après 4 s
+d'inactivité, expiration du minuteur signalée. Les panneaux **`MapManager` et
+`NpcLibrary` sont supprimés** : la bibliothèque (asset manager) fait tout — grille et couleur de
 la carte en clic droit, suppression avec confirmation, import qui affiche la
 carte — et les **modèles de PNJ s'éditent** (nom, PV, CA, init) par le clic
 droit dans l'onglet PNJ. Les **repères** se posent sans sous-menu : clic sur la

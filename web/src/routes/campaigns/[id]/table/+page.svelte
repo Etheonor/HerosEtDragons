@@ -53,6 +53,7 @@
   import GroupFrame from '$lib/table/GroupFrame.svelte';
   import TopActions from '$lib/table/TopActions.svelte';
   import DiceButton from '$lib/table/DiceButton.svelte';
+  import WidgetBar from '$lib/table/WidgetBar.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -2730,6 +2731,7 @@
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
     <div class="grow"></div>
+    <WidgetBar {isMj} />
   </header>
 
   {#if targetCard}
@@ -3690,7 +3692,8 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 14px;
+    /* Réserve le coin haut-droit aux TopActions (4 carrés, ~202 px). */
+    padding: 8px 226px 8px 14px;
   }
   .grow { flex: 1; }
 

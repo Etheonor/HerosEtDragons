@@ -183,6 +183,22 @@ export const targetSetSchema = z.object({
   charId: id.nullable(),
 });
 
+export const widgetCounterSchema = z.object({
+  type: z.literal("widget.counter"),
+  value: intField(0, 99, "compteur"),
+});
+
+export const widgetClockSchema = z.object({
+  type: z.literal("widget.clock"),
+  value: intField(0, 12, "horloge"),
+});
+
+export const widgetTimerSchema = z.object({
+  type: z.literal("widget.timer"),
+  action: z.enum(["start", "pause", "reset"]),
+  seconds: intField(0, 86400, "durée du minuteur").optional(),
+});
+
 export const markerRemoveSchema = z.object({
   type: z.literal("marker.remove"),
   id: id,
@@ -288,6 +304,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   pinMoveSchema,
   pinRemoveSchema,
   targetSetSchema,
+  widgetCounterSchema,
+  widgetClockSchema,
+  widgetTimerSchema,
   markerRemoveSchema,
   markerClearSchema,
   fogEnableSchema,
