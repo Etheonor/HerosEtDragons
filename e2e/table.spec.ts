@@ -285,7 +285,7 @@ test.describe("Carte : grille et vue", () => {
     await page.getByRole("button", { name: "Cartes" }).click();
     const row = page.locator(".row-wrap", { hasText: "Carte illustrée" });
     await row.getByTitle(/Grille/).click();
-    await page.getByRole("button", { name: "Retirer" }).click();
+    await page.getByRole("button", { name: "Retirer", exact: true }).click();
 
     // Le panneau se referme tout seul : le quadrillage disparaît de la carte.
     await expect(page.locator(".map-grid--overlay")).toHaveCount(0);
@@ -653,8 +653,9 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     // Double-clic : arme la pose ×2 et ferme l'overlay ; un clic sur la carte pose les deux.
     await card.dblclick();
     await expect(dialog).toHaveCount(0);
-    const frame = (await page.locator(".map-frame").boundingBox())!;
-    await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height / 2);
+    // La pose est armée : le hint est la confirmation visible avant le clic.
+    await expect(page.locator(".tool-hint-chip")).toContainText("Gobelin");
+    await page.locator(".map-frame").click({ position: { x: 640, y: 360 } });
     await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(2);
 
     // Clic droit sur la vignette : le menu unique s'ouvre AU-DESSUS de la

@@ -99,34 +99,31 @@
     </span>
 
     <span class="gf-hp-wrap">
-      {#if hp !== null}
-        <span class="gf-hp">
-          <span class="gf-hp-fill {hpState}" style="width: {hp}%;"></span>
-        </span>
-        <span class="gf-pv">{card.pv} / {card.pvMax}</span>
-      {:else}
-        <span class="gf-hp empty"></span>
-        <span class="gf-pv">— / —</span>
-      {/if}
       {#if canHeal && !down}
-        <span class="gf-hp-btns">
-          <button
-            type="button"
-            aria-label="Retirer 1 PV à {card.name}"
-            onclick={(e) => {
-              e.stopPropagation();
-              onHpDelta(-1);
-            }}>−</button
-          >
-          <button
-            type="button"
-            aria-label="Rendre 1 PV à {card.name}"
-            onclick={(e) => {
-              e.stopPropagation();
-              onHpDelta(1);
-            }}>+</button
-          >
-        </span>
+        <button
+          type="button"
+          class="gf-hp-btn"
+          aria-label="Retirer 1 PV à {card.name}"
+          onclick={(e) => {
+            e.stopPropagation();
+            onHpDelta(-1);
+          }}>−</button
+        >
+      {/if}
+      <span class="gf-hp">
+        <span class="gf-hp-fill {hpState}" style="width: {hp ?? 0}%;"></span>
+        <span class="gf-pv">{hp === null ? '— / —' : `${card.pv} / ${card.pvMax}`}</span>
+      </span>
+      {#if canHeal && !down}
+        <button
+          type="button"
+          class="gf-hp-btn"
+          aria-label="Rendre 1 PV à {card.name}"
+          onclick={(e) => {
+            e.stopPropagation();
+            onHpDelta(1);
+          }}>+</button
+        >
       {/if}
     </span>
   </span>
@@ -262,13 +259,13 @@
     line-height: 1.8;
   }
   .gf-hp-wrap {
-    position: relative;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
   }
   .gf-hp {
+    position: relative;
     flex: 1;
     min-width: 60px;
     height: 14px;
@@ -278,10 +275,11 @@
     border-radius: 7px;
     overflow: hidden;
   }
-  .gf-hp.empty { opacity: 0.5; }
   .gf-hp-fill {
-    display: block;
-    height: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
     border-radius: 5.5px;
     background: var(--hp-ok);
     transition: width 200ms var(--ease-out);
@@ -290,36 +288,41 @@
   .gf-hp-fill.low { background: var(--hp-low); }
   .gf-hp-fill.down { background: #6e6759; }
   .gf-pv {
-    flex: none;
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
     font-family: var(--font-ui);
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--parchemin);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
     white-space: nowrap;
+    pointer-events: none;
   }
-  .gf.down .gf-pv { color: var(--text-3); }
-  .gf-hp-btns {
-    position: absolute;
-    right: 0;
-    display: none;
-    gap: 3px;
-  }
-  .gf-hp-wrap:hover .gf-hp-btns { display: inline-flex; }
-  .gf-hp-btns button {
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 700;
+  .gf.down .gf-pv { color: var(--text-3); text-shadow: none; }
+  .gf-hp-btn {
+    flex: none;
     width: 22px;
-    height: 20px;
+    height: 22px;
     padding: 0;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
     color: var(--text);
     background: var(--surface-raised);
     border: 1.5px solid var(--border-strong);
     border-radius: var(--radius-sm);
     cursor: pointer;
     line-height: 1;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms;
   }
-  .gf-hp-btns button:hover { color: var(--accent-text); border-color: var(--accent-border); }
+  .gf-hp-wrap:hover .gf-hp-btn { opacity: 1; pointer-events: auto; }
+  .gf-hp-btn:hover { color: var(--accent-text); border-color: var(--accent-border); }
 
   .gf-conds {
     position: absolute;
