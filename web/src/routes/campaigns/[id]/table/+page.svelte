@@ -4384,6 +4384,13 @@
     display: grid;
     place-items: center;
     transform-origin: 0 0;
+    /* Le zoom/pan est un changement de transform à chaque frame : sans cette
+     * promotion, Chrome repeint et re-rastérise TOUT le sous-arbre à chaque
+     * palier (mesuré : 4,3 s de RasterTask sur un zoom, 14 tuiles/frame), ce
+     * qui sature les threads raster (Penpot est fluide car il n'a qu'un
+     * canvas). Avec la promotion, le compositor met le raster existant à
+     * l'échelle pendant le geste et le re-rastérise au repos. */
+    will-change: transform;
     pointer-events: none;
   }
   /* Le contenu de la carte ne reçoit pas les gestes — c'est `.map-bg` qui les

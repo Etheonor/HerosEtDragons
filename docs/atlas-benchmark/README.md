@@ -204,7 +204,12 @@ pointillé pendant le geste, formes rasterisées côté client en un seul messag
 tasks, long animation frames, métriques CDP et traces, à dpr 2) : le brouillard
 ne suit plus le zoom (résolution fixe `dpr ≤ 2` — un redraw complet d'environ
 30 ms à 4 Mpx était déclenché à chaque palier : zoom désormais 60 fps stable,
-canvas plus léger) ; les grandes fenêtres à défilement interne (compendium,
+canvas plus léger) ; `.map-zoom` est promu en layer (`will-change: transform`)
+— sans lui Chrome repeint et re-rastérise tout le sous-arbre à chaque palier de
+zoom (4,3 s de RasterTask mesurés sur une session, 5,4 s avec brouillard),
+avec lui le compositor met le raster existant à l'échelle (37 ms) et le
+re-rastérise au repos : 60 fps, zéro frame ratée, netteté intacte au
+relâchement ; les grandes fenêtres à défilement interne (compendium,
 bibliothèque, aide) passent en surface **opaque** (`.surface-opaque`) car le
 `backdrop-filter` d'une fenêtre de 1 440 × 900 est recalculé à chaque frame de
 scroll : **42,6 → 60 fps, zéro frame ratée**. Menus, tooltips et petites boîtes

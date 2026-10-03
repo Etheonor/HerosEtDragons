@@ -156,6 +156,10 @@ async function runMap(browser) {
   const cy = box.y + box.height / 2;
   await page.mouse.move(cx, cy);
 
+  if (process.env.EXP_CSS) {
+    await page.addStyleTag({ content: process.env.EXP_CSS });
+    await page.waitForTimeout(150);
+  }
   let traceEvents = null;
   if (process.env.TRACE) {
     traceEvents = [];
