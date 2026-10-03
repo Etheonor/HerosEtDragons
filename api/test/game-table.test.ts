@@ -609,6 +609,31 @@ describe("GameTableDO — intégration", () => {
     ).toBeNull();
   });
 
+  it("marker.set avec un id existant renomme le repère au lieu de le dupliquer", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    mj.send({ type: "marker.set", x: 20, y: 30, text: "Porte sud" });
+    const first = await mj.nextWhere(
+      (m) => ((m.patch as { markers?: unknown[] } | undefined)?.markers?.length ?? 0) === 1,
+    );
+    const marker = (first.patch as { markers: { id: string }[] }).markers[0]!;
+
+    mj.send({ type: "marker.set", id: marker.id, x: 20, y: 30, text: "Porte nord" });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { markers?: { text: string }[] } | undefined)?.markers?.[0]?.text ===
+        "Porte nord",
+    );
+
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const markers = (snap.state as { markers: { id: string; text: string }[] }).markers;
+    expect(markers).toHaveLength(1);
+    expect(markers[0]!.text).toBe("Porte nord");
+  });
+
   it("cleanupMap (RPC) : suppression d'une carte = pions/repères purgés, carte active → aucune carte", async () => {
     await setupWorld();
     const mj = await connect(MJ);

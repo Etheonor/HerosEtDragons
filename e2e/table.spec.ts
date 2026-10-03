@@ -10,6 +10,7 @@ import {
   placeFromLibrary,
   placePjFromFrame,
   seed,
+  selectMap,
 } from "./helpers";
 
 test.describe("Connexion et table", () => {
@@ -50,7 +51,7 @@ test.describe("Connexion et table", () => {
   }) => {
     await openTable(page, MJ);
     await expect(page.getByRole("button", { name: "Déplacer" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Cartes" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bibliothèque" })).toBeVisible();
 
     const ctx = await browser.newContext();
     const p2 = await ctx.newPage();
@@ -127,8 +128,7 @@ test.describe("Inventaire (R9)", () => {
 test.describe("Chrome : palette et aide (Lot 2)", () => {
   test("Espace ouvre la palette, « grille 48 » règle la taille sur la carte", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     await page.keyboard.press("Space");
     const input = page.getByPlaceholder(/Rechercher une action/);
@@ -179,10 +179,14 @@ test.describe("Panneaux flottants (Lot 1)", () => {
 test.describe("Carte : import d'image", () => {
   test("le MJ importe une image et la carte devient jouable", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
 
-    // Le panneau d'import utilise un <input type=file> caché.
-    await page.setInputFiles('input[type=file][accept*="image/png"]', {
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      dialog.getByRole("button", { name: "Nouvelle carte…" }).click(),
+    ]);
+    await chooser.setFiles({
       name: "donjon.png",
       mimeType: "image/png",
       // PNG 2x2 valide, encodé en base64.
@@ -192,34 +196,42 @@ test.describe("Carte : import d'image", () => {
       ),
     });
 
-    // La carte importée devient active et son image est servie par l'API.
-    const thumb = page.locator(".thumb").first();
-    await expect(thumb).toHaveAttribute("src", /\/api\/maps\/.+\/image/);
-    // …et elle est affichée sur la table.
+    // La carte importée apparaît dans la grille…
+    await expect(dialog.locator('.asset-card[data-kind="map"]', { hasText: "donjon" })).toHaveCount(
+      1,
+    );
+    // …elle devient active et son image est affichée sur la table.
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "donjon");
     await expect(page.locator(".map-img")).toBeVisible();
   });
 
-  test("un fichier qui n'est pas une image est refusé sans casser le panneau", async ({ page }) => {
+  test("un fichier qui n'est pas une image est refusé proprement", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
 
-    await page.setInputFiles('input[type=file][accept*="image/png"]', {
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      dialog.getByRole("button", { name: "Nouvelle carte…" }).click(),
+    ]);
+    await chooser.setFiles({
       name: "pas-une-image.png",
       mimeType: "image/png",
       buffer: Buffer.from("ceci n'est pas un PNG"),
     });
 
-    // Le panneau affiche l'erreur et la liste des cartes survit.
-    await expect(page.locator(".panel-error")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Carte illustrée/ })).toBeVisible();
+    // L'échec est visible (toast global) et la bibliothèque survit.
+    await expect(page.locator(".toast")).toContainText("Import de la carte impossible");
+    await expect(
+      dialog.locator('.asset-card[data-kind="map"]', { hasText: "Carte illustrée" }),
+    ).toHaveCount(1);
   });
 });
 
 test.describe("Carte : grille et vue", () => {
   test("le quadrillage réglable par le MJ apparaît sur la carte", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const grid = page.locator(".map-grid--overlay");
     await expect(grid).toBeVisible();
@@ -237,32 +249,25 @@ test.describe("Carte : grille et vue", () => {
     await setGridColor("");
 
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const grid = page.locator(".map-grid--overlay");
     await expect(grid).toBeVisible();
     // Par défaut : couleur du thème, donc pas de rendu en teinte.
     await expect(grid).not.toHaveClass(/map-grid--tinted/);
 
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page
-      .locator(".row-wrap", { hasText: "Carte illustrée" })
-      .getByTitle(/Grille/)
-      .click();
-
-    // Le color picker est désactivé tant qu'on est sur « Thème » ; le bouton
-    // bascule (son libellé change, on le cible donc par position).
-    const swatch = page.locator(".grid-color");
-    await expect(swatch).toBeDisabled();
-    await page.locator(".grid-color-row button").click();
-    await expect(swatch).toBeEnabled();
-    await swatch.fill("#ff0000");
-    await page.getByRole("button", { name: "Appliquer" }).click();
+    // Clic droit sur la carte dans la bibliothèque → couleur « rouge ».
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog
+      .locator('.asset-card[data-kind="map"]', { hasText: "Carte illustrée" })
+      .first()
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Couleur de la grille" }).hover();
+    await page.getByRole("menuitem", { name: "rouge" }).click();
 
     // La couleur est RENDUE, pas seulement stockée : la classe active le rendu
     // en teinte et la variable CSS est calculée.
-    await page.getByRole("button", { name: "Cartes" }).click();
     await expect(grid).toHaveClass(/map-grid--tinted/);
     const line = await grid.evaluate((el) =>
       getComputedStyle(el).getPropertyValue("--map-grid-line"),
@@ -275,26 +280,27 @@ test.describe("Carte : grille et vue", () => {
     await expect(page.locator(".map-grid--overlay")).not.toHaveClass(/map-grid--tinted/);
   });
 
-  test("le MJ peut retirer le quadrillage depuis le panneau Cartes", async ({ page }) => {
+  test("le MJ peut retirer le quadrillage depuis la bibliothèque", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await expect(page.locator(".map-grid--overlay")).toBeVisible();
 
-    // Ouvrir l'éditeur de grille (bouton ▦) puis retirer.
-    await page.getByRole("button", { name: "Cartes" }).click();
-    const row = page.locator(".row-wrap", { hasText: "Carte illustrée" });
-    await row.getByTitle(/Grille/).click();
-    await page.getByRole("button", { name: "Retirer", exact: true }).click();
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog
+      .locator('.asset-card[data-kind="map"]', { hasText: "Carte illustrée" })
+      .first()
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: /^Grille/ }).hover();
+    await page.getByRole("menuitem", { name: "Retirer la grille" }).click();
 
-    // Le panneau se referme tout seul : le quadrillage disparaît de la carte.
+    // Le quadrillage disparaît de la carte (la liste des cartes est rafraîchie).
     await expect(page.locator(".map-grid--overlay")).toHaveCount(0);
   });
 
   test("la molette zoome, le bouton du HUD reset à 100 %", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
@@ -307,8 +313,7 @@ test.describe("Carte : grille et vue", () => {
 
   test("l'outil Main déplace réellement la carte (quand elle déborde)", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await page.getByRole("button", { name: "Main" }).click();
 
     const frame = (await page.locator(".map-frame").boundingBox())!;
@@ -340,8 +345,7 @@ test.describe("Carte : grille et vue", () => {
   }) => {
     // Le MJ choisit la carte (le panneau Cartes lui est réservé).
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     // Le joueur rejoint SANS re-seeder : sinon le reset purgerait la carte
     // active que le MJ vient de choisir.
@@ -398,8 +402,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     browser,
   }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     await placeFromLibrary(page, "PNJ", "Gobelin");
 
@@ -424,8 +427,7 @@ test.describe("Pions vivants (Lot 3)", () => {
 
   test("la plaque de nom n'apparaît qu'au survol du pion", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });
@@ -437,8 +439,7 @@ test.describe("Pions vivants (Lot 3)", () => {
 
   test("l'initiative recadre : sans effet à 100 %, centrage une fois zoomé", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
     await placeFromLibrary(page, "PNJ", "Gobelin");
     await page.locator(".mode-btn", { hasText: "Combat" }).click();
@@ -486,8 +487,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     browser,
   }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     await placePjFromFrame(page, "Kaelith");
     const token = page.locator(".token", { hasText: "Kaelith" });
@@ -517,8 +517,7 @@ test.describe("Pions vivants (Lot 3)", () => {
 test.describe("Historique (Lot 4)", () => {
   test("les boutons undo/redo ramènent un pion posé, puis le remettent", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const undoBtn = page.getByRole("button", { name: "Annuler" });
     const redoBtn = page.getByRole("button", { name: "Rétablir" });
@@ -542,8 +541,7 @@ test.describe("Historique (Lot 4)", () => {
 
   test("un drag complet est UN pas : Ctrl+Z annule tout le geste", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });
@@ -628,8 +626,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("l'onglet PNJ pose ×N en un double-clic (badge − ×N +)", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     // Place le gobelin (bibliothèque), puis enregistre-le comme modèle par le
     // menu du frame — le chemin de la Compagnie a disparu avec elle.
@@ -734,8 +731,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("les liens : poser, déplacer, voyager, et un retour posé à la main", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte illustrée");
 
     // Clic droit dans le vide → « Poser un lien ici… » → sous-menu des cartes.
@@ -777,8 +773,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("notes épinglées : créer, écrire en markdown, relire", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
@@ -803,8 +798,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("renommer un lien par le clic droit", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
     await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
@@ -824,8 +818,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("les liens cachés ne sont pas visibles par les joueurs", async ({ page, browser }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
@@ -857,8 +850,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("les liens : onglet Liens de la bibliothèque", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.click(frame.x + frame.width / 2, frame.y + 230, { button: "right" });
     await page.getByRole("menuitem", { name: /Poser un lien ici/ }).hover();
@@ -878,8 +870,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("aperçu au survol (Ctrl) sur un pion", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
     const token = page.locator(".token", { hasText: "Kaelith" });
     await expect(token).toBeVisible();
@@ -899,8 +890,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     page,
   }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placeFromLibrary(page, "PNJ", "Gobelin");
 
     // Ouverture par la palette (surface à la demande).
@@ -929,8 +919,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("clic droit sur un pion : menu contextuel unique (dupliquer)", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placeFromLibrary(page, "PNJ", "Gobelin");
 
     const token = page.locator(".token", { hasText: "Gobelin" });
@@ -946,8 +935,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("clic droit dans le vide : menu de carte (outils MJ)", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
 
     const frame = (await page.locator(".map-frame").boundingBox())!;
     await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height - 140, {
@@ -960,8 +948,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
   test("l'initiative verticale montre les PV et se réordonne (▲)", async ({ page }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
     await placeFromLibrary(page, "PNJ", "Gobelin");
     await page.locator(".mode-btn", { hasText: "Combat" }).click();
@@ -1071,8 +1058,7 @@ test.describe("GroupFrame (Lot 10)", () => {
     // Un PNJ non posé n'est pas dans le frame (il vit dans la bibliothèque).
     await expect(rail).not.toContainText("Gobelin");
 
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
 
     // Soigner : survol de la barre → − / + (MJ), sans quitter la table.
@@ -1096,6 +1082,33 @@ test.describe("GroupFrame (Lot 10)", () => {
     await expect(page.locator(".target")).toContainText("Kaelith");
     await frame.click();
     await expect(page.locator(".target")).toHaveCount(0);
+  });
+});
+
+test.describe("Repères (Lot 8)", () => {
+  test("poser un repère demande son nom, le double-clic le renomme", async ({ page }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+
+    await page.getByRole("button", { name: "Repère", exact: true }).click();
+    const frame = (await page.locator(".map-frame").boundingBox())!;
+    await page.mouse.click(frame.x + 700, frame.y + 400);
+
+    const prompt = page.getByRole("dialog", { name: "Nouveau repère" });
+    await expect(prompt).toBeVisible();
+    await prompt.getByLabel("Nom du repère").fill("Porte sud");
+    await prompt.getByRole("button", { name: "Poser" }).click();
+
+    const marker = page.locator(".marker", { hasText: "Porte sud" });
+    await expect(marker).toBeVisible();
+
+    // Double-clic direct sur le repère = renommer.
+    await marker.dblclick();
+    const rename = page.getByRole("dialog", { name: "Renommer le repère" });
+    await expect(rename).toBeVisible();
+    await rename.getByLabel("Nom du repère").fill("Porte nord");
+    await rename.getByRole("button", { name: "Renommer" }).click();
+    await expect(page.locator(".marker", { hasText: "Porte nord" })).toBeVisible();
   });
 });
 
@@ -1170,8 +1183,7 @@ test.describe("Cible partagée (Lot 10)", () => {
     browser,
   }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Cartes" }).click();
-    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await selectMap(page, "Carte illustrée");
     await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });

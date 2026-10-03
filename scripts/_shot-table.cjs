@@ -60,6 +60,18 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/dice-after.png` });
   }
 
+  if (process.env.SHOT_MENU) {
+    const info = await page.evaluate(() => {
+      const el = document.elementFromPoint(640, 580);
+      return el ? `${el.tagName}.${el.className}` : "none";
+    });
+    console.log("elementFromPoint(640,580):", info);
+    await page.mouse.click(640, 580, { button: "right" });
+    await page.waitForTimeout(600);
+    console.log("menuitems:", await page.locator('[role="menuitem"]').count());
+    await page.screenshot({ path: `${OUT}/menu-debug.png` });
+  }
+
   if (process.env.SHOT_COMBAT) {
     await page.locator(".gf", { hasText: "Kaelith" }).dblclick();
     await page.getByRole("button", { name: "Bibliothèque" }).click();

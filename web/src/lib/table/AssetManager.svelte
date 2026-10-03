@@ -14,9 +14,6 @@
    *   présents sur la carte active ;
    * - **clic droit délégué au menu unique de la page** : ce composant ne rend
    *   jamais de menu, il décrit la cible.
-   *
-   * Les `MapManager` / `NpcLibrary` restent dans la barre d'outils en secours
-   * le temps de valider cette surface.
    */
   import { Dialog } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';

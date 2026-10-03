@@ -2319,12 +2319,17 @@ export class GameTableDO extends DurableObject<Env> {
     const text = (msg.text.trim() || "repère").slice(0, 200);
 
     const state = await this.getState();
-    const id = msg.id || crypto.randomUUID();
+    const existing = msg.id ? this.markersOf(state).find((m) => m.id === msg.id) : undefined;
+    const id = existing?.id ?? msg.id ?? crypto.randomUUID();
     const marker: Marker = { id, x: this.clamp(x), y: this.clamp(y), text };
-    const markers = [...this.markersOf(state), marker];
+    const markers = existing
+      ? this.markersOf(state).map((m) => (m.id === id ? marker : m))
+      : [...this.markersOf(state), marker];
     await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
-    await this.pushOps([{ kind: "marker.add", mapId: this.mapKey(state.mapId), marker }]);
+    if (!existing) {
+      await this.pushOps([{ kind: "marker.add", mapId: this.mapKey(state.mapId), marker }]);
+    }
   }
 
   private async handleMarkerMove(ws: WebSocket, att: WsAttachment, msg: MarkerMoveMsg) {

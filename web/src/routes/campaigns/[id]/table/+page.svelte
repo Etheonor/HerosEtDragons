@@ -40,7 +40,6 @@
   import { commandRegistry, type PaletteCommand } from '$lib/table/commands.svelte';
   import { createCamera, type CameraPose } from '$lib/table/camera.svelte';
   import { slugify } from '$lib/slug';
-  import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
   import { ICONS } from '$lib/ds/icons';
   import Panel from '$lib/table/Panel.svelte';
@@ -56,7 +55,7 @@
   import DiceButton from '$lib/table/DiceButton.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
-  import NpcLibrary from '$lib/components/NpcLibrary.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
   let { params } = $props();
   let campaignId = params.id;
@@ -251,6 +250,13 @@
     confirmLabel?: string;
     onSubmit: (value: string) => void;
   } | null>(null);
+  let confirmState = $state<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
   let toolbarWidth = $state(1280);
 
   function onToolbarResize(node: HTMLElement) {
@@ -273,25 +279,36 @@
     ['#4a7aa8', 'bleue'],
   ];
 
-  async function setGridSize(size: number | null) {
-    const mapId = store.state.mapId;
-    if (!isMj || !mapId) return;
+  async function setMapGrid(
+    mapId: string,
+    fields: { gridSize?: number | null; gridColor?: string | null },
+  ) {
+    if (!isMj) return;
     try {
-      await api.maps.update(mapId, { gridSize: size });
+      await api.maps.update(mapId, fields);
       await refreshMaps();
     } catch {
       showToast('Réglage de la grille impossible', 'error');
     }
   }
 
-  async function setGridColor(color: string | null) {
+  function setGridSize(size: number | null) {
     const mapId = store.state.mapId;
-    if (!isMj || !mapId) return;
+    if (mapId) void setMapGrid(mapId, { gridSize: size });
+  }
+
+  function setGridColor(color: string | null) {
+    const mapId = store.state.mapId;
+    if (mapId) void setMapGrid(mapId, { gridColor: color });
+  }
+
+  async function removeMap(mapId: string) {
     try {
-      await api.maps.update(mapId, { gridColor: color });
+      await api.maps.remove(mapId);
       await refreshMaps();
+      showToast('Carte supprimée', 'success');
     } catch {
-      showToast('Réglage de la grille impossible', 'error');
+      showToast('Suppression de la carte impossible', 'error');
     }
   }
 
@@ -564,7 +581,19 @@
   let mapContainer = $state<HTMLDivElement | null>(null);
   let fogCanvas = $state<HTMLCanvasElement | null>(null);
   let tool = $state<'move' | 'hand' | 'pnj' | 'marker' | 'fog'>('move');
-  let markerText = $state('repère');
+  let pendingMarkerPos: { x: number; y: number } | null = null;
+
+  function openRenameMarkerPrompt(id: string) {
+    const m = store.state.markers.find((x) => x.id === id);
+    if (!m) return;
+    prompt = {
+      title: 'Renommer le repère',
+      label: 'Nom du repère',
+      initial: m.text,
+      confirmLabel: 'Renommer',
+      onSubmit: (name) => sendWs({ type: 'marker.set', id, x: m.x, y: m.y, text: name }),
+    };
+  }
   let npcName = $state('PNJ');
   let npcPv = $state(7);
   let npcCa = $state(13);
@@ -1573,7 +1602,18 @@
         saveAsTemplate: npcSaveAsTemplate,
       });
     } else if (tool === 'marker') {
-      sendWs({ type: 'marker.set', x, y, text: markerText.trim() || 'repère' });
+      pendingMarkerPos = { x, y };
+      prompt = {
+        title: 'Nouveau repère',
+        label: 'Nom du repère',
+        initial: '',
+        confirmLabel: 'Poser',
+        onSubmit: (name) => {
+          const pos = pendingMarkerPos;
+          if (pos) sendWs({ type: 'marker.set', x: pos.x, y: pos.y, text: name });
+          pendingMarkerPos = null;
+        },
+      };
     }
   }
 
@@ -1585,10 +1625,6 @@
   function markerRemove(id: string, e: Event) {
     e.stopPropagation();
     sendWs({ type: 'marker.remove', id });
-  }
-
-  function clearMarkers() {
-    sendWs({ type: 'marker.clear' });
   }
 
   function fogToggle() {
@@ -1823,7 +1859,8 @@
     if (!t) return [];
 
     if (t.kind === 'asset-map') {
-      return [
+      const map = maps.find((m) => m.id === t.mapId);
+      const items: ContextMenuItem[] = [
         {
           id: 'show',
           label: 'Afficher cette carte',
@@ -1841,10 +1878,55 @@
         {
           id: 'replace-image',
           label: "Remplacer l'image…",
-          onSelect: () =>
-            pickFile(IMAGE_ACCEPT, (f) => void replaceMapImage(t.mapId, f)),
+          onSelect: () => pickFile(IMAGE_ACCEPT, (f) => void replaceMapImage(t.mapId, f)),
+        },
+        {
+          id: 'grid',
+          label: 'Grille',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: [
+            ...GRID_SIZES.map((size) => ({
+              id: `grid.${size}`,
+              label: `${size} px`,
+              disabled: map?.gridSize === size,
+              onSelect: () => void setMapGrid(t.mapId, { gridSize: size }),
+            })),
+            {
+              id: 'grid.none',
+              label: 'Retirer la grille',
+              disabled: !map?.gridSize,
+              onSelect: () => void setMapGrid(t.mapId, { gridSize: null }),
+            },
+          ],
+        },
+        {
+          id: 'grid-color',
+          label: 'Couleur de la grille',
+          onSelect: () => {},
+          children: GRID_COLORS.map(([color, label]) => ({
+            id: `gridcolor.${color || 'theme'}`,
+            label,
+            onSelect: () => void setMapGrid(t.mapId, { gridColor: color || null }),
+          })),
+        },
+        {
+          id: 'delete-map',
+          label: 'Supprimer la carte…',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => {
+            confirmState = {
+              title: 'Supprimer la carte',
+              message: `« ${map?.name ?? 'cette carte'} » sera définitivement retirée de la campagne.`,
+              confirmLabel: 'Supprimer',
+              danger: true,
+              onConfirm: () => void removeMap(t.mapId),
+            };
+          },
         },
       ];
+      return items;
     }
     if (t.kind === 'asset-template') {
       const items: ContextMenuItem[] = [
@@ -2000,9 +2082,14 @@
       if (isMj) {
         items.push(
           {
+            id: 'rename',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenameMarkerPrompt(t.id),
+          },
+          {
             id: 'remove',
             label: 'Supprimer le repère',
-            separatorBefore: true,
             onSelect: () => sendWs({ type: 'marker.remove', id: t.id }),
           },
           {
@@ -2126,6 +2213,14 @@
         label: 'Poser une note ici…',
         onSelect: () => createPinAt(t.sx, t.sy),
       });
+      if (store.state.markers.length > 0) {
+        items.push({
+          id: 'clear-markers',
+          label: 'Effacer tous les repères',
+          danger: true,
+          onSelect: () => sendWs({ type: 'marker.clear' }),
+        });
+      }
       items.push(
         {
           id: 'tool.move',
@@ -2197,8 +2292,9 @@
 
   async function createMapFromFile(file: File) {
     try {
-      await api.maps.create(campaignId, mapNameFromFile(file.name), file);
+      const created = await api.maps.create(campaignId, mapNameFromFile(file.name), file);
       await refreshMaps();
+      if (created?.id) selectMap(created.id);
     } catch {
       showToast("Import de la carte impossible", 'error');
     }
@@ -2477,6 +2573,11 @@
                 class="marker"
                 style="left: {m.x}%; top: {m.y}%;"
                 onpointerdown={(e) => markerPointerDown(m.id, e)}
+                ondblclick={(e) => {
+                  if (!isMj) return;
+                  e.stopPropagation();
+                  openRenameMarkerPrompt(m.id);
+                }}
                 oncontextmenu={(e) => openMarkerMenu(e, m.id)}
                 role={isMj ? 'button' : undefined}
                 tabindex={isMj ? 0 : undefined}
@@ -3053,14 +3154,7 @@
               hotkeyLabel="R"
               active={tool === 'marker'}
               onselect={() => toolSelect('marker')}
-            >
-              {#snippet options()}
-                <span class="opt-title">Repère</span>
-                <label>Texte <input class="marker-input" bind:value={markerText} placeholder="texte du repère…" /></label>
-                <button class="ghost-btn danger" onclick={clearMarkers}>Effacer les repères</button>
-                <span class="opt-hint">Cliquez sur la carte pour poser.</span>
-              {/snippet}
-            </ToolGroup>
+            />
           {/if}
           {#if isMj && visibleToolIds.includes('fog')}
             <ToolGroup
@@ -3083,20 +3177,19 @@
 
           {#if isMj}
             <div class="tsep"></div>
-            <button
-              class="asset-btn"
-              type="button"
-              aria-label="Bibliothèque"
-              title="Bibliothèque (cartes, PNJ, personnages)"
-              onclick={() => (assetManagerOpen = true)}
-            >
-              <ICONS.library size={19} strokeWidth={2} aria-hidden="true" />
-            </button>
-            <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
-            <NpcLibrary {campaignId} onPlace={(tpl, count) => {
-              tool = 'move';
-              pendingPlace = { templateId: tpl.id, name: tpl.name, count };
-            }} />
+            <Tooltip label="Bibliothèque (cartes, PNJ, personnages)">
+              {#snippet children({ props })}
+                <button
+                  {...props}
+                  class="asset-btn"
+                  type="button"
+                  aria-label="Bibliothèque"
+                  onclick={() => (assetManagerOpen = true)}
+                >
+                  <ICONS.library size={19} strokeWidth={2} aria-hidden="true" />
+                </button>
+              {/snippet}
+            </Tooltip>
           {/if}
         </div>
       </div>
@@ -3498,9 +3591,26 @@
       initial={prompt.initial}
       confirmLabel={prompt.confirmLabel}
       onOpenChange={(o) => {
-        if (!o) prompt = null;
+        if (!o) {
+          prompt = null;
+          pendingMarkerPos = null;
+        }
       }}
       onConfirm={(v) => prompt?.onSubmit(v)}
+    />
+  {/if}
+
+  {#if confirmState}
+    <ConfirmDialog
+      open={true}
+      title={confirmState.title}
+      message={confirmState.message}
+      confirmLabel={confirmState.confirmLabel}
+      danger={confirmState.danger}
+      onOpenChange={(o) => {
+        if (!o) confirmState = null;
+      }}
+      onConfirm={() => confirmState?.onConfirm()}
     />
   {/if}
 
@@ -3945,12 +4055,6 @@
     background: var(--panel); color: var(--text); width: 100px;
   }
   .npc-input.narrow { width: 52px; }
-  .marker-input {
-    font-family: var(--font-body); font-size: 13px; font-weight: 500; padding: 3px 9px;
-    border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;
-    background: var(--panel); color: var(--accent-text); width: 150px;
-  }
-
 
   .map-frame {
     position: absolute;

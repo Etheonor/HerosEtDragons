@@ -2,9 +2,9 @@
  * Pile d'affichage des panneaux flottants (lot 5).
  *
  * Le dernier panneau touché passe au-dessus des autres — mais TOUS restent sous
- * `--z-overlay` (400), où vivent les popovers legacy (MapManager, NpcLibrary)
- * et le top layer (palette, dialogs). La pile est partagée et réactive : chaque
- * panneau relit son rang, donc aucun compteur local ne peut diverger.
+ * `--z-overlay` (400), où vivent les popovers legacy et le top layer (menus,
+ * dialogs). La pile est partagée et réactive : chaque panneau relit son rang,
+ * donc aucun compteur local ne peut diverger.
  */
 
 let stack = $state<string[]>([]);
