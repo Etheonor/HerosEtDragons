@@ -263,12 +263,23 @@ export class GameTableDO extends DurableObject<Env> {
         legacy.target === undefined ||
         !legacy.widgets
       ) {
+        const widgets = legacy.widgets as Partial<TableWidgets> | undefined;
+        const timer = widgets?.timer as Partial<TableWidgets["timer"]> | undefined;
         return {
           ...stored,
           linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
           pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
           target: (legacy.target as string | null) ?? null,
-          widgets: (legacy.widgets as TableWidgets) ?? defaultWidgets(),
+          widgets: {
+            counter: Number(widgets?.counter) || 0,
+            clock: Number(widgets?.clock) || 0,
+            timer: {
+              running: timer?.running === true,
+              endsAt: typeof timer?.endsAt === "number" ? timer.endsAt : null,
+              remaining: Number(timer?.remaining) || 0,
+              initial: Number(timer?.initial) || Number(timer?.remaining) || 0,
+            },
+          },
         };
       }
       return stored;

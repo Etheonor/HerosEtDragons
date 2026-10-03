@@ -39,7 +39,7 @@
   const remaining = $derived.by(() => {
     const t = store.state.widgets.timer;
     if (t.running && t.endsAt) return Math.max(0, Math.ceil((t.endsAt - now) / 1000));
-    return t.remaining;
+    return Math.max(0, Math.floor(Number(t.remaining) || 0));
   });
 
   $effect(() => {
@@ -51,8 +51,8 @@
     }
   });
 
-  function formatTime(sec: number): string {
-    const s = Math.max(0, Math.floor(sec));
+  function formatTime(sec: number | null | undefined): string {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     const r = s % 60;
@@ -95,6 +95,11 @@
 
   function timerAction(action: 'start' | 'pause' | 'reset') {
     poke();
+    // Un minuteur à zéro n'a rien à décompter : ▶ ouvre le réglage de durée.
+    if (action === 'start' && remaining <= 0 && isMj) {
+      startEdit();
+      return;
+    }
     sendWs({ type: 'widget.timer', action });
   }
 
@@ -152,7 +157,11 @@
     {/if}
   </div>
 
-  <div class="widget" title="Horloge de progression">
+  <div
+    class="widget"
+    title="Menace ou objectif : cliquez un secteur pour avancer, re-cliquez le dernier pour reculer"
+  >
+    <span class="w-label">menace</span>
     <svg
       class="clock"
       viewBox="0 0 34 34"
