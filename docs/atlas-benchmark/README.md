@@ -173,7 +173,7 @@ positions persistées, raccourcis `J` / `D` / `I`. Typo des maquettes appliquée
 (titres Vidaloka 17, chiffres et libellés en Alegreya Sans SC, badge du
 DiceButton compris). Le DiceButton ouvre/ferme les dés.
 
-**Lot 8 entamé** : **8.1** — `<Toaster>` global monté par le layout (piles de 4,
+**Lot 8 livré** : **8.1** — `<Toaster>` global monté par le layout (piles de 4,
 fermeture manuelle ou après 3,2 s / 5,2 s, variantes info/succès/erreur) ;
 **8.2** — squelettes de chargement (accueil, fiche plein écran et en panneau,
 liste et fiche du compendium) et erreurs auparavant silencieuses remontées au
@@ -191,7 +191,14 @@ droit dans l'onglet PNJ. Les **repères** se posent sans sous-menu : clic sur la
 carte → nom au placement, double-clic ou clic droit pour renommer. L'**initiative est passée en
 `<Panel>`** comme Séance :
 déplaçable, redimensionnable, réduisible, position persistée, fermable — et
-rouverte automatiquement à l'entrée en combat.
+rouverte automatiquement à l'entrée en combat. **8.6** — accessibilité : focus
+piégé et rendu à l'ouvreur dans les trois modales maison, journal `role="log"`
+`aria-live`, pions focusables (flèches = 1 case, Maj = 5, Entrée = cibler),
+contraste de `--text-3` relevé à 4,6:1. **8.7** — tutoriel MJ en 4 étapes
+(spotlight + bulle), ouvert une fois par navigateur, rejouable par la palette.
+**8.8** — brouillard en trois modes (brosse, rectangle, lasso) : aperçu
+pointillé pendant le geste, formes rasterisées côté client en un seul message
+`fog.revealArea` (un patch, un pas d'undo).
 
 ---
 

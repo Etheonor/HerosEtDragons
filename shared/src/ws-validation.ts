@@ -217,6 +217,15 @@ export const fogRevealSchema = z.object({
   begin: z.boolean().optional(),
 });
 
+export const fogRevealAreaSchema = z.object({
+  type: z.literal("fog.revealArea"),
+  points: z
+    .array(z.object({ x: coord, y: coord }), { error: "points requis" })
+    .min(1)
+    .max(200),
+  begin: z.boolean().optional(),
+});
+
 export const pingSchema = z.object({
   type: z.literal("ping"),
   x: coord,
@@ -323,6 +332,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   fogCoverSchema,
   fogDisableSchema,
   fogRevealSchema,
+  fogRevealAreaSchema,
   pingSchema,
   modeSetSchema,
   initiativeRollSchema,

@@ -1069,6 +1069,45 @@ describe("GameTableDO — intégration", () => {
     );
   });
 
+  it("fog.revealArea (lot 8.8) : une forme = un patch, un seul pas d'undo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "fog.enable" });
+    await mj.nextWhere((m) => fogReveals(m) !== undefined);
+
+    mj.send({
+      type: "fog.revealArea",
+      begin: true,
+      points: [
+        { x: 20, y: 20 },
+        { x: 29, y: 20 },
+        { x: 38, y: 20 },
+        { x: 20, y: 29 },
+        { x: 20, y: 20 },
+      ],
+    });
+    // Un seul patch pour les 4 points distincts (le doublon est dédupliqué).
+    await mj.nextWhere((m) => fogReveals(m)?.length === 4);
+
+    await tableStub().undo();
+    await mj.nextWhere((m) => fogReveals(m)?.length === 0);
+
+    // Un joueur ne peut pas dessiner : aucune révélation ne part.
+    const player = await connect(PLAYER);
+    await player.ready();
+    player.send({ type: "fog.revealArea", begin: true, points: [{ x: 50, y: 50 }] });
+    await new Promise((r) => setTimeout(r, 50));
+    for (const m of mj.messages) {
+      const reveals = fogReveals(m);
+      if (reveals) expect(reveals.length).toBe(0);
+    }
+  });
+
   it("liens (lot 6) : un passage secret n'est jamais diffusé aux joueurs", async () => {
     await setupWorld();
     const mj = await connect(MJ);

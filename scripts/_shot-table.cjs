@@ -114,6 +114,54 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/combat.png` });
   }
 
+  if (process.env.SHOT_FOG) {
+    const skip = page.getByRole("button", { name: "Passer" });
+    if (await skip.count()) {
+      await skip.click();
+      await page.waitForTimeout(300);
+    }
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+    await page.getByRole("button", { name: "Options — Brouillard" }).click();
+    await page.getByRole("button", { name: "Tout recouvrir" }).click();
+    await page.getByRole("button", { name: "Rectangle" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+
+    const box = await page.locator(".map-surface").boundingBox();
+    if (!box) throw new Error("surface introuvable");
+    const at = (px, py) => ({
+      x: box.x + (box.width * px) / 100,
+      y: box.y + (box.height * py) / 100,
+    });
+    let p = at(20, 20);
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.down();
+    p = at(70, 75);
+    await page.mouse.move(p.x, p.y, { steps: 6 });
+    await page.screenshot({ path: `${OUT}/fog-rectangle.png` });
+    await page.mouse.up();
+
+    await page.getByRole("button", { name: "Options — Brouillard" }).click();
+    await page.getByRole("button", { name: "Lasso" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+    const pts = [
+      [85, 35],
+      [90, 40],
+      [85, 45],
+      [80, 40],
+    ];
+    p = at(pts[0][0], pts[0][1]);
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.down();
+    for (const [px, py] of pts.slice(1)) {
+      p = at(px, py);
+      await page.mouse.move(p.x, p.y, { steps: 4 });
+    }
+    await page.screenshot({ path: `${OUT}/fog-lasso.png` });
+    await page.mouse.up();
+  }
+
   if (process.env.SHOT_TIP) {
     await page.getByRole("button", { name: "Aide clavier" }).hover();
     await page.waitForTimeout(700);

@@ -167,6 +167,7 @@ type PinSetMsg = Extract<ClientMessageInput, { type: "pin.set" }>;
 type PinMoveMsg = Extract<ClientMessageInput, { type: "pin.move" }>;
 type PinRemoveMsg = Extract<ClientMessageInput, { type: "pin.remove" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
+type FogRevealAreaMsg = Extract<ClientMessageInput, { type: "fog.revealArea" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
 type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
@@ -1235,6 +1236,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "fog.reveal":
           await this.handleFogReveal(ws, attachment, m);
+          break;
+        case "fog.revealArea":
+          await this.handleFogRevealArea(ws, attachment, m);
           break;
         case "fog.cover":
           await this.handleFogCover(ws, attachment);
@@ -2718,6 +2722,45 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ fog });
     await this.broadcastPnjVisibility(); // B5 : ce point a pu révéler un PNJ
     await this.recordFogPaint(state.mapId, index, { x, y }, msg.begin === true);
+  }
+
+  /** Forme (rectangle/lasso) : tous les points en UN patch, UN pas d'undo. */
+  private async handleFogRevealArea(ws: WebSocket, att: WsAttachment, msg: FogRevealAreaMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    if (!state.mapId) return;
+    const current = state.fog[state.mapId];
+    if (!current || !current.on) return;
+
+    if (msg.begin) this.openFogPaint = null;
+
+    const added: { x: number; y: number }[] = [];
+    for (const p of msg.points) {
+      if (current.reveals.length + added.length >= FOG_MAX_REVEALS) break;
+      const x = this.clamp(p.x);
+      const y = this.clamp(p.y);
+      const tooClose = [...current.reveals, ...added].some((r) => {
+        const dx = r.x - x;
+        const dy = r.y - y;
+        return Math.sqrt(dx * dx + dy * dy) < FOG_REVEAL_MIN_SPACING_PCT;
+      });
+      if (!tooClose) added.push({ x, y });
+    }
+    if (added.length === 0) return;
+
+    const base = current.reveals.length;
+    const fog = {
+      ...state.fog,
+      [state.mapId]: { on: true, reveals: [...current.reveals, ...added] },
+    };
+    await this.patchState({ fog });
+    this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : ces points ont pu révéler un PNJ
+    let i = 0;
+    for (const point of added) {
+      await this.recordFogPaint(state.mapId, base + i, point, msg.begin === true && i === 0);
+      i += 1;
+    }
   }
 
   private async handleFogCover(ws: WebSocket, att: WsAttachment) {

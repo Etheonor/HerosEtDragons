@@ -677,6 +677,12 @@
   let lastFogPoint: { x: number; y: number } | null = null;
   const FOG_SEND_MIN_DIST = 2.5;
 
+  type FogShape =
+    | { kind: 'rect'; start: { x: number; y: number }; end: { x: number; y: number } }
+    | { kind: 'lasso'; points: { x: number; y: number }[] };
+  let fogMode = $state<'brush' | 'rect' | 'lasso'>('brush');
+  let fogShape = $state<FogShape | null>(null);
+
   // P2 (audit) : un pointermove = jusqu'à 60-120 messages/s. On n'émet qu'une
   // fois par rAF ET au plus toutes les MOVE_SEND_MIN_MS : la position locale
   // reste fluide sans réseau, et les autres joueurs n'ont pas besoin de 60 Hz.
@@ -712,6 +718,71 @@
     }
     lastFogPoint = p;
     sendWs({ type: 'fog.reveal', ...p, ...(begin ? { begin: true } : {}) });
+  }
+
+  // Formes (rectangle/lasso, lot 8.8) : le client rasterise en points espacés
+  // de FOG_SHAPE_STEP % (< diamètre de révélation, 9) et les envoie en UN
+  // message — un seul patch DO, un seul pas d'undo.
+  const FOG_SHAPE_STEP = 7;
+  const FOG_SHAPE_MAX_POINTS = 200;
+
+  function pointInPolygon(p: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      if (!a || !b) continue;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function rasterFogShape(shape: FogShape): { x: number; y: number }[] {
+    const bounds =
+      shape.kind === 'rect'
+        ? {
+            x0: Math.min(shape.start.x, shape.end.x),
+            x1: Math.max(shape.start.x, shape.end.x),
+            y0: Math.min(shape.start.y, shape.end.y),
+            y1: Math.max(shape.start.y, shape.end.y),
+          }
+        : {
+            x0: Math.min(...shape.points.map((p) => p.x)),
+            x1: Math.max(...shape.points.map((p) => p.x)),
+            y0: Math.min(...shape.points.map((p) => p.y)),
+            y1: Math.max(...shape.points.map((p) => p.y)),
+          };
+    const pts: { x: number; y: number }[] = [];
+    for (let x = bounds.x0; x <= bounds.x1; x += FOG_SHAPE_STEP) {
+      for (let y = bounds.y0; y <= bounds.y1; y += FOG_SHAPE_STEP) {
+        const p = {
+          x: Math.min(98, Math.max(2, x)),
+          y: Math.min(98, Math.max(2, y)),
+        };
+        if (shape.kind === 'lasso' && !pointInPolygon(p, shape.points)) continue;
+        pts.push(p);
+        if (pts.length >= FOG_SHAPE_MAX_POINTS) return pts;
+      }
+    }
+    return pts;
+  }
+
+  function commitFogShape() {
+    const shape = fogShape;
+    fogShape = null;
+    if (!shape || !fogOn) return;
+    if (shape.kind === 'rect') {
+      if (Math.abs(shape.end.x - shape.start.x) < 2 || Math.abs(shape.end.y - shape.start.y) < 2) {
+        return; // simple clic : rien à révéler
+      }
+    } else if (shape.points.length < 3) {
+      return;
+    }
+    const points = rasterFogShape(shape);
+    if (points.length === 0) return;
+    sendWs({ type: 'fog.revealArea', points, begin: true });
   }
 
   const activeMap = $derived(maps.find((m) => m.id === store.state.mapId) ?? null);
@@ -1526,6 +1597,18 @@
       if (fogOn) sendFogReveal(mapXY(e));
       return;
     }
+    if (fogShape) {
+      if (fogShape.kind === 'rect') {
+        fogShape = { ...fogShape, end: mapXY(e) };
+      } else {
+        const p = mapXY(e);
+        const last = fogShape.points[fogShape.points.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 1.5) {
+          fogShape = { ...fogShape, points: [...fogShape.points, p] };
+        }
+      }
+      return;
+    }
     if (!drag) return;
     drag.moved = true;
     const { x, y } = mapXY(e);
@@ -1557,6 +1640,7 @@
   function onMapPointerUp() {
     fogErasing = false;
     lastFogPoint = null;
+    if (fogShape) commitFogShape();
     // NB : on ne touche PAS à `panning` ici. Le setPointerCapture du cadre
     // déclenche un pointerleave immédiat sur la surface, qui appelait ce
     // handler et annulait le panoramique dès la première frame.
@@ -1589,6 +1673,12 @@
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (!isMj || tool !== 'fog') return;
     if (!fogOn) return;
+    if (fogMode !== 'brush') {
+      const p = mapXY(e);
+      fogShape =
+        fogMode === 'rect' ? { kind: 'rect', start: p, end: p } : { kind: 'lasso', points: [p] };
+      return;
+    }
     fogErasing = true;
     lastFogPoint = null;
     sendFogReveal(mapXY(e), true);
@@ -2694,8 +2784,23 @@
               <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
             {/if}
 
-            {#if isMj && tool === 'fog' && fogOn && fogCursor}
+            {#if isMj && tool === 'fog' && fogOn && fogMode === 'brush' && fogCursor}
               <div class="fog-brush" style="left: {fogCursor.x}px; top: {fogCursor.y}px;"></div>
+            {/if}
+
+            {#if isMj && tool === 'fog' && fogOn && fogShape}
+              <svg class="fog-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                {#if fogShape.kind === 'rect'}
+                  <rect
+                    x={Math.min(fogShape.start.x, fogShape.end.x)}
+                    y={Math.min(fogShape.start.y, fogShape.end.y)}
+                    width={Math.abs(fogShape.end.x - fogShape.start.x)}
+                    height={Math.abs(fogShape.end.y - fogShape.start.y)}
+                  />
+                {:else}
+                  <polygon points={fogShape.points.map((p) => `${p.x},${p.y}`).join(' ')} />
+                {/if}
+              </svg>
             {/if}
 
             {#each displayMarkers as m (m.id)}
@@ -3297,6 +3402,11 @@
             >
               {#snippet options()}
                 <span class="opt-title">Brouillard</span>
+                <div class="opt-row">
+                  <button class="ghost-btn" class:on={fogMode === 'brush'} onclick={() => (fogMode = 'brush')}>Brosse</button>
+                  <button class="ghost-btn" class:on={fogMode === 'rect'} onclick={() => (fogMode = 'rect')}>Rectangle</button>
+                  <button class="ghost-btn" class:on={fogMode === 'lasso'} onclick={() => (fogMode = 'lasso')}>Lasso</button>
+                </div>
                 <div class="opt-row">
                   <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
                   <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
@@ -4398,6 +4508,14 @@
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
     pointer-events: none; z-index: var(--z-fog);
   }
+  /* Aperçu rectangle/lasso : viewBox 0 0 100 100 étiré sur la surface. */
+  .fog-preview {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: var(--z-fog);
+    fill: color-mix(in srgb, var(--accent) 22%, transparent);
+    stroke: var(--accent); stroke-width: 1.5px; stroke-dasharray: 5 4;
+  }
+  .fog-preview rect, .fog-preview polygon { vector-effect: non-scaling-stroke; }
 
   .marker {
     position: absolute; transform: translate(-50%, -100%);

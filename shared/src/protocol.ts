@@ -391,7 +391,13 @@ export interface FogRevealMsg {
   type: "fog.reveal";
   x: number;
   y: number;
-  /** Premier point d'un trait : ouvre UN pas d'undo pour toute la passe. */
+  begin?: boolean;
+}
+
+export interface FogRevealAreaMsg {
+  type: "fog.revealArea";
+  /** Points d'une forme (rectangle/lasso) révélés en un seul geste. */
+  points: { x: number; y: number }[];
   begin?: boolean;
 }
 
@@ -510,6 +516,7 @@ export type ClientMessage =
   | WidgetTimerMsg
   | FogEnableMsg
   | FogRevealMsg
+  | FogRevealAreaMsg
   | FogCoverMsg
   | FogDisableMsg
   | PingMsg
@@ -669,6 +676,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "widget.timer",
     "fog.enable",
     "fog.reveal",
+    "fog.revealArea",
     "fog.cover",
     "fog.disable",
     "ping",

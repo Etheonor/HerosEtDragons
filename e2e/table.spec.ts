@@ -1384,3 +1384,73 @@ test.describe("Cible partagée (Lot 10)", () => {
     await ctx.close();
   });
 });
+
+test.describe("Brouillard (Lot 8.8)", () => {
+  test("les formes du MJ (rectangle, lasso) percent le voile", async ({ page }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+
+    // Outil brouillard -> « Tout recouvrir » + mode Rectangle. NB : Escape
+    // ferme le popover mais remet l'outil sur « move » (raccourci global) :
+    // on réactive Brouillard ensuite.
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+    await page.getByRole("button", { name: "Options — Brouillard" }).click();
+    await page.getByRole("button", { name: "Tout recouvrir" }).click();
+    await page.getByRole("button", { name: "Rectangle" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+
+    const alphaAt = (fx: number, fy: number) =>
+      page.locator("canvas.fog-canvas").evaluate(
+        (c, [x, y]) => {
+          const canvas = c as HTMLCanvasElement;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return -1;
+          return ctx.getImageData(Math.round(canvas.width * x), Math.round(canvas.height * y), 1, 1)
+            .data[3];
+        },
+        [fx, fy],
+      );
+
+    // Le voile est opaque au point de départ (20 %, 20 %).
+    await expect.poll(() => alphaAt(0.2, 0.2)).toBe(255);
+
+    const box = await page.locator(".map-surface").boundingBox();
+    if (!box) throw new Error("surface introuvable");
+    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.8, { steps: 8 });
+    await page.mouse.up();
+
+    // Le trou est percé : alpha 0 sur le point de départ du rectangle.
+    await expect.poll(() => alphaAt(0.2, 0.2)).toBe(0);
+    // Hors du rectangle, le voile reste.
+    await expect.poll(() => alphaAt(0.05, 0.9)).toBe(255);
+
+    // Lasso : un losange autour de (85 %, 40 %) doit percer (87 %, 42 %).
+    // (Zone libre : ni bannière, ni widgets, ni rail de compagnie.)
+    await page.getByRole("button", { name: "Options — Brouillard" }).click();
+    await page.getByRole("button", { name: "Lasso" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Brouillard", exact: true }).click();
+    await expect.poll(() => alphaAt(0.87, 0.42)).toBe(255);
+
+    const at = (px: number, py: number) => ({
+      x: box.x + box.width * (px / 100),
+      y: box.y + box.height * (py / 100),
+    });
+    const p0 = at(85, 35);
+    await page.mouse.move(p0.x, p0.y);
+    await page.mouse.down();
+    for (const [px, py] of [
+      [90, 40],
+      [85, 45],
+      [80, 40],
+    ] as const) {
+      const p = at(px, py);
+      await page.mouse.move(p.x, p.y, { steps: 4 });
+    }
+    await page.mouse.up();
+    await expect.poll(() => alphaAt(0.87, 0.42)).toBe(0);
+  });
+});
