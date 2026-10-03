@@ -165,6 +165,14 @@ de la révélation.
 L'initiative est resserrée sur la maquette (ligne 46 px, badge de score carré,
 valeur de PV, flèches au survol).
 
+Le panneau « Séance » à onglets est remplacé par **trois fenêtres `<Panel>`
+indépendantes** à la peau Penpot : **Journal** (WindowChat, ouvert par défaut en
+bas à gauche), **Dés** (DicePad, ancré au-dessus du DiceButton) et
+**Inventaire** (WindowInventory, au-dessus des dés) — drag, resize, réduire,
+positions persistées, raccourcis `J` / `D` / `I`. Typo des maquettes appliquée
+(titres Vidaloka 17, chiffres et libellés en Alegreya Sans SC, badge du
+DiceButton compris). Le DiceButton ouvre/ferme les dés.
+
 **Lot 8 entamé** : **8.1** — `<Toaster>` global monté par le layout (piles de 4,
 fermeture manuelle ou après 3,2 s / 5,2 s, variantes info/succès/erreur) ;
 **8.2** — squelettes de chargement (accueil, fiche plein écran et en panneau,
