@@ -743,7 +743,7 @@ describe("GameTableDO — intégration", () => {
     // 1. Le MJ ajoute des objets et de l'argent à Kaelith.
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 2 });
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 1 });
-    mj.send({ type: "inv.addMoney", charId: "pj-1", money: { po: 10, pa: 2, pc: 0 } });
+    mj.send({ type: "inv.money", charId: "pj-1", delta: { po: 10, pa: 2, pc: 0 } });
     await mj.nextWhere((m) => m.type === "inv");
 
     // La fusion par nom est insensible à la casse : 2 + 1 = 3.
@@ -814,11 +814,7 @@ describe("GameTableDO — intégration", () => {
       item: "Torche",
     });
     // 3. Ajouter de l'argent (MJ seulement) → refusé.
-    kaelith.send({
-      type: "inv.addMoney",
-      charId: "pnj-1",
-      money: { po: 1, pa: 0, pc: 0 },
-    });
+    kaelith.send({ type: "inv.money", charId: "pnj-1", delta: { po: 1, pa: 0, pc: 0 } });
     // 4. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
     //    cas légitime), donc on cible bien pnj-1 pour tester le refus.
     await new Promise((r) => setTimeout(r, 150));

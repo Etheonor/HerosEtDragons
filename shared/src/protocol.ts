@@ -472,10 +472,11 @@ export interface InvDropMsg {
   item: string;
 }
 
-export interface InvAddMoneyMsg {
-  type: "inv.addMoney";
+export interface InvMoneyMsg {
+  type: "inv.money";
   charId: string;
-  money: { po: number; pa: number; pc: number };
+  /** Deltas signés : le serveur borne chaque pièce entre 0 et 999 999. */
+  delta: { po: number; pa: number; pc: number };
 }
 
 export type ClientMessage =
@@ -522,7 +523,7 @@ export type ClientMessage =
   | InvGiveItemMsg
   | InvAddMsg
   | InvDropMsg
-  | InvAddMoneyMsg;
+  | InvMoneyMsg;
 
 // ── Serveur → Client ──────────────────────────────────────────
 
@@ -680,7 +681,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "inv.give",
     "inv.add",
     "inv.drop",
-    "inv.addMoney",
+    "inv.money",
   ];
   return validTypes.includes(type as ClientMessage["type"]);
 }

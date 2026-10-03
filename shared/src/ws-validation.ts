@@ -279,13 +279,13 @@ export const invDropSchema = z.object({
   item: itemName,
 });
 
-export const invAddMoneySchema = z.object({
-  type: z.literal("inv.addMoney"),
+export const invMoneySchema = z.object({
+  type: z.literal("inv.money"),
   charId: id,
-  money: z.object({
-    po: intField(0, 999999, "pièces d'or"),
-    pa: intField(0, 999999, "pièces d'argent"),
-    pc: intField(0, 999999, "pièces de cuivre"),
+  delta: z.object({
+    po: intField(-999999, 999999, "pièces d'or"),
+    pa: intField(-999999, 999999, "pièces d'argent"),
+    pc: intField(-999999, 999999, "pièces de cuivre"),
   }),
 });
 
@@ -331,7 +331,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   invGiveSchema,
   invAddSchema,
   invDropSchema,
-  invAddMoneySchema,
+  invMoneySchema,
 ]);
 
 export type ClientMessageInput = z.infer<typeof clientMessageSchema>;

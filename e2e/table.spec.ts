@@ -69,9 +69,9 @@ test.describe("Inventaire (R9)", () => {
     await openPanel(page, "inventory");
 
     // Bourse du seed : 12 po, 3 pa, 0 pc.
-    await expect(page.locator(".coin.po")).toHaveText("12 po");
-    await expect(page.locator(".coin.pa")).toHaveText("3 pa");
-    await expect(page.locator(".coin.pc")).toHaveText("0 pc");
+    await expect(page.locator(".coin.po .coin-value")).toHaveText("12 po");
+    await expect(page.locator(".coin.pa .coin-value")).toHaveText("3 pa");
+    await expect(page.locator(".coin.pc .coin-value")).toHaveText("0 pc");
     await expect(page.locator(".inv-name")).toContainText("Potion de soin");
     await expect(page.locator(".inv-qty")).toHaveText("×2");
   });
@@ -106,23 +106,36 @@ test.describe("Inventaire (R9)", () => {
     await ctx.close();
   });
 
-  test("le MJ peut ajouter de l'argent ; le joueur ne peut pas", async ({ page, browser }) => {
+  test("l'argent s'ajuste par − / + sur chaque pièce (MJ sur le sac choisi, joueur sur le sien)", async ({
+    page,
+    browser,
+  }) => {
     await openTable(page, MJ);
     await openPanel(page, "inventory");
-    await page.getByLabel("Pièces d'or à ajouter").fill("10");
-    await page.getByRole("button", { name: "Ajouter l'argent" }).click();
-    await expect(page.locator(".coin.po")).toHaveText("22 po");
 
-    // Le joueur voit la même bourse (celle de Kaelith) mais n'a pas le champ.
-    // On ne re-seede PAS : le reset purgerait le DO et la bourse ajoutée avec.
+    // MJ : ±1 po sur le sac de Kaelith (12 → 13 → 12).
+    await page.getByRole("button", { name: /Ajouter 1 pièce d'or/ }).click();
+    await expect(page.locator(".coin.po .coin-value")).toHaveText("13 po");
+    await page.getByRole("button", { name: /Retirer 1 pièce d'or/ }).click();
+    await expect(page.locator(".coin.po .coin-value")).toHaveText("12 po");
+
+    // Maj+clic = ±10 d'un coup.
+    await page
+      .getByRole("button", { name: /Ajouter 1 pièce d'or/ })
+      .click({ modifiers: ["Shift"] });
+    await expect(page.locator(".coin.po .coin-value")).toHaveText("22 po");
+
+    // Le joueur ajuste SON sac (Ragnar est vide), sans sélecteur de sac.
+    // On ne re-seede PAS : le reset purgerait le DO et l'ajout du MJ avec.
     const ctx = await browser.newContext();
     const p2 = await ctx.newPage();
-    await login(p2, KAELITH);
+    await login(p2, RAGNAR);
     await p2.goto(`/campaigns/${CAMPAIGN}/table`);
     await expect(p2.locator(".journal-panel")).toBeVisible();
     await openPanel(p2, "inventory");
-    await expect(p2.locator(".coin.po")).toHaveText("22 po");
-    await expect(p2.getByLabel("Pièces d'or à ajouter")).toHaveCount(0);
+    await expect(p2.locator(".inv-selector")).toHaveCount(0);
+    await p2.getByRole("button", { name: /Ajouter 1 pièce d'or/ }).click();
+    await expect(p2.locator(".coin.po .coin-value")).toHaveText("1 po");
     await ctx.close();
   });
 
@@ -131,7 +144,7 @@ test.describe("Inventaire (R9)", () => {
     await openPanel(page, "inventory");
     // Pas de sélecteur de sac pour un joueur, et son sac est vide.
     await expect(page.locator(".inv-selector")).toHaveCount(0);
-    await expect(page.locator(".coin.po")).toHaveText("0 po");
+    await expect(page.locator(".coin.po .coin-value")).toHaveText("0 po");
   });
 
   test("le sac d'un autre joueur n'est pas exposé dans le store", async ({ page }) => {

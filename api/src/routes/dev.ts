@@ -249,6 +249,14 @@ app.post("/seed", async (c) => {
       inventory: { items: [{ name: "Potion de soin", qty: 2 }], money: { po: 12, pa: 3, pc: 0 } },
     })
     .where(eq(schema.characters.id, "pj-kaelith"));
+  // Les autres sacs repartent VIDES : un test qui ajuste la bourse de Ragnar
+  // ne doit pas polluer les suivants.
+  for (const id of ["pj-ragnar", "pnj-gobelin"]) {
+    await db
+      .update(schema.characters)
+      .set({ inventory: { items: [], money: { po: 0, pa: 0, pc: 0 } } })
+      .where(and(eq(schema.characters.campaignId, campaign.id), eq(schema.characters.id, id)));
+  }
 
   return c.json({
     ok: true,

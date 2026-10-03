@@ -1149,9 +1149,8 @@
   let invPoDraft = $state(0);
   let invPaDraft = $state(0);
   let invPcDraft = $state(0);
-  let invAddPo = $state(0);
-  let invAddPa = $state(0);
-  let invAddPc = $state(0);
+  /** Le MJ ajuste le sac choisi, un joueur le sien. */
+  const canEditInv = $derived(!!invTarget && (isMj || invTarget === myCharId));
 
   function invAddItem() {
     const name = invItemDraft.trim();
@@ -1161,16 +1160,14 @@
     invQtyDraft = 1;
   }
 
-  function invAddMoney() {
-    if (!invTarget || !isMj) return;
-    const po = Math.max(0, invAddPo | 0);
-    const pa = Math.max(0, invAddPa | 0);
-    const pc = Math.max(0, invAddPc | 0);
-    if (po + pa + pc === 0) return;
-    sendWs({ type: 'inv.addMoney', charId: invTarget, money: { po, pa, pc } });
-    invAddPo = 0;
-    invAddPa = 0;
-    invAddPc = 0;
+  function invMoneyDelta(key: 'po' | 'pa' | 'pc', delta: number, shift = false) {
+    if (!invTarget || !canEditInv || delta === 0) return;
+    const d = delta * (shift ? 10 : 1);
+    sendWs({
+      type: 'inv.money',
+      charId: invTarget,
+      delta: { po: key === 'po' ? d : 0, pa: key === 'pa' ? d : 0, pc: key === 'pc' ? d : 0 },
+    });
   }
 
   function invDrop(item: string) {
@@ -3453,9 +3450,33 @@
             {/if}
 
             <div class="inv-purse">
-              <span class="coin po">{inv.money.po} po</span>
-              <span class="coin pa">{inv.money.pa} pa</span>
-              <span class="coin pc">{inv.money.pc} pc</span>
+              {#each [
+                { key: 'po' as const, label: 'po', name: "pièce d'or" },
+                { key: 'pa' as const, label: 'pa', name: "pièce d'argent" },
+                { key: 'pc' as const, label: 'pc', name: 'pièce de cuivre' },
+              ] as coin (coin.key)}
+                <span class="coin {coin.key}">
+                  {#if canEditInv}
+                    <button
+                      type="button"
+                      class="coin-btn"
+                      aria-label="Retirer 1 {coin.name} (Maj : 10)"
+                      title="−1 · Maj : −10"
+                      onclick={(e) => invMoneyDelta(coin.key, -1, e.shiftKey)}>−</button
+                    >
+                  {/if}
+                  <span class="coin-value">{inv.money[coin.key]} {coin.label}</span>
+                  {#if canEditInv}
+                    <button
+                      type="button"
+                      class="coin-btn"
+                      aria-label="Ajouter 1 {coin.name} (Maj : 10)"
+                      title="+1 · Maj : +10"
+                      onclick={(e) => invMoneyDelta(coin.key, 1, e.shiftKey)}>+</button
+                    >
+                  {/if}
+                </span>
+              {/each}
             </div>
 
             <ul class="inv-list">
@@ -3480,13 +3501,6 @@
                 <input class="inv-input" placeholder="nom de l'objet" bind:value={invItemDraft} onkeydown={(e) => e.key === 'Enter' && invAddItem()} />
                 <input class="inv-input narrow" type="number" min="1" max="9999" bind:value={invQtyDraft} title="quantité" />
                 <button class="ghost-btn" onclick={invAddItem}>Ajouter</button>
-              </div>
-              <div class="inv-add">
-                <span class="inv-add-label">Argent</span>
-                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="po" aria-label="Pièces d'or à ajouter" bind:value={invAddPo} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
-                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="pa" aria-label="Pièces d'argent à ajouter" bind:value={invAddPa} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
-                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="pc" aria-label="Pièces de cuivre à ajouter" bind:value={invAddPc} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
-                <button class="ghost-btn" onclick={invAddMoney}>Ajouter l'argent</button>
               </div>
             {/if}
 
@@ -4696,8 +4710,10 @@
   }
   .inv-purse { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .coin {
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
     height: 32px;
     font-family: var(--font-ui);
     font-size: 14px;
@@ -4709,6 +4725,25 @@
   .coin.po { color: #d4a73c; }
   .coin.pa { color: var(--text-2); }
   .coin.pc { color: #b07d54; }
+  .coin-value { flex: 1; text-align: center; white-space: nowrap; }
+  .coin-btn {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    color: inherit;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .coin-btn:hover { background: var(--selected); color: var(--heading); }
   .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .inv-list li {
     display: flex;
@@ -4742,10 +4777,6 @@
   }
   .inv-actions button:hover { background: var(--selected); color: var(--heading); }
   .inv-add { display: flex; gap: 4px; align-items: center; }
-  .inv-add-label {
-    flex: none;
-    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
-  }
   .inv-input {
     font-family: var(--font-body);
     font-size: 13px;

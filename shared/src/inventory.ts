@@ -69,13 +69,13 @@ export function canAfford(source: Money, amount: Money): boolean {
   return source.po >= amount.po && source.pa >= amount.pa && source.pc >= amount.pc;
 }
 
-/** Ajoute un montant à une bourse (chaque pièce plafonnée à 999 999). */
-export function addMoney(source: Money, amount: Money): Money {
-  const add = (a: number, b: number) => Math.min(999999, a + Math.max(0, b));
+/** Ajuste une bourse par deltas signés (chaque pièce bornée à 0..999 999). */
+export function adjustMoney(source: Money, delta: Money): Money {
+  const clamp = (v: number) => Math.max(0, Math.min(999999, v));
   return {
-    po: add(source.po, amount.po),
-    pa: add(source.pa, amount.pa),
-    pc: add(source.pc, amount.pc),
+    po: clamp(source.po + delta.po),
+    pa: clamp(source.pa + delta.pa),
+    pc: clamp(source.pc + delta.pc),
   };
 }
 
