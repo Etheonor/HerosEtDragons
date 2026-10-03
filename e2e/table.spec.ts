@@ -1099,6 +1099,38 @@ test.describe("GroupFrame (Lot 10)", () => {
   });
 });
 
+test.describe("Fenêtres et DicePad (Lot 10)", () => {
+  test("le panneau se réduit à sa barre de titre et se restaure", async ({ page }) => {
+    await openTable(page, MJ);
+    const panel = page.locator(".panel");
+
+    await page.getByRole("button", { name: "Réduire séance" }).click();
+    await expect(page.getByRole("button", { name: "Journal" })).toHaveCount(0);
+    const collapsed = (await panel.boundingBox())!;
+    expect(collapsed.height).toBeLessThan(60);
+
+    await page.getByRole("button", { name: "Agrandir séance" }).click();
+    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+  });
+
+  test("le DicePad : modificateur, dé choisi, lancer et résultat en historique", async ({
+    page,
+  }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Dés", exact: true }).click();
+
+    await page.getByRole("button", { name: "Augmenter le modificateur" }).click();
+    await expect(page.locator(".mod-value")).toHaveText("+1");
+
+    await page.getByRole("button", { name: "D6", exact: true }).click();
+    const launch = page.getByRole("button", { name: /Lancer 1d6 \+ 1/ });
+    await expect(launch).toBeVisible();
+    await launch.click();
+
+    await expect(page.locator(".history-entry").first()).toHaveText(/1d6\+1 → \d+/);
+  });
+});
+
 test.describe("TopActions (Lot 10)", () => {
   test("le bouton Tableau de bord ouvre le panneau, l'aide s'ouvre au clic", async ({ page }) => {
     await openTable(page, MJ);

@@ -10,8 +10,9 @@
    * - la fermeture reste gérée par la page (`onClose`), qui possède aussi
    *   l'état ouvert/fermé (`panelsOpen`).
    */
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, type Component, type Snippet } from 'svelte';
   import CloseButton from '$lib/ds/CloseButton.svelte';
+  import { ICONS } from '$lib/ds/icons';
   import { bringToFront, panelZ } from './panelStack.svelte';
 
   interface Props {
@@ -21,6 +22,8 @@
     onClose?: () => void;
     /** Libellé accessible du bouton de fermeture (« Fermer la compagnie »). */
     closeLabel?: string;
+    /** Icône Penpot de l'en-tête (composant Lucide). */
+    icon?: Component;
     /** Rect initial en px, converti en fractions du viewport au premier montage. */
     initial: { x: number; y: number; w: number; h: number };
     minW?: number;
@@ -35,12 +38,15 @@
     campaignId,
     onClose,
     closeLabel,
+    icon: Icon,
     initial,
     minW = 240,
     minH = 160,
     class: className = '',
     children,
   }: Props = $props();
+
+  let collapsed = $state(false);
 
   const SCHEMA = 1;
   const SNAP = 12;
@@ -195,9 +201,12 @@
 
 <div
   class="panel-surface surface-raised {className}"
+  class:collapsed
   role="region"
   aria-label={title}
-  style="left: {rect.x}px; top: {rect.y}px; width: {rect.w}px; height: {rect.h}px; z-index: {z};"
+  style="left: {rect.x}px; top: {rect.y}px; width: {rect.w}px; height: {collapsed
+    ? 'auto'
+    : `${rect.h}px`}; z-index: {z};"
   onpointerdown={focusPanel}
 >
   <div
@@ -208,26 +217,43 @@
     onpointerup={onHeaderPointerUp}
     onpointercancel={onHeaderPointerUp}
   >
+    {#if Icon}
+      <span class="panel-icon"><Icon size={16} strokeWidth={1.8} /></span>
+    {/if}
     <span class="panel-title">{title}</span>
+    <button
+      type="button"
+      class="panel-collapse"
+      aria-label={collapsed ? `Agrandir ${title.toLowerCase()}` : `Réduire ${title.toLowerCase()}`}
+      title={collapsed ? 'Agrandir' : 'Réduire'}
+      onclick={() => (collapsed = !collapsed)}
+    >
+      {#if collapsed}<ICONS.plus size={14} strokeWidth={2} />{:else}<ICONS.minus
+          size={14}
+          strokeWidth={2}
+        />{/if}
+    </button>
     {#if onClose}
       <CloseButton label={closeLabel ?? `Fermer ${title.toLowerCase()}`} onclick={onClose} />
     {/if}
   </div>
 
-  <div class="panel-content">
-    {@render children()}
-  </div>
+  {#if !collapsed}
+    <div class="panel-content">
+      {@render children()}
+    </div>
 
-  {#each ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as handle (handle)}
-    <div
-      class="panel-handle handle-{handle}"
-      role="presentation"
-      onpointerdown={(e) => onHandlePointerDown(e, handle as Handle)}
-      onpointermove={onHandlePointerMove}
-      onpointerup={onHandlePointerUp}
-      onpointercancel={onHandlePointerUp}
-    ></div>
-  {/each}
+    {#each ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as handle (handle)}
+      <div
+        class="panel-handle handle-{handle}"
+        role="presentation"
+        onpointerdown={(e) => onHandlePointerDown(e, handle as Handle)}
+        onpointermove={onHandlePointerMove}
+        onpointerup={onHandlePointerUp}
+        onpointercancel={onHandlePointerUp}
+      ></div>
+    {/each}
+  {/if}
 </div>
 
 <style>
@@ -257,11 +283,40 @@
   }
   .panel-head:active { cursor: grabbing; }
   .panel-title {
+    flex: 1;
+    min-width: 0;
     font-family: var(--font-title);
     font-size: 15px;
     color: var(--heading);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+  .panel-icon {
+    display: grid;
+    place-items: center;
+    color: var(--text-2);
+    flex: none;
+  }
+  .panel-collapse {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-h-sm);
+    height: var(--control-h-sm);
+    padding: 0;
+    color: var(--text-2);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    flex: none;
+  }
+  .panel-collapse:hover {
+    background: var(--selected);
+    color: var(--heading);
+  }
+  .panel-surface.collapsed .panel-head { border-bottom: none; }
   .panel-content {
     flex: 1;
     min-height: 0;

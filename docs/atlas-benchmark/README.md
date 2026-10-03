@@ -147,8 +147,11 @@ affichés, PNJ seulement posés ; clic = cibler/recentrer, double-clic =
 recentrer/placer, clic droit = menu complet PV/états/taille/modèle, survol de
 la barre = −/+ PV ; la liste complète reste en secours par la palette) ; les
 **TopActions** (Compendium, Tableau de bord, Aide) en haut à droite remplacent
-le lien Compendium du session-bar, et le **Zoom** reprend la peau Penpot (pilule
-sombre, en bas à droite).
+le lien Compendium du session-bar, le **Zoom** reprend la peau Penpot (pilule
+sombre, en bas à droite), les **fenêtres** gagnent l'en-tête Penpot (icône +
+réduire à la barre de titre) et le **DicePad** est enrichi (modificateur en
+pas-à-pas, dés D4-D20 sélectionnables, gros bouton « Lancer 1dN ± n »,
+historique avec résultats).
 
 ---
 

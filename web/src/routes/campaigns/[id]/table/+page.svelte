@@ -153,7 +153,8 @@
   }
   let activeTab = $state<'journal' | 'dice' | 'inv'>('journal');
   let diceMod = $state(0);
-  let diceHistory: { id: number; label: string }[] = $state([]);
+  let diceSides = $state(20);
+  let diceHistory: { id: number; label: string; total: number | null }[] = $state([]);
   let diceHistSeq = 0;
   let campaignName = $state('');
   let session = $state<{ user: { id: string; name: string } } | null>(null);
@@ -1187,10 +1188,26 @@
   function quickRoll(sides: number) {
     sendWs({ type: 'dice.roll', sides, n: 1, mod: diceMod });
     diceHistory = [
-      { id: ++diceHistSeq, label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}` },
+      {
+        id: ++diceHistSeq,
+        label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}`,
+        total: null,
+      },
       ...diceHistory,
     ].slice(0, 6);
   }
+
+  /** Le résultat du jet local (`dice.result` n'est envoyé qu'à son auteur)
+   *  complète la dernière entrée de l'historique restée sans total. */
+  let lastDiceAnim: typeof store.diceAnim = null;
+  $effect(() => {
+    const anim = store.diceAnim;
+    if (!anim || anim === lastDiceAnim) return;
+    lastDiceAnim = anim;
+    const idx = diceHistory.findIndex((h) => h.total === null);
+    if (idx < 0) return;
+    diceHistory = diceHistory.map((h, i) => (i === idx ? { ...h, total: anim.total } : h));
+  });
 
   function setMode(mode: 'exploration' | 'combat') {
     if (!isMj) return;
@@ -2650,6 +2667,7 @@
       id="compagnie"
       title="Compagnie"
       campaignId={campaignId}
+      icon={ICONS.library}
       onClose={() => setPanelOpen('compagnie', false)}
       closeLabel="Fermer la compagnie"
       initial={{ x: 16, y: 56, w: 288, h: Math.min(640, innerHeight - 200) }}
@@ -3053,6 +3071,7 @@
       id="panel"
       title="Séance"
       campaignId={campaignId}
+      icon={ICONS.library}
       onClose={() => setPanelOpen('panel', false)}
       closeLabel="Fermer le panneau"
       initial={{
@@ -3137,22 +3156,38 @@
         </div>
       {/if}
 
-      <!-- Onglet Dés -->
+      <!-- Onglet Dés : DicePad (lot 10.4) -->
       {#if activeTab === 'dice'}
         <div class="dice-tab scroll-area" use:scrollArea>
           <div class="dice-mod-row">
             <span class="mod-label">Modificateur</span>
-            <input class="mod-input" type="number" bind:value={diceMod} min="-20" max="20" />
+            <div class="mod-stepper">
+              <button
+                type="button"
+                aria-label="Diminuer le modificateur"
+                onclick={() => (diceMod = Math.max(-20, diceMod - 1))}>−</button
+              >
+              <span class="mod-value">{diceMod > 0 ? `+${diceMod}` : diceMod}</span>
+              <button
+                type="button"
+                aria-label="Augmenter le modificateur"
+                onclick={() => (diceMod = Math.min(20, diceMod + 1))}>+</button
+              >
+            </div>
           </div>
           <div class="dice-grid">
             {#each diceTypes as d (d)}
-              {#if d === 20}
-                <button class="dice-btn d20" onclick={() => quickRoll(d)}>d20</button>
-              {:else}
-                <button class="dice-btn" onclick={() => quickRoll(d)}>d{d}</button>
-              {/if}
+              <button
+                class="dice-btn"
+                class:selected={diceSides === d}
+                aria-pressed={diceSides === d}
+                onclick={() => (diceSides = d)}>D{d}</button
+              >
             {/each}
           </div>
+          <button class="dice-launch" onclick={() => quickRoll(diceSides)}>
+            Lancer 1d{diceSides} {diceMod >= 0 ? '+' : '−'} {Math.abs(diceMod)}
+          </button>
           <div class="dice-tip">
             Astuce : /2d6+3 pour un jet composé, /4d6b pour biffer le dé le plus bas, /caracs pour
             les six jets de création
@@ -3163,7 +3198,9 @@
               <div class="history-empty">Aucun jet pour l'instant</div>
             {:else}
               {#each diceHistory as h (h.id)}
-                <div class="history-entry">{h.label}</div>
+                <div class="history-entry">
+                  {h.label}{h.total !== null ? ` → ${h.total}` : ' …'}
+                </div>
               {/each}
             {/if}
           </div>
@@ -3247,6 +3284,7 @@
       id="dashboard"
       title="Tableau de bord"
       campaignId={campaignId}
+      icon={ICONS.dashboard}
       onClose={() => setPanelOpen('dashboard', false)}
       closeLabel="Fermer le tableau de bord"
       initial={{ x: 340, y: 90, w: 336, h: Math.min(560, innerHeight - 240) }}
@@ -3288,6 +3326,7 @@
       id={`pin:${openPin.id}`}
       title={openPin.label}
       campaignId={campaignId}
+      icon={ICONS.pin}
       onClose={() => (openPinId = null)}
       closeLabel="Fermer la note"
       initial={{ x: 380, y: 110, w: 340, h: 320 }}
@@ -4396,27 +4435,47 @@
   .chat-input-row { display: flex; gap: 7px; padding: 10px 12px; border-top: 2px solid var(--border); flex: none; }
   :global(.chat-input) { flex: 1; min-width: 0; }
 
-  .dice-tab { padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; min-height: 0; }
-  .dice-mod-row { display: flex; align-items: center; gap: 8px; }
-  .mod-label { font-size: 14px; font-weight: 700; color: var(--heading); }
-  .mod-input {
-    width: 52px; font-family: var(--font-body); font-size: 14px; padding: 6px 8px; text-align: center;
-    border: 2px solid var(--border); border-radius: 12px 220px 12px 225px / 225px 12px 255px 12px;
-    background: var(--bg); color: var(--text); outline: none;
+  .dice-tab { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+  .dice-mod-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .mod-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .mod-stepper { display: flex; align-items: center; gap: 6px; }
+  .mod-stepper button {
+    font-family: var(--font-body); font-size: 17px; font-weight: 700;
+    width: 34px; height: 34px; padding: 0; line-height: 1;
+    color: var(--text); background: var(--surface-canvas);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .mod-stepper button:hover { color: var(--accent-text); border-color: var(--accent-border); }
+  .mod-value {
+    min-width: 36px; text-align: center;
+    font-family: var(--font-ui); font-size: 16px; font-weight: 700; color: var(--heading);
   }
   .dice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
   .dice-btn {
-    font-family: var(--font-body); font-size: 16px; padding: 16px 0;
-    border: 2px solid var(--border);
-    border-radius: 225px 12px 220px 12px / 12px 200px 12px 255px;
-    background: var(--panel); color: var(--text); cursor: pointer;
+    height: 54px;
+    font-family: var(--font-title); font-size: 22px;
+    color: var(--heading); background: var(--sunken);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-md);
+    cursor: pointer;
   }
-  .dice-btn:hover { background: var(--selected); color: var(--heading); }
-  .dice-btn.d20 {
-    background: var(--accent); color: var(--accent-fg); border-color: var(--accent-border);
-    border-radius: var(--sketchy-1);
+  .dice-btn:hover { background: var(--surface-raised); border-color: var(--border-strong-2); }
+  .dice-btn.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-border);
   }
-  .dice-btn.d20:hover { background: var(--accent-hover); }
+  .dice-launch {
+    width: 100%; height: 54px;
+    font-family: var(--font-ui); font-size: 17px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .dice-launch:hover { background: var(--accent-hover); }
   .dice-tip { font-size: 13px; font-weight: 500; color: var(--text-2); }
 
   .dice-history { border-top: 1px solid var(--border-soft); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; }

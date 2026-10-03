@@ -199,8 +199,8 @@ table**, **fiche en panneau flottant** et **accueil** avec sélecteur de
 personnage (les routes `/compendium` et `/characters/:id` restent pour les liens
 directs) ; reste la surbrillance des modifications de feuille, reportée.
 **Lot peaux Penpot en cours** : TargetFrame partagé (cible MJ filtrée B5),
-GroupFrame (remplace la Compagnie) et TopActions/Zoom livrés ; restent la peau
-des fenêtres + DicePad et le resserrement toolbar/initiative. Référence :
+GroupFrame (remplace la Compagnie), TopActions/Zoom, en-tête de fenêtre avec
+réduire et DicePad livrés ; reste le resserrement toolbar/initiative. Référence :
 `docs/atlas-benchmark/10-lot-peaux-penpot.md`.
 
 | Document                                             | Contenu                                                                                                     |
