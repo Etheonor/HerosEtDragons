@@ -65,7 +65,13 @@
     </Tooltip.Root>
     {#if options}
       <Popover.Root>
-        <Popover.Trigger class="tg-more" aria-label="Options — {label}">▾</Popover.Trigger>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <button {...props} type="button" class="tg-more" aria-label="Options — {label}"
+              >▾</button
+            >
+          {/snippet}
+        </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
             {...surfaceProps('overlay', 'tool-options')}
@@ -85,10 +91,10 @@
   .tool-group {
     display: inline-flex;
     align-items: stretch;
-    height: 38px;
+    height: 44px;
     background: var(--panel);
     border: 1.5px solid var(--border-default);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     overflow: hidden;
     flex: none;
   }
@@ -100,7 +106,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 42px;
+    width: 46px;
     padding: 0;
     color: var(--text-2);
     background: transparent;

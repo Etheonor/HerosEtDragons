@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { ICONS } from '$lib/ds/icons';
   import { api, type NpcTemplate } from '$lib/api';
 
   let {
@@ -130,8 +131,15 @@
 </script>
 
 <div class="npc-library" bind:this={panelEl}>
-  <button class="lib-btn" class:open onclick={toggle}>
-    PNJ<span class="count">{templates.length}</span>
+  <button
+    class="lib-btn"
+    class:open
+    onclick={toggle}
+    aria-label="PNJ"
+    title="Bibliothèque de PNJ (modèles)"
+  >
+    <ICONS.npc size={19} strokeWidth={2} aria-hidden="true" />
+    {#if templates.length > 0}<span class="count">{templates.length}</span>{/if}
   </button>
 
   {#if open}
@@ -228,18 +236,17 @@
     display: inline-flex;
   }
   .lib-btn {
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 4px 11px;
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 8px 210px 8px 235px / 230px 8px 245px 8px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-md);
     color: var(--text-2);
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
   }
   .lib-btn:hover,
   .lib-btn.open {
@@ -247,13 +254,21 @@
     color: var(--heading);
   }
   .count {
-    font-size: 10px;
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    font-size: 10.5px;
     font-weight: 700;
-    color: var(--accent-text);
-    background: var(--bg);
-    border-radius: 8px 3px 8px 3px;
-    padding: 0 5px;
-    line-height: 1.5;
+    color: var(--heading);
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
+    padding: 0 4px;
+    line-height: 1;
   }
 
   .lib-panel {

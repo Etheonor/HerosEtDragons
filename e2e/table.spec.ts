@@ -1113,6 +1113,15 @@ test.describe("Fenêtres et DicePad (Lot 10)", () => {
     await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
   });
 
+  test("le DiceButton ouvre le pad et porte le dernier résultat en badge", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Ouvrir les dés" }).click();
+    await expect(page.locator(".tab.active")).toHaveText("Dés");
+
+    await page.getByRole("button", { name: /Lancer 1d20 \+ 0/ }).click();
+    await expect(page.locator(".dice-badge")).toHaveText(/\d+/);
+  });
+
   test("le DicePad : modificateur, dé choisi, lancer et résultat en historique", async ({
     page,
   }) => {

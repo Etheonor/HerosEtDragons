@@ -152,9 +152,13 @@ sombre, en bas à droite), les **fenêtres** gagnent l'en-tête Penpot (icône +
 réduire à la barre de titre) et le **DicePad** est enrichi (modificateur en
 pas-à-pas, dés D4-D20 sélectionnables, gros bouton « Lancer 1dN ± n »,
 historique avec résultats). **Lot 10 complet** : la toolbar est passée en icônes
-seules (raccourci dans un tooltip `<kbd>`, outil actif en rouge, accordéon
-d'options conservé) et l'initiative est resserrée sur la maquette (ligne 46 px,
-badge de score carré, valeur de PV, flèches au survol).
+seules dans une **pilule** (raccourci dans un tooltip `<kbd>`, outil actif en
+rouge, accordéon d'options conservé ; Bibliothèque, Cartes et PNJ en carrés
+d'icônes avec badges), le **header est épuré** (toggle de mode en pilule, nom de
+campagne discret, palette en icône ; dés rapides et présence retirés) et le
+**DiceButton** flottant ouvre le pad avec le dernier résultat en badge.
+L'initiative est resserrée sur la maquette (ligne 46 px, badge de score carré,
+valeur de PV, flèches au survol).
 
 ---
 

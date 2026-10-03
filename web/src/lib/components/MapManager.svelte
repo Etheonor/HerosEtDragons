@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { ICONS } from '$lib/ds/icons';
   import { api, type MapSummary } from '$lib/api';
 
   let {
@@ -244,8 +245,15 @@
 </script>
 
 <div class="map-manager" bind:this={panelEl}>
-  <button class="maps-btn" class:open onclick={toggle}>
-    Cartes<span class="count">{maps.length}</span>
+  <button
+    class="maps-btn"
+    class:open
+    onclick={toggle}
+    aria-label="Cartes"
+    title="Cartes de la campagne"
+  >
+    <ICONS.maps size={19} strokeWidth={2} aria-hidden="true" />
+    {#if maps.length > 0}<span class="count">{maps.length}</span>{/if}
   </button>
 
   {#if open}
@@ -424,18 +432,17 @@
     display: inline-flex;
   }
   .maps-btn {
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 4px 11px;
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 225px 8px 220px 8px / 8px 200px 8px 255px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-md);
     color: var(--text-2);
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
   }
   .maps-btn:hover,
   .maps-btn.open {
@@ -443,13 +450,21 @@
     color: var(--heading);
   }
   .count {
-    font-size: 10px;
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    font-size: 10.5px;
     font-weight: 700;
-    color: var(--accent-text);
-    background: var(--bg);
-    border-radius: 8px 3px 8px 3px;
-    padding: 0 5px;
-    line-height: 1.5;
+    color: var(--heading);
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
+    padding: 0 4px;
+    line-height: 1;
   }
 
   .maps-panel {

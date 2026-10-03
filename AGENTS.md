@@ -200,7 +200,8 @@ personnage (les routes `/compendium` et `/characters/:id` restent pour les liens
 directs) ; reste la surbrillance des modifications de feuille, reportée.
 **Lot peaux Penpot livré** : TargetFrame partagé (cible MJ filtrée B5),
 GroupFrame (remplace la Compagnie), TopActions/Zoom, en-tête de fenêtre avec
-réduire, DicePad enrichi et resserrement toolbar/initiative. Référence :
+réduire, DicePad enrichi, toolbar en pilule d'icônes, header épuré, DiceButton
+flottant et resserrement de l'initiative. Référence :
 `docs/atlas-benchmark/10-lot-peaux-penpot.md`.
 
 | Document                                             | Contenu                                                                                                     |

@@ -43,6 +43,7 @@
   import TargetFrame from '$lib/table/TargetFrame.svelte';
   import GroupFrame from '$lib/table/GroupFrame.svelte';
   import TopActions from '$lib/table/TopActions.svelte';
+  import DiceButton from '$lib/table/DiceButton.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -2574,36 +2575,20 @@
   <div class="layer-chrome">
   <!-- Barre de session -->
   <header class="session-bar">
-    <div class="session-title">
-      <span class="campaign-name">{campaignName || '…'}</span>
-      <span class="session-hint">Séance en cours · Espace : commandes · double-clic : ping</span>
-    </div>
-    <button
-      class="palette-btn"
-      aria-label="Command palette (Espace)"
-      onclick={() => (paletteOpen = true)}
-    >⌘ Commandes</button>
     <div class="mode-toggle">
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
+    <span class="campaign-name">{campaignName || '…'}</span>
+    <button
+      class="palette-btn"
+      aria-label="Command palette (Espace)"
+      title="Commandes (Espace)"
+      onclick={() => (paletteOpen = true)}
+    >
+      <ICONS.commands size={18} strokeWidth={2} aria-hidden="true" />
+    </button>
     <div class="grow"></div>
-    <div class="quick-dice">
-      <span class="qd-label">Lancer</span>
-      {#each diceTypes as d (d)}
-        {#if d === 20}
-          <button class="qd-btn d20" onclick={() => quickRoll(d)}>d20</button>
-        {:else}
-          <button class="qd-btn" onclick={() => quickRoll(d)}>d{d}</button>
-        {/if}
-      {/each}
-    </div>
-    <div class="v-sep"></div>
-    <div class="presence">
-      {#each store.presence as p, i (p.userId + ':' + i)}
-        <span class="presence-chip" style="border-color: {p.color};">{p.name}</span>
-      {/each}
-    </div>
   </header>
 
   {#if targetCard}
@@ -2619,6 +2604,15 @@
     onCompendium={() => openCompendium()}
     onDashboard={() => setPanelOpen('dashboard', !panelsOpen.dashboard)}
     onHelp={() => (helpOpen = true)}
+  />
+
+  <DiceButton
+    lastResult={diceHistory[0]?.total ?? null}
+    shifted={panelsOpen.panel}
+    onOpen={() => {
+      setPanelOpen('panel', true);
+      activeTab = 'dice';
+    }}
   />
 
   {#if groupPj.length > 0 || groupPnj.length > 0}
@@ -3049,8 +3043,14 @@
 
           {#if isMj}
             <div class="tsep"></div>
-            <button class="asset-btn" type="button" onclick={() => (assetManagerOpen = true)}>
-              <ICONS.library size={14} strokeWidth={2} aria-hidden="true" /> Bibliothèque
+            <button
+              class="asset-btn"
+              type="button"
+              aria-label="Bibliothèque"
+              title="Bibliothèque (cartes, PNJ, personnages)"
+              onclick={() => (assetManagerOpen = true)}
+            >
+              <ICONS.library size={19} strokeWidth={2} aria-hidden="true" />
             </button>
             <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
             <NpcLibrary {campaignId} onPlace={(tpl, count) => {
@@ -3518,43 +3518,46 @@
     z-index: var(--z-chrome);
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 10px 18px;
-    border-bottom: 2px solid var(--border);
-    background: var(--bg);
-    min-height: 48px;
+    gap: 12px;
+    padding: 8px 14px;
   }
-  .session-title { display: flex; flex-direction: column; }
-  .campaign-name { font-family: var(--font-title); font-size: 20px; line-height: 1.1; color: var(--heading); }
-  .session-hint { font-size: 13px; font-weight: 500; color: var(--accent-text); }
+  .campaign-name {
+    font-family: var(--font-title); font-size: 17px; line-height: 1.1;
+    color: var(--heading); opacity: 0.9;
+  }
   .grow { flex: 1; }
-  .v-sep { width: 2px; height: 30px; background: var(--border-soft); }
 
-  .mode-toggle { display: flex; margin-left: 10px; }
-  .mode-btn {
-    font-family: var(--font-body); font-size: 13px; padding: 7px 14px;
-    border: 2px solid var(--border); background: var(--panel); color: var(--text-2); cursor: pointer;
+  .mode-toggle {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
   }
-  .mode-btn:first-child { border-right-width: 1px; border-radius: 225px 0 0 12px / 12px 0 0 255px; }
-  .mode-btn:last-child { border-left-width: 1px; border-radius: 0 12px 225px 0 / 0 255px 12px 0; }
-  .mode-btn.exp-active { background: var(--selected); color: var(--heading); }
-  .mode-btn.combat-active { background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
+  .mode-btn {
+    font-family: var(--font-ui); font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+    padding: 6px 15px; border: none; border-radius: var(--radius-full);
+    background: transparent; color: var(--text-2); cursor: pointer;
+  }
+  .mode-btn:hover { color: var(--heading); }
+  .mode-btn.exp-active { background: var(--surface-raised); color: var(--heading); }
+  .mode-btn.combat-active { background: var(--accent); color: var(--accent-fg); }
 
   .palette-btn {
-    font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
-    padding: 4px 12px; color: var(--text-2); background: var(--panel);
-    border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer;
+    display: inline-grid; place-items: center;
+    width: 38px; height: 38px; padding: 0;
+    color: var(--text-2); background: var(--surface-canvas);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-md); cursor: pointer;
   }
-  .palette-btn:hover { color: var(--heading); background: var(--selected); }
+  .palette-btn:hover { color: var(--heading); background: var(--surface-raised); }
 
   .asset-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-body);
-    font-size: 12.5px;
-    font-weight: 600;
-    padding: 5px 11px;
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     color: var(--text-2);
     background: var(--panel);
     border: 1.5px solid var(--border-default);
@@ -3563,29 +3566,6 @@
     white-space: nowrap;
   }
   .asset-btn:hover { color: var(--heading); background: var(--selected); }
-
-  .quick-dice { display: flex; gap: 6px; align-items: center; }
-  .qd-label { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
-  .qd-btn {
-    font-family: var(--font-body); font-size: 12.5px; padding: 6px 9px;
-    background: var(--panel); border: 2px solid var(--border);
-    border-radius: 225px 12px 220px 12px / 12px 200px 12px 255px;
-    color: var(--text); cursor: pointer;
-  }
-  .qd-btn:hover { background: var(--selected); color: var(--heading); }
-  .qd-btn.d20 {
-    font-size: 13px; padding: 7px 12px;
-    background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg);
-    border-radius: var(--sketchy-1);
-  }
-  .qd-btn.d20:hover { background: var(--accent-hover); }
-
-  .presence { display: flex; gap: 5px; }
-  .presence-chip {
-    font-size: 11px; font-weight: 500; padding: 2px 8px;
-    background: var(--panel); border: 1.5px solid var(--border); border-radius: 10px 3px 12px 3px;
-    color: var(--text); white-space: nowrap;
-  }
 
   /* ── Panneaux flottants : le chrome est dans <Panel>, ici le contenu. ── */
   .panel-body {
@@ -3890,9 +3870,12 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
+    padding: 6px;
     max-width: 100%;
     flex-wrap: nowrap;
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: 34px;
   }
   .tool-hint-chip {
     padding: 4px 14px;
@@ -3949,12 +3932,12 @@
   }
   .ghost-btn:hover { border-color: var(--text-2); color: var(--text); }
   .ghost-btn.danger:hover { border-color: var(--accent-border); color: var(--accent-text); }
-  .tsep { width: 2px; height: 20px; background: var(--border-soft); margin: 0 4px; }
+  .tsep { width: 1.5px; height: 26px; background: var(--border-default); margin: 0 4px; }
   .history-group { display: flex; align-items: center; gap: 2px; }
   .history-btn {
     display: grid; place-items: center;
-    width: 30px; height: 30px;
-    background: transparent; border: none; border-radius: var(--radius-sm);
+    width: 40px; height: 40px;
+    background: transparent; border: none; border-radius: var(--radius-md);
     color: var(--text-2); cursor: pointer;
   }
   .history-btn:hover:not(:disabled) { background: var(--bg); color: var(--heading); }
