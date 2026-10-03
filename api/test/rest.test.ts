@@ -141,6 +141,16 @@ describe("REST — autorisation (requireAuth / requireMemberOf / requireMj)", ()
     expect(outsider.campaigns).toEqual([]);
   });
 
+  it("la liste des campagnes porte les PJ de l'utilisateur courant", async () => {
+    type Row = { id: string; myCharacters: { id: string; name: string }[] };
+    const asPlayer = (await (await get("/api/campaigns", OTHER)).json()) as { campaigns: Row[] };
+    const playerRow = asPlayer.campaigns.find((c) => c.id === CAMPAIGN);
+    expect(playerRow?.myCharacters).toEqual([{ id: "rest-pj", name: "Héros" }]);
+
+    const asMj = (await (await get("/api/campaigns", MISTRESS)).json()) as { campaigns: Row[] };
+    expect(asMj.campaigns.find((c) => c.id === CAMPAIGN)?.myCharacters).toEqual([]);
+  });
+
   it("un joueur reçoit 403 sur une route MJ (invitations, création de carte, undo)", async () => {
     const inv = await post(`/api/campaigns/${CAMPAIGN}/invitations`, {}, OTHER);
     expect(inv.status).toBe(403);

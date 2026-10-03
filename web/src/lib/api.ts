@@ -2,7 +2,7 @@
 // Les types viennent de @rollwith/shared/dto (source unique avec l'API).
 import type {
   CampaignDetail,
-  CampaignSummary,
+  CampaignListItem,
   CharacterDetail,
   CharacterSummary,
   CompendiumEntryDto,
@@ -27,6 +27,7 @@ export type { CharacterSheet };
 /** Ré-exports des DTO partagés (composants) — source : shared/dto. */
 export type {
   CampaignSummary,
+  CampaignListItem,
   CampaignDetail,
   CharacterSummary,
   CharacterDetail,
@@ -65,7 +66,7 @@ async function fetchForm<T>(url: string, form: FormData, method = "POST"): Promi
 
 export const api = {
   campaigns: {
-    list: () => fetchJson<{ campaigns: CampaignSummary[] }>("/api/campaigns"),
+    list: () => fetchJson<{ campaigns: CampaignListItem[] }>("/api/campaigns"),
     create: (name: string) =>
       fetchJson<{ id: string; name: string; role: string }>("/api/campaigns", {
         method: "POST",

@@ -135,9 +135,11 @@ détail + liste filtrés, tests REST) ; **7.3** — le compendium s'ouvre en
 `/compendium`, conservée pour les liens directs ; tooltip d'état, partages du
 journal et commande palette branchés dessus) ; **7.1** — la **fiche s'ouvre en
 panneau flottant** (plusieurs fiches à la fois, drag/resize persistés, jets et
-PV branchés sur la table ; la route `/characters/:id` reste en plein écran).
-Restent **7.2** (surbrillance des modifications, reporté) et **7.4** (accueil).
-Ensuite : le **lot peaux Penpot du chrome**.
+PV branchés sur la table ; la route `/characters/:id` reste en plein écran) ;
+**7.4** — l'**accueil** montre le PJ de l'utilisateur (« Feuille · nom » dans la
+carte, double-clic sur la carte pour ouvrir la table). Reste **7.2**
+(surbrillance des modifications, reporté). Ensuite : le **lot peaux Penpot du
+chrome**.
 
 ---
 

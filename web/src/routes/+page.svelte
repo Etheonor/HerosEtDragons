@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type CampaignSummary } from '$lib/api';
+  import { goto } from '$app/navigation';
+  import { api, type CampaignListItem } from '$lib/api';
   import { auth, type Session } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
@@ -8,7 +9,7 @@
   import CharacterCreateModal from '$lib/components/CharacterCreateModal.svelte';
 
   let session = $state<Session | null>(null);
-  let campaigns = $state<CampaignSummary[]>([]);
+  let campaigns = $state<CampaignListItem[]>([]);
   let loading = $state(true);
 
   let createOpen = $state(false);
@@ -118,7 +119,7 @@
     <div class="hero-card">
       <div class="brand-hero">RollWith H&amp;D</div>
       <p class="muted">Connectez-vous pour accéder à vos campagnes.</p>
-      <a href="/login" class="cta">Se connecter</a>
+      <Button variant="primary" onclick={() => goto('/login')}>Se connecter</Button>
     </div>
   </div>
 {:else}
@@ -143,7 +144,13 @@
 
         <div class="campaign-grid">
           {#each campaigns as c, i (c.id)}
-            <div class="campaign-card" style="border-radius: {i % 2 ? 'var(--sketchy-2)' : 'var(--sketchy-1)'};">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="campaign-card"
+              style="border-radius: {i % 2 ? 'var(--sketchy-2)' : 'var(--sketchy-1)'};"
+              title="Double-clic : ouvrir la table"
+              ondblclick={() => goto(`/campaigns/${c.id}/table`)}
+            >
               <div class="campaign-top">
                 <div class="campaign-name-col">
                   <div class="campaign-name">{c.name}</div>
@@ -157,10 +164,19 @@
                 </span>
               </div>
               <div class="campaign-actions">
-                <a href="/campaigns/{c.id}/table" class="cta open-table">Ouvrir la table</a>
-                <button class="invite-link" onclick={() => (createCharFor = { id: c.id, name: c.name })}>
-                  {c.role === 'mj' ? '+ PJ' : 'Créer mon personnage'}
-                </button>
+                <Button variant="primary" onclick={() => goto(`/campaigns/${c.id}/table`)}>
+                  Ouvrir la table
+                </Button>
+                {#each c.myCharacters as pc (pc.id)}
+                  <button class="invite-link" onclick={() => goto(`/characters/${pc.id}`)}>
+                    Feuille · {pc.name}
+                  </button>
+                {/each}
+                {#if c.role === 'mj' || c.myCharacters.length === 0}
+                  <button class="invite-link" onclick={() => (createCharFor = { id: c.id, name: c.name })}>
+                    {c.role === 'mj' ? '+ PJ' : 'Créer mon personnage'}
+                  </button>
+                {/if}
                 {#if c.role === 'mj'}
                   <button class="invite-link" onclick={() => openInvite(c.id)}>
                     {inviteCampaignId === c.id ? 'Fermer' : "Inviter un joueur"}
@@ -212,7 +228,10 @@
     <CharacterCreateModal
       campaignId={createCharFor.id}
       campaignName={createCharFor.name}
-      onClose={() => (createCharFor = null)}
+      onClose={() => {
+        createCharFor = null;
+        void refresh();
+      }}
     />
   {/if}
 
@@ -425,23 +444,6 @@
     gap: 16px;
     margin-top: auto;
   }
-  .cta {
-    font-size: 14.5px;
-    font-weight: 700;
-    padding: 9px 20px;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border: 2px solid var(--accent-border);
-    border-radius: var(--sketchy-3);
-    text-decoration: none;
-    display: inline-block;
-    transition: background 0.15s;
-  }
-  .cta:hover {
-    background: var(--accent-hover);
-    color: var(--accent-fg);
-  }
-
   .create-tile {
     font-family: var(--font-body);
     border: 2px dashed var(--border);

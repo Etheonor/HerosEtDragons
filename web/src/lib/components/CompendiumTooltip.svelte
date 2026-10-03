@@ -12,7 +12,7 @@
     campaign: string;
     category: string;
     slug: string;
-    onOpen?: () => void;
+    onOpen: () => void;
     children: import('svelte').Snippet;
   } = $props();
 
@@ -56,13 +56,7 @@
     <span class="tip-card surface-raised" role="tooltip">
       <span class="tip-title">{entry.title}</span>
       <span class="tip-text">{excerpt(entry)}</span>
-      {#if onOpen}
-        <button class="tip-link" type="button" onclick={onOpen}>Ouvrir dans le compendium →</button>
-      {:else}
-        <a class="tip-link" href="/compendium?campaign={campaign}&cat={entry.category}&slug={entry.slug}">
-          Ouvrir dans le compendium →
-        </a>
-      {/if}
+      <button class="tip-link" type="button" onclick={onOpen}>Ouvrir dans le compendium →</button>
     </span>
   {/if}
 </span>

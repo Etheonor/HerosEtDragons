@@ -24,6 +24,11 @@ export interface CampaignSummary {
   createdAt: string;
 }
 
+/** Résumé de campagne + les PJ de l'utilisateur courant (accueil). */
+export interface CampaignListItem extends CampaignSummary {
+  myCharacters: { id: string; name: string }[];
+}
+
 export interface CampaignDetail extends CampaignSummary {
   members: {
     userId: string;
