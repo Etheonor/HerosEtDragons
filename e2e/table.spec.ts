@@ -1084,6 +1084,13 @@ test.describe("GroupFrame (Lot 10)", () => {
     await frame.getByRole("button", { name: /Rendre 1 PV/ }).click();
     await expect(frame).toContainText("45 / 45");
 
+    // Un double-clic rapide sur − soigne deux fois, sans cibler ni recentrer.
+    await frame.locator(".gf-hp-wrap").hover();
+    await frame.getByRole("button", { name: /Retirer 1 PV/ }).dblclick();
+    await expect(frame).toContainText("43 / 45");
+    await expect(page.locator(".target")).toHaveCount(0);
+    await expect(page.locator(".token", { hasText: "Kaelith" })).toHaveCount(1);
+
     // Clic = cibler / retirer la cible.
     await frame.click();
     await expect(page.locator(".target")).toContainText("Kaelith");

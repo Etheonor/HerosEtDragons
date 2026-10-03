@@ -107,7 +107,8 @@
           onclick={(e) => {
             e.stopPropagation();
             onHpDelta(-1);
-          }}>−</button
+          }}
+          ondblclick={(e) => e.stopPropagation()}>−</button
         >
       {/if}
       <span class="gf-hp">
@@ -122,7 +123,8 @@
           onclick={(e) => {
             e.stopPropagation();
             onHpDelta(1);
-          }}>+</button
+          }}
+          ondblclick={(e) => e.stopPropagation()}>+</button
         >
       {/if}
     </span>
@@ -138,7 +140,8 @@
           onclick={(e) => {
             e.stopPropagation();
             onRemoveCondition(cond);
-          }}>{cond}</button
+          }}
+          ondblclick={(e) => e.stopPropagation()}>{cond}</button
         >
       {/each}
       {#if card.conditions.length > 3}
