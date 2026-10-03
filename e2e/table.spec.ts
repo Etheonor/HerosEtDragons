@@ -1099,6 +1099,19 @@ test.describe("GroupFrame (Lot 10)", () => {
   });
 });
 
+test.describe("TopActions (Lot 10)", () => {
+  test("le bouton Tableau de bord ouvre le panneau, l'aide s'ouvre au clic", async ({ page }) => {
+    await openTable(page, MJ);
+    await page.getByRole("button", { name: "Tableau de bord" }).click();
+    await expect(page.locator(".dashboard")).toBeVisible();
+
+    await page.getByRole("button", { name: "Aide clavier" }).click();
+    await expect(page.locator(".help-title")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".help-title")).toHaveCount(0);
+  });
+});
+
 test.describe("Cible partagée (Lot 10)", () => {
   test("le MJ cible un pion : le cadre apparaît chez tous, seul le MJ le ferme", async ({
     page,

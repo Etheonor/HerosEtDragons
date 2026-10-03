@@ -11,6 +11,7 @@
  * dans `node_modules/@lucide/svelte/dist/icons/index.js`.
  */
 import {
+  BookOpenText,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
   Dices,
   Flag,
   Hand,
+  LayoutDashboard,
   List,
   Map,
   Maximize2,
@@ -50,6 +52,9 @@ export const ICONS = {
   commands: Sparkles,
   settings: Settings,
   help: CircleQuestionMark,
+  /** TopActions (lot 10.3) : compendium et tableau de bord. */
+  compendium: BookOpenText,
+  dashboard: LayoutDashboard,
   /** Icônes d'action et de fenêtre. */
   dice: Dices,
   attack: Swords,

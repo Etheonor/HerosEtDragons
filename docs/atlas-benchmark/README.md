@@ -145,7 +145,10 @@ un PNJ non révélé cible ne sort jamais chez les joueurs, filtre B5 au snapsho
 et au broadcast) ; le **GroupFrame remplace la Compagnie** (PJ toujours
 affichés, PNJ seulement posés ; clic = cibler/recentrer, double-clic =
 recentrer/placer, clic droit = menu complet PV/états/taille/modèle, survol de
-la barre = −/+ PV ; la liste complète reste en secours par la palette).
+la barre = −/+ PV ; la liste complète reste en secours par la palette) ; les
+**TopActions** (Compendium, Tableau de bord, Aide) en haut à droite remplacent
+le lien Compendium du session-bar, et le **Zoom** reprend la peau Penpot (pilule
+sombre, en bas à droite).
 
 ---
 

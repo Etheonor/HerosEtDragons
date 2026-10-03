@@ -42,6 +42,7 @@
   import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
   import TargetFrame from '$lib/table/TargetFrame.svelte';
   import GroupFrame from '$lib/table/GroupFrame.svelte';
+  import TopActions from '$lib/table/TopActions.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -2569,7 +2570,6 @@
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <button class="compendium-link" onclick={() => openCompendium()}>Compendium</button>
     <div class="grow"></div>
     <div class="quick-dice">
       <span class="qd-label">Lancer</span>
@@ -2596,6 +2596,13 @@
       onClose={() => sendWs({ type: 'target.set', charId: null })}
     />
   {/if}
+
+  <TopActions
+    {isMj}
+    onCompendium={() => openCompendium()}
+    onDashboard={() => setPanelOpen('dashboard', !panelsOpen.dashboard)}
+    onHelp={() => (helpOpen = true)}
+  />
 
   {#if groupPj.length > 0 || groupPnj.length > 0}
     <div class="group-rail" aria-label="Compagnie">
@@ -3050,9 +3057,9 @@
       closeLabel="Fermer le panneau"
       initial={{
         x: Math.max(16, innerWidth - 324 - 16),
-        y: 56,
+        y: 112,
         w: 324,
-        h: Math.min(640, innerHeight - 200),
+        h: Math.min(640, innerHeight - 256),
       }}
       class="panel"
     >
@@ -3515,13 +3522,6 @@
   }
   .asset-btn:hover { color: var(--heading); background: var(--selected); }
 
-  .compendium-link {
-    font-family: var(--font-body); font-size: 14px; font-weight: 700;
-    color: var(--accent-text); text-decoration: none; white-space: nowrap;
-    background: none; border: none; padding: 0; cursor: pointer;
-  }
-  .compendium-link:hover { color: var(--accent-link-hover); }
-
   .quick-dice { display: flex; gap: 6px; align-items: center; }
   .qd-label { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
   .qd-btn {
@@ -3723,7 +3723,7 @@
   /* ── Initiative verticale (Lot 5) ─────────────────────────────── */
   .initiative-rail {
     position: absolute;
-    top: 56px;
+    top: 112px;
     right: 12px;
     width: 264px;
     max-height: calc(100% - 132px);
@@ -3975,15 +3975,15 @@
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
     position: absolute;
-    right: 10px;
-    bottom: 10px;
+    right: 12px;
+    bottom: 12px;
     z-index: var(--z-map-hud);
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 3px;
-    background: var(--panel);
-    border: 2px solid var(--border);
+    gap: 4px;
+    padding: 4px;
+    background: var(--surface-canvas);
+    border: 1.5px solid var(--border-default);
     border-radius: var(--radius-md);
     box-shadow: 0 4px 14px var(--shadow-2);
   }
@@ -3993,26 +3993,26 @@
     font-family: var(--font-body);
     font-size: 13px;
     font-weight: 700;
-    min-width: 26px;
-    height: 24px;
-    padding: 0 5px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
     background: transparent;
     border: none;
-    border-radius: 8px 3px 8px 3px;
-    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    color: #d8d0bc;
     cursor: pointer;
   }
-  .map-hud button:hover { background: var(--bg); color: var(--text); }
-  .map-hud .hud-fit { color: var(--accent-text); font-size: 11.5px; }
+  .map-hud button:hover { background: var(--surface-raised); color: var(--heading); }
+  .map-hud .hud-fit { color: var(--parchemin); font-size: 12px; }
   .map-hud .hud-fit.off { opacity: 0.55; }
   /* bouton « Main » : disponible pour tout le monde, contrairement à la barre
      d'outils MJ. S'allume quand le panoramique au clic gauche est actif. */
-  .map-hud .hud-hand { font-size: 13px; opacity: 0.6; }
+  .map-hud .hud-hand { font-size: 14px; opacity: 0.7; }
   .map-hud .hud-hand:hover { opacity: 1; }
   .map-hud .hud-hand.on {
     opacity: 1;
     background: var(--accent);
-    color: var(--heading);
+    color: var(--accent-fg);
   }
 
   .map-surface {
