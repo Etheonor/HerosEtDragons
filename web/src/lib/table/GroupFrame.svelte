@@ -268,11 +268,11 @@
     position: relative;
     flex: 1;
     min-width: 60px;
-    height: 14px;
+    height: 22px;
     box-sizing: border-box;
     background: #241f1a;
     border: 1.5px solid #3a352d;
-    border-radius: 7px;
+    border-radius: 11px;
     overflow: hidden;
   }
   .gf-hp-fill {
@@ -280,7 +280,7 @@
     left: 0;
     top: 0;
     bottom: 0;
-    border-radius: 5.5px;
+    border-radius: 8px;
     background: var(--hp-ok);
     transition: width 200ms var(--ease-out);
   }
@@ -293,8 +293,9 @@
     display: grid;
     place-items: center;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
+    line-height: 1;
     color: var(--parchemin);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
     white-space: nowrap;
