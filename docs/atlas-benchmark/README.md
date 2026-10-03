@@ -158,7 +158,10 @@ d'icônes avec badges), le **header est réduit au toggle de mode** et à la bar
 de 4 actions à droite (commandes, compendium, tableau de bord, aide) — le titre
 de campagne, les dés rapides et la présence ont disparu — et le **DiceButton**
 flottant (64 px, badge du dernier résultat) ouvre le pad, aligné avec le Zoom à
-droite de la barre du bas.
+droite de la barre du bas. Le jet est séquencé en **deux phases** (1,4 s de
+rotation, puis 1 s de révélation au centre avec halo, pop et cartouche animés ;
+crit doré, fumble grisé) et le badge/historique ne reçoit le total qu'à la fin
+de la révélation.
 L'initiative est resserrée sur la maquette (ligne 46 px, badge de score carré,
 valeur de PV, flèches au survol).
 
