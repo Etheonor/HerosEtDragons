@@ -2387,6 +2387,7 @@
   <div class="layer-map">
       <main
         class="map-frame"
+        data-map={activeMap?.name ?? ''}
         bind:this={frameRef}
         role="region"
         aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
@@ -2796,17 +2797,6 @@
       </div>
     </Panel>
     {/if}
-
-      <div class="map-header surface-raised">
-        <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
-        <span class="explore-label">
-          {store.state.mode === 'combat'
-            ? 'Mode combat — initiative en cours'
-            : 'Mode exploration — déplacez-vous librement'}
-        </span>
-        <div class="spacer"></div>
-        <span class="scale-label">1 case ≈ 1,50 m</span>
-      </div>
 
       {#if store.state.mode === 'combat' && store.state.combat}
         <aside
@@ -3700,19 +3690,12 @@
   }
 
   /* ── Carte ── */
-  .map-header {
-    position: absolute;
-    top: 56px;
-    left: 340px;
-    z-index: var(--z-map-hud);
-    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
-  }
   .group-rail {
     position: fixed;
-    top: 56px;
+    top: 72px;
     left: 12px;
     width: 312px;
-    max-height: calc(100dvh - 140px);
+    max-height: calc(100dvh - 156px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -3726,10 +3709,6 @@
     font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
     color: var(--text-3); margin: 2px 0 -4px 14px;
   }
-  .map-name { font-family: var(--font-title); font-size: 17px; color: var(--heading); }
-  .explore-label { font-size: 13px; font-weight: 500; color: var(--text-2); }
-  .scale-label { font-size: 12px; color: var(--text-3); }
-  .spacer { flex: 1; }
 
   /* ── Initiative verticale (Lot 5) ─────────────────────────────── */
   .initiative-rail {
@@ -3859,7 +3838,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px;
+    padding: 6px 12px;
     max-width: 100%;
     flex-wrap: nowrap;
     background: var(--sunken);

@@ -623,7 +623,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     // Double-clic = afficher la carte, l'overlay se referme.
     await dialog.locator(".asset-card", { hasText: "Carte quadrillée" }).dblclick();
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte quadrillée");
   });
 
   test("l'onglet PNJ pose ×N en un double-clic (badge − ×N +)", async ({ page }) => {
@@ -736,7 +736,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte illustrée");
 
     // Clic droit dans le vide → « Poser un lien ici… » → sous-menu des cartes.
     const frame = (await page.locator(".map-frame").boundingBox())!;
@@ -758,11 +758,11 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect
       .poll(async () => Math.abs((await link.boundingBox())!.x - before.x))
       .toBeGreaterThan(50);
-    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte illustrée");
 
     // Clic = voyage ; aucun retour automatique sur la carte cible.
     await link.click();
-    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte quadrillée");
     await expect(page.locator(".map-link")).toHaveCount(0);
 
     // Le MJ pose le retour À LA MAIN, puis revient avec.
@@ -772,7 +772,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     const back = page.locator(".map-link", { hasText: "Carte illustrée" });
     await expect(back).toHaveCount(1);
     await back.click();
-    await expect(page.locator(".map-header")).toContainText("Carte illustrée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte illustrée");
   });
 
   test("notes épinglées : créer, écrire en markdown, relire", async ({ page }) => {
@@ -873,7 +873,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     // « aller » depuis la bibliothèque voyage et referme l'overlay.
     await dialog.getByRole("button", { name: "aller" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator(".map-header")).toContainText("Carte quadrillée");
+    await expect(page.locator(".map-frame")).toHaveAttribute("data-map", "Carte quadrillée");
   });
 
   test("aperçu au survol (Ctrl) sur un pion", async ({ page }) => {
