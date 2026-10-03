@@ -6,6 +6,7 @@ import {
   MJ,
   RAGNAR,
   login,
+  openPanel,
   openTable,
   placeFromLibrary,
   placePjFromFrame,
@@ -65,19 +66,19 @@ test.describe("Connexion et table", () => {
 test.describe("Inventaire (R9)", () => {
   test("le sac du seed est visible : bourse et objets", async ({ page }) => {
     await openTable(page, KAELITH);
-    await page.getByRole("button", { name: "Inventaire" }).click();
+    await openPanel(page, "inventory");
 
     // Bourse du seed : 12 po, 3 pa, 0 pc.
-    await expect(page.locator(".coin.po")).toHaveText("12po");
-    await expect(page.locator(".coin.pa")).toHaveText("3pa");
-    await expect(page.locator(".coin.pc")).toHaveText("0pc");
+    await expect(page.locator(".coin.po")).toHaveText("12 po");
+    await expect(page.locator(".coin.pa")).toHaveText("3 pa");
+    await expect(page.locator(".coin.pc")).toHaveText("0 pc");
     await expect(page.locator(".inv-name")).toContainText("Potion de soin");
     await expect(page.locator(".inv-qty")).toHaveText("×2");
   });
 
   test("le joueur peut jeter un objet, et le mouvement est journalisé", async ({ page }) => {
     await openTable(page, KAELITH);
-    await page.getByRole("button", { name: "Inventaire" }).click();
+    await openPanel(page, "inventory");
     await expect(page.locator(".inv-name")).toContainText("Potion de soin");
 
     await page.getByTitle("Jeter Potion de soin").click();
@@ -85,14 +86,13 @@ test.describe("Inventaire (R9)", () => {
     // Le sac est mis à jour sans rechargement : le badge de quantité disparaît
     // quand il ne reste qu'un exemplaire (le « ×1 » serait du bruit).
     await expect(page.locator(".inv-qty")).toHaveCount(0);
-    // …et le journal trace le mouvement.
-    await page.getByRole("button", { name: "Journal" }).click();
+    // …et le journal (toujours ouvert) trace le mouvement.
     await expect(page.locator(".journal-system").last()).toContainText("jette Potion de soin");
   });
 
   test("le MJ peut ajouter un objet ; un joueur n'a pas le champ", async ({ page, browser }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Inventaire" }).click();
+    await openPanel(page, "inventory");
     await page.locator(".inv-add input").first().fill("Élan");
     await page.getByRole("button", { name: "Ajouter" }).click();
     // Le sac contient désormais deux objets : on cible le nouveau par son texte.
@@ -101,17 +101,17 @@ test.describe("Inventaire (R9)", () => {
     const ctx = await browser.newContext();
     const p2 = await ctx.newPage();
     await openTable(p2, KAELITH);
-    await p2.getByRole("button", { name: "Inventaire" }).click();
+    await openPanel(p2, "inventory");
     await expect(p2.locator(".inv-add")).toHaveCount(0);
     await ctx.close();
   });
 
   test("un joueur est verrouillé sur son propre sac (R9.1)", async ({ page }) => {
     await openTable(page, RAGNAR);
-    await page.getByRole("button", { name: "Inventaire" }).click();
+    await openPanel(page, "inventory");
     // Pas de sélecteur de sac pour un joueur, et son sac est vide.
     await expect(page.locator(".inv-selector")).toHaveCount(0);
-    await expect(page.locator(".coin.po")).toHaveText("0po");
+    await expect(page.locator(".coin.po")).toHaveText("0 po");
   });
 
   test("le sac d'un autre joueur n'est pas exposé dans le store", async ({ page }) => {
@@ -119,7 +119,7 @@ test.describe("Inventaire (R9)", () => {
     // Le sac de Kaelith est seedé (12 po) : Ragnar ne doit pas le voir.
     const leaked = await page.evaluate(() => {
       const text = document.body.innerText;
-      return text.includes("12po");
+      return text.includes("12 po");
     });
     expect(leaked).toBe(false);
   });
@@ -161,18 +161,20 @@ test.describe("Chrome : palette et aide (Lot 2)", () => {
 test.describe("Panneaux flottants (Lot 1)", () => {
   test("ils se ferment, persistent au rechargement, et se rouvrent", async ({ page }) => {
     await openTable(page, MJ);
-    await expect(page.locator(".panel")).toBeVisible();
+    const journal = page.locator(".journal-panel");
+    await expect(journal).toBeVisible();
 
-    await page.getByRole("button", { name: "Fermer le panneau" }).click();
-    await expect(page.locator(".panel")).toHaveCount(0);
+    await page.getByRole("button", { name: "Fermer le journal" }).click();
+    await expect(journal).toHaveCount(0);
 
     // L'état survit au rechargement (localStorage, par navigateur).
     await page.reload();
-    await expect(page.getByRole("button", { name: "Journal" })).toHaveCount(0);
+    await expect(page.locator(".mode-toggle")).toBeVisible();
+    await expect(page.locator(".journal-panel")).toHaveCount(0);
 
-    // Le taquet latéral le rouvre.
-    await page.getByRole("button", { name: "Afficher le panneau" }).click();
-    await expect(page.locator(".panel")).toBeVisible();
+    // Le raccourci J le rouvre.
+    await page.keyboard.press("j");
+    await expect(page.locator(".journal-panel")).toBeVisible();
   });
 });
 
@@ -353,7 +355,7 @@ test.describe("Carte : grille et vue", () => {
     const p2 = await ctx.newPage();
     await login(p2, KAELITH);
     await p2.goto(`/campaigns/${CAMPAIGN}/table`);
-    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".journal-panel")).toBeVisible();
     await expect(p2.locator(".map-surface")).toBeVisible();
 
     // 1. Le bouton « Main » existe pour un joueur : c'est le seul outil de sa
@@ -416,7 +418,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     const p2 = await ctx.newPage();
     await login(p2, KAELITH);
     await p2.goto(`/campaigns/${CAMPAIGN}/table`);
-    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".journal-panel")).toBeVisible();
 
     const plToken = p2.locator(".token", { hasText: "Gobelin" });
     await expect(plToken).toBeVisible();
@@ -500,7 +502,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     const p2 = await ctx.newPage();
     await login(p2, KAELITH);
     await p2.goto(`/campaigns/${CAMPAIGN}/table`);
-    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".journal-panel")).toBeVisible();
     const plToken = p2.locator(".token", { hasText: "Kaelith" });
 
     // Taille du pion : clic droit sur le frame → sous-menu « Taille du pion ».
@@ -590,7 +592,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
 
     // Persistance normalisée : un rechargement restitue la même position.
     await page.reload();
-    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(page.locator(".journal-panel")).toBeVisible();
     const after = (await page.locator(".compagnie").boundingBox())!;
     expect(Math.abs(after.x - moved.x)).toBeLessThan(3);
     expect(Math.abs(after.y - moved.y)).toBeLessThan(3);
@@ -875,7 +877,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     const p2 = await playerCtx.newPage();
     await login(p2, KAELITH);
     await p2.goto(`/campaigns/${CAMPAIGN}/table`);
-    await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(p2.locator(".journal-panel")).toBeVisible();
     await expect(p2.locator(".map-link")).toHaveCount(0);
     await playerCtx.close();
   });
@@ -943,7 +945,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await expect(dash.locator(".dash-note-state")).toHaveText("à jour");
 
     await page.reload();
-    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(page.locator(".journal-panel")).toBeVisible();
     const dash2 = page.locator(".dashboard");
     await expect(dash2).toBeVisible();
     await expect(dash2.getByLabel("Notes de la carte")).toHaveValue("La porte grince au sud.");
@@ -1053,7 +1055,7 @@ test.describe("Compendium par-dessus la table (Lot 7)", () => {
 
     await page.keyboard.press("Escape");
     await expect(win).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    await expect(page.locator(".journal-panel")).toBeVisible();
   });
 
   test("un partage du journal rouvre la fenêtre sur la fiche", async ({ page }) => {
@@ -1202,21 +1204,21 @@ test.describe("Toasts et squelettes (Lot 8)", () => {
 test.describe("Fenêtres et DicePad (Lot 10)", () => {
   test("le panneau se réduit à sa barre de titre et se restaure", async ({ page }) => {
     await openTable(page, MJ);
-    const panel = page.locator(".panel");
+    const panel = page.locator(".journal-panel");
 
-    await page.getByRole("button", { name: "Réduire séance" }).click();
-    await expect(page.getByRole("button", { name: "Journal" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Réduire journal" }).click();
+    await expect(page.locator(".journal-tab")).toHaveCount(0);
     const collapsed = (await panel.boundingBox())!;
     expect(collapsed.height).toBeLessThan(60);
 
-    await page.getByRole("button", { name: "Agrandir séance" }).click();
-    await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+    await page.getByRole("button", { name: "Agrandir journal" }).click();
+    await expect(page.locator(".journal-tab")).toBeVisible();
   });
 
   test("le DiceButton ouvre le pad et porte le dernier résultat en badge", async ({ page }) => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Ouvrir les dés" }).click();
-    await expect(page.locator(".tab.active")).toHaveText("Dés");
+    await expect(page.locator(".dice-panel")).toBeVisible();
 
     await page.getByRole("button", { name: /Lancer 1d20 \+ 0/ }).click();
     await expect(page.locator(".dice-badge")).toHaveText(/\d+/);
@@ -1226,7 +1228,7 @@ test.describe("Fenêtres et DicePad (Lot 10)", () => {
     page,
   }) => {
     await openTable(page, MJ);
-    await page.getByRole("button", { name: "Dés", exact: true }).click();
+    await openPanel(page, "dice");
 
     await page.getByRole("button", { name: "Augmenter le modificateur" }).click();
     await expect(page.locator(".mod-value")).toHaveText("+1");

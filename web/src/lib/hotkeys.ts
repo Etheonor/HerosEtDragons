@@ -8,7 +8,7 @@
  * Référence : docs/atlas-benchmark/07-parcours-implémentation.md §2a.
  */
 
-export type HotkeyGroup = "Carte" | "Outils" | "Combat" | "Édition" | "Widgets";
+export type HotkeyGroup = "Carte" | "Fenêtres" | "Outils" | "Combat" | "Édition";
 
 export interface HotkeyDef {
   id: string;
@@ -41,6 +41,10 @@ export const HOTKEYS: readonly HotkeyDef[] = [
   },
   { id: "chat.focus", label: "Écrire dans le journal", group: "Carte", key: "/" },
   { id: "help.open", label: "Aide clavier", group: "Carte", key: "?" },
+
+  { id: "panel.journal", label: "Journal", group: "Fenêtres", key: "j" },
+  { id: "panel.dice", label: "Dés", group: "Fenêtres", key: "d" },
+  { id: "panel.inventory", label: "Inventaire", group: "Fenêtres", key: "i" },
 
   { id: "tool.move", label: "Outil Déplacer", group: "Outils", key: "v", mjOnly: true },
   { id: "tool.pnj", label: "Outil PNJ", group: "Outils", key: "p", mjOnly: true },
@@ -80,10 +84,10 @@ export const HOTKEYS: readonly HotkeyDef[] = [
 /** Groupes dans l'ordre d'affichage de l'aide. */
 export const HOTKEY_GROUPS: readonly HotkeyGroup[] = [
   "Carte",
+  "Fenêtres",
   "Outils",
   "Combat",
   "Édition",
-  "Widgets",
 ];
 
 export interface HotkeyContext {

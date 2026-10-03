@@ -23,8 +23,6 @@
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
   import { showToast } from '$lib/toast.svelte';
-  import Button from '$lib/ds/Button.svelte';
-  import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import CompendiumTooltip from '$lib/components/CompendiumTooltip.svelte';
   import CloseButton from '$lib/ds/CloseButton.svelte';
@@ -86,7 +84,7 @@
   let chatText = $state('');
   let journalEl = $state<HTMLDivElement | null>(null);
   let stickToBottom = true;
-  let lastJournalTab = 'journal';
+  let lastJournalOpen = true;
 
   let unseen = $state<number[]>([]);
   const unseenCount = $derived(unseen.length);
@@ -128,11 +126,12 @@
 
   $effect(() => {
     void store.journal.length;
-    const tabChanged = activeTab !== lastJournalTab;
-    lastJournalTab = activeTab;
-    if (activeTab !== 'journal' || !journalEl) return;
+    const open = panelsOpen.journal;
+    const justOpened = open && !lastJournalOpen;
+    lastJournalOpen = open;
+    if (!open || !journalEl) return;
     const el = journalEl;
-    if (tabChanged) stickToBottom = true;
+    if (justOpened) stickToBottom = true;
     if (stickToBottom) {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
@@ -162,7 +161,6 @@
     }
     loadingOlder = false;
   }
-  let activeTab = $state<'journal' | 'dice' | 'inv'>('journal');
   let diceMod = $state(0);
   let diceSides = $state(20);
   let diceHistory: { id: number; label: string; total: number | null }[] = $state([]);
@@ -173,19 +171,21 @@
   // ── Panneaux flottants (Lot 1) ───────────────────────────────
   // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
   // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
-  const PANELS_KEY = 'hd-table-panels-v2';
-  type PanelId = 'compagnie' | 'panel' | 'dashboard' | 'initiative';
+  const PANELS_KEY = 'hd-table-panels-v3';
+  type PanelId = 'compagnie' | 'journal' | 'dice' | 'inventory' | 'dashboard' | 'initiative';
 
   function loadPanelState(): Record<PanelId, boolean> {
     try {
       const raw = localStorage.getItem(PANELS_KEY);
       if (raw) {
         const p = JSON.parse(raw) as Partial<Record<PanelId, boolean>>;
-        // Compagnie et dashboard fermés par défaut (le GroupFrame remplace la
-        // Compagnie ; la liste complète reste en secours par la palette).
+        // Compagnie, dés, inventaire et dashboard fermés par défaut (surfaces à
+        // la demande) ; le journal est la fenêtre permanente.
         return {
           compagnie: p.compagnie === true,
-          panel: p.panel !== false,
+          journal: p.journal !== false,
+          dice: p.dice === true,
+          inventory: p.inventory === true,
           dashboard: p.dashboard === true,
           initiative: p.initiative !== false,
         };
@@ -193,7 +193,14 @@
     } catch {
       /* stockage indisponible : on garde les panneaux ouverts */
     }
-    return { compagnie: false, panel: true, dashboard: false, initiative: true };
+    return {
+      compagnie: false,
+      journal: true,
+      dice: false,
+      inventory: false,
+      dashboard: false,
+      initiative: true,
+    };
   }
 
   let panelsOpen = $state(loadPanelState());
@@ -335,11 +342,25 @@
         run: () => setPanelOpen('compagnie', !panelsOpen.compagnie),
       },
       {
-        id: 'panel.seance',
-        label: panelsOpen.panel ? 'Masquer le panneau de séance' : 'Afficher le panneau de séance',
+        id: 'panel.journal',
+        label: panelsOpen.journal ? 'Masquer le journal' : 'Afficher le journal',
         group: 'Actions',
-        keywords: ['panneau', 'journal', 'dés', 'inventaire'],
-        run: () => setPanelOpen('panel', !panelsOpen.panel),
+        keywords: ['panneau', 'journal', 'chat'],
+        run: () => setPanelOpen('journal', !panelsOpen.journal),
+      },
+      {
+        id: 'panel.dice',
+        label: panelsOpen.dice ? 'Masquer les dés' : 'Afficher les dés',
+        group: 'Actions',
+        keywords: ['panneau', 'dés', 'lancer'],
+        run: () => setPanelOpen('dice', !panelsOpen.dice),
+      },
+      {
+        id: 'panel.inventory',
+        label: panelsOpen.inventory ? "Masquer l'inventaire" : "Afficher l'inventaire",
+        group: 'Actions',
+        keywords: ['panneau', 'inventaire', 'sac'],
+        run: () => setPanelOpen('inventory', !panelsOpen.inventory),
       },
       ...(store.state.mode === 'combat'
         ? [
@@ -1816,7 +1837,14 @@
   // 560 px réservés de chaque côté : le bloc Zoom + DiceButton vit à droite,
   // la barre reste centrée sans jamais le chevaucher.
   const toolbarAvailable = $derived(
-    Math.max(0, toolbarWidth - (panelsOpen.compagnie ? 316 : 0) - (panelsOpen.panel ? 352 : 0) - 560),
+    Math.max(
+      0,
+      toolbarWidth -
+        (panelsOpen.compagnie ? 316 : 0) -
+        (panelsOpen.journal ? 432 : 0) -
+        (panelsOpen.dice || panelsOpen.inventory ? 364 : 0) -
+        240,
+    ),
   );
   const toolbarFit = $derived(fitToolbar(toolbarItems, toolbarAvailable));
   const visibleToolIds = $derived(toolbarFit.visible.map((i) => i.id));
@@ -2389,8 +2417,12 @@
   }
 
   // ── Raccourcis clavier ───────────────────────────────────────
+  function togglePanel(id: 'journal' | 'dice' | 'inventory') {
+    setPanelOpen(id, !panelsOpen[id]);
+  }
+
   function focusChat() {
-    activeTab = 'journal';
+    setPanelOpen('journal', true);
     requestAnimationFrame(() => {
       document.querySelector<HTMLInputElement>('.chat-input')?.focus();
     });
@@ -2416,6 +2448,15 @@
         break;
       case 'chat.focus':
         focusChat();
+        break;
+      case 'panel.journal':
+        togglePanel('journal');
+        break;
+      case 'panel.dice':
+        togglePanel('dice');
+        break;
+      case 'panel.inventory':
+        togglePanel('inventory');
         break;
       case 'map.hand':
         toolSelect('hand');
@@ -2752,10 +2793,7 @@
 
   <DiceButton
     lastResult={diceHistory[0]?.total ?? null}
-    onOpen={() => {
-      setPanelOpen('panel', true);
-      activeTab = 'dice';
-    }}
+    onOpen={() => togglePanel('dice')}
   />
 
   {#if groupPj.length > 0 || groupPnj.length > 0}
@@ -3206,38 +3244,29 @@
         </div>
       </div>
 
-      {#if !panelsOpen.panel}
-        <button class="panel-toggle right" aria-label="Afficher le panneau" onclick={() => setPanelOpen('panel', true)}>‹</button>
-      {/if}
   </div>
   <!-- /couche chrome -->
 
 
-    <!-- Panneau à onglets : flottant, refermable, persistant. -->
-    {#if panelsOpen.panel}
+    <!-- Journal (WindowChat) : fenêtre permanente, bas à gauche. -->
+    {#if panelsOpen.journal}
     <Panel
-      id="panel"
-      title="Séance"
+      id="journal"
+      title="Journal"
       campaignId={campaignId}
       icon={ICONS.library}
-      onClose={() => setPanelOpen('panel', false)}
-      closeLabel="Fermer le panneau"
+      onClose={() => setPanelOpen('journal', false)}
+      closeLabel="Fermer le journal"
       initial={{
-        x: Math.max(16, innerWidth - 324 - 16),
-        y: 112,
-        w: 324,
-        h: Math.min(640, innerHeight - 256),
+        x: 12,
+        y: Math.max(72, innerHeight - Math.min(420, innerHeight - 420) - 24),
+        w: 420,
+        h: Math.min(420, innerHeight - 420),
       }}
-      class="panel"
+      minW={300}
+      minH={220}
+      class="journal-panel"
     >
-      <div class="tabs">
-        <button class="tab {activeTab === 'journal' ? 'active' : ''}" onclick={() => (activeTab = 'journal')}>Journal</button>
-        <button class="tab {activeTab === 'dice' ? 'active' : ''}" onclick={() => (activeTab = 'dice')}>Dés</button>
-        <button class="tab {activeTab === 'inv' ? 'active' : ''}" onclick={() => (activeTab = 'inv')}>Inventaire</button>
-      </div>
-
-      <!-- Onglet Journal -->
-      {#if activeTab === 'journal'}
         <div class="journal-tab">
           <div class="journal-list scroll-area" bind:this={journalEl} onscroll={onJournalScroll} use:scrollArea>
             {#if hasMoreOlder}
@@ -3293,19 +3322,37 @@
             </button>
           {/if}
           <div class="chat-input-row">
-            <SketchyInput
+            <input
+              class="chat-input"
               bind:value={chatText}
               placeholder="Parler, ou /1d20+5, /caracs…"
               onkeydown={(e) => e.key === 'Enter' && sendChat()}
-              class="chat-input"
             />
-            <Button variant="primary" onclick={sendChat}>➤</Button>
+            <button class="chat-send" type="button" aria-label="Envoyer" onclick={sendChat}>→</button>
           </div>
         </div>
-      {/if}
+    </Panel>
+    {/if}
 
-      <!-- Onglet Dés : DicePad (lot 10.4) -->
-      {#if activeTab === 'dice'}
+    <!-- Dés (DicePad) : ancré au-dessus du DiceButton, bas à droite. -->
+    {#if panelsOpen.dice}
+    <Panel
+      id="dice"
+      title="Dés"
+      campaignId={campaignId}
+      icon={ICONS.dice}
+      onClose={() => setPanelOpen('dice', false)}
+      closeLabel="Fermer les dés"
+      initial={{
+        x: Math.max(16, innerWidth - 344 - 20),
+        y: Math.max(72, innerHeight - 386 - 96),
+        w: 344,
+        h: Math.min(386, innerHeight - 140),
+      }}
+      minW={280}
+      minH={260}
+      class="dice-panel"
+    >
         <div class="dice-tab scroll-area" use:scrollArea>
           <div class="dice-mod-row">
             <span class="mod-label">Modificateur</span>
@@ -3353,10 +3400,28 @@
             {/if}
           </div>
         </div>
-      {/if}
+    </Panel>
+    {/if}
 
-      <!-- Onglet Inventaire -->
-      {#if activeTab === 'inv'}
+    <!-- Inventaire (WindowInventory) : au-dessus des dés. -->
+    {#if panelsOpen.inventory}
+    <Panel
+      id="inventory"
+      title={`Sac de ${invOwner?.name ?? '…'}`}
+      campaignId={campaignId}
+      icon={ICONS.library}
+      onClose={() => setPanelOpen('inventory', false)}
+      closeLabel="Fermer l'inventaire"
+      initial={{
+        x: Math.max(16, innerWidth - 344 - 20),
+        y: Math.max(72, innerHeight - 386 - 96 - 318 - 14),
+        w: 344,
+        h: Math.min(318, innerHeight - 140),
+      }}
+      minW={300}
+      minH={220}
+      class="inv-panel"
+    >
         <div class="inv-tab scroll-area" use:scrollArea>
           {#if invGiveTargets.length === 0}
             <p class="inv-placeholder">Inventaire — aucun personnage visible</p>
@@ -3370,20 +3435,19 @@
                   {/each}
                 </select>
               </div>
-            {:else}
-              <div class="inv-owner">{invOwner?.name ?? '—'}</div>
             {/if}
 
             <div class="inv-purse">
-              <span class="coin po">{inv.money.po}<em>po</em></span>
-              <span class="coin pa">{inv.money.pa}<em>pa</em></span>
-              <span class="coin pc">{inv.money.pc}<em>pc</em></span>
+              <span class="coin po">{inv.money.po} po</span>
+              <span class="coin pa">{inv.money.pa} pa</span>
+              <span class="coin pc">{inv.money.pc} pc</span>
             </div>
 
             <ul class="inv-list">
               {#each inv.items as it (it.name)}
                 <li>
-                  <span class="inv-name">{it.name}{#if it.qty > 1}<span class="inv-qty">×{it.qty}</span>{/if}</span>
+                  <span class="inv-name">{it.name}</span>
+                  {#if it.qty > 1}<span class="inv-qty">×{it.qty}</span>{/if}
                   <span class="inv-actions">
                     {#if invGiveTo}
                       <button title="Donner à {store.characters.find((c) => c.id === invGiveTo)?.name}" onclick={() => invGiveItem(it.name)}>→</button>
@@ -3417,13 +3481,14 @@
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPoDraft} placeholder="po" />
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPaDraft} placeholder="pa" />
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPcDraft} placeholder="pc" />
-                  <button class="ghost-btn" disabled={!invGiveTo} onclick={invGiveMoney}>Donner l'argent</button>
                 </div>
+                <button class="inv-give-btn" disabled={!invGiveTo} onclick={invGiveMoney}>
+                  Donner l'argent
+                </button>
               </div>
             {/if}
           {/if}
         </div>
-      {/if}
     </Panel>
     {/if}
 
@@ -3741,28 +3806,6 @@
     min-height: 0;
     padding: 10px 12px;
   }
-  .panel-toggle {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: var(--z-map-hud);
-    width: 24px;
-    height: 52px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-body);
-    font-size: 15px;
-    color: var(--text-2);
-    background: var(--panel);
-    border: 2px solid var(--border);
-    cursor: pointer;
-  }
-  .panel-toggle.left { left: 0; border-left: none; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
-  .panel-toggle.right { right: 0; border-right: none; border-radius: var(--radius-md) 0 0 var(--radius-md); }
-  .panel-toggle:hover { background: var(--selected); color: var(--heading); }
-
   /* ── Compagnie : la surface est le <Panel>, on ne garde que le papier ligné. ── */
   .compagnie {
     background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
@@ -4477,19 +4520,6 @@
     100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
   }
 
-  /* ── Panneau ── */
-  .tabs {
-    display: flex;
-    border-bottom: 2px solid var(--border);
-    flex: none;
-  }
-  .tab {
-    flex: 1; font-family: var(--font-body); font-size: 14px; font-weight: 700;
-    padding: 8px 2px; border: none; cursor: pointer;
-    background: var(--panel); color: var(--text-2);
-  }
-  .tab.active { background: var(--selected); color: var(--heading); }
-
   .journal-tab {
     position: relative;
     display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;
@@ -4527,10 +4557,12 @@
     color: var(--text-2); cursor: pointer;
   }
   .older-btn:hover { border-color: var(--text-2); color: var(--text); }
-  .journal-time { font-weight: 700; font-size: 10.5px; color: var(--text-3); }
-  .journal-who { font-weight: 600; }
-  .journal-text { color: var(--text); }
-  .journal-entry.entry-system .journal-system { font-style: italic; color: var(--text-2); }
+  .journal-time { font-size: 13px; color: var(--text-3); }
+  .journal-who { font-family: var(--font-ui); font-size: 15px; font-weight: 700; }
+  .journal-text { font-size: 15px; color: var(--text); }
+  .journal-entry.entry-system .journal-system {
+    font-style: italic; font-size: 14px; color: var(--text-2);
+  }
   .share-chip {
     font-family: var(--font-body); font-size: 12px; font-weight: 700; text-decoration: none;
     color: var(--accent-text); border: 1.5px solid var(--accent-border);
@@ -4540,23 +4572,41 @@
   .share-chip:hover { background: var(--bg); }
   .roll-card {
     flex-basis: 100%;
-    border: 2px solid var(--border); border-radius: 225px 12px 240px 14px / 12px 235px 13px 225px;
-    padding: 6px 11px; background: var(--bg); margin-top: 4px;
+    background: #221f1a;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 4px;
   }
-  .roll-head { display: flex; justify-content: space-between; font-size: 12px; }
-  .roll-expr { color: var(--text-2); }
-  .roll-result { font-family: var(--font-title); font-size: 20px; color: var(--accent-text); line-height: 1.1; }
+  .roll-head { display: flex; justify-content: space-between; font-size: 13px; }
+  .roll-expr { font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-2); }
+  .roll-result { font-family: var(--font-title); font-size: 30px; color: var(--accent-text); line-height: 1.05; }
   .roll-result.fumble { color: var(--text-2); }
-  .roll-detail { font-family: var(--font-body); font-size: 11.5px; color: var(--text-2); }
+  .roll-detail { font-family: var(--font-body); font-size: 13px; color: var(--text-2); }
 
-  .chat-input-row { display: flex; gap: 7px; padding: 10px 12px; border-top: 2px solid var(--border); flex: none; }
-  :global(.chat-input) { flex: 1; min-width: 0; }
+  .chat-input-row { display: flex; gap: 8px; padding: 10px 12px; flex: none; }
+  .chat-input {
+    flex: 1; min-width: 0; height: 36px; padding: 0 12px;
+    font-family: var(--font-body); font-size: 14px; color: var(--text);
+    background: #221f1a; border: 1.5px solid var(--border-default);
+    border-radius: 9px; outline: none;
+  }
+  .chat-input:focus { border-color: var(--accent-border); }
+  .chat-input::placeholder { color: #7c7362; }
+  .chat-send {
+    flex: none; width: 36px; height: 36px;
+    display: grid; place-items: center;
+    font-family: var(--font-body); font-size: 18px; font-weight: 700;
+    color: var(--accent-fg); background: var(--accent);
+    border: none; border-radius: 9px; cursor: pointer;
+  }
+  .chat-send:hover { background: var(--accent-hover); }
 
   .dice-tab { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
   .dice-mod-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .mod-label {
-    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--text-3);
+    font-family: var(--font-ui); font-size: 14px; font-weight: 700;
+    color: var(--text-2);
   }
   .mod-stepper { display: flex; align-items: center; gap: 6px; }
   .mod-stepper button {
@@ -4568,14 +4618,14 @@
   }
   .mod-stepper button:hover { color: var(--accent-text); border-color: var(--accent-border); }
   .mod-value {
-    min-width: 36px; text-align: center;
-    font-family: var(--font-ui); font-size: 16px; font-weight: 700; color: var(--heading);
+    min-width: 40px; text-align: center;
+    font-family: var(--font-ui); font-size: 22px; font-weight: 700; color: var(--heading);
   }
   .dice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
   .dice-btn {
-    height: 54px;
-    font-family: var(--font-title); font-size: 22px;
-    color: var(--heading); background: var(--sunken);
+    height: 64px;
+    font-family: var(--font-ui); font-size: 30px; font-weight: 700;
+    color: var(--text); background: var(--sunken);
     border: 1.5px solid var(--border-default); border-radius: var(--radius-md);
     cursor: pointer;
   }
@@ -4585,9 +4635,8 @@
     box-shadow: 0 0 0 1px var(--accent-border);
   }
   .dice-launch {
-    width: 100%; height: 54px;
-    font-family: var(--font-ui); font-size: 17px; font-weight: 700; letter-spacing: .05em;
-    text-transform: uppercase;
+    width: 100%; height: 60px;
+    font-family: var(--font-ui); font-size: 24px; font-weight: 700;
     color: var(--accent-fg); background: var(--accent);
     border: 2px solid var(--accent-border); border-radius: var(--radius-md);
     cursor: pointer;
@@ -4599,80 +4648,109 @@
   .history-title { font-weight: 700; font-size: 14px; color: var(--heading); margin-bottom: 4px; }
   .history-empty { font-size: 12.5px; color: var(--text-3); }
   .history-entry {
-    font-size: 12.5px; padding-bottom: 4px; margin-bottom: 4px;
-    border-bottom: 1px dashed var(--border-soft); color: var(--text-2);
+    font-size: 14px; padding-bottom: 4px; margin-bottom: 4px;
+    color: #8a8172;
   }
+  .history-entry:first-child { color: #c9bfaa; }
 
-  .inv-tab { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .inv-tab { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
   .inv-placeholder { color: var(--text-2); font-style: italic; font-size: 13px; }
-  .inv-selector { display: flex; align-items: center; gap: 6px; }
-  .inv-selector label { font-size: 12px; color: var(--text-2); }
-  .inv-owner { font-family: var(--font-title); font-size: 14px; color: var(--heading); }
+  .inv-selector { display: flex; align-items: center; gap: 8px; }
+  .inv-selector label {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
+  }
   .inv-select,
   .inv-selector select {
     font-family: var(--font-body);
-    font-size: 12.5px;
-    padding: 4px 7px;
-    border: 2px solid var(--border);
-    border-radius: 8px 3px 8px 3px;
-    background: var(--bg);
+    font-size: 13px;
+    padding: 5px 8px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
     color: var(--text);
     outline: none;
     max-width: 100%;
+    flex: 1;
   }
-  .inv-purse { display: flex; gap: 6px; }
+  .inv-purse { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .coin {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
+    display: grid;
+    place-items: center;
+    height: 32px;
+    font-family: var(--font-ui);
+    font-size: 14px;
     font-weight: 700;
-    font-size: 13px;
-    padding: 3px 9px;
-    border: 2px solid var(--border);
-    border-radius: 10px 4px 10px 4px;
-    background: var(--bg);
+    background: #221f1a;
+    border: 1.5px solid var(--border-subtle);
+    border-radius: 16px;
   }
-  .coin em { font-style: normal; font-size: 10.5px; color: var(--text-2); }
-  .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .coin.po { color: #d4a73c; }
+  .coin.pa { color: var(--text-2); }
+  .coin.pc { color: #b07d54; }
+  .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .inv-list li {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12.5px;
-    padding: 4px 6px;
-    border-bottom: 1px dashed var(--border-soft);
+    gap: 8px;
+    min-height: 40px;
+    padding: 4px 2px;
+    border-bottom: 1px solid var(--surface-raised);
   }
-  .inv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .inv-qty { color: var(--accent-text); font-weight: 700; margin-left: 4px; }
+  .inv-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 15px; color: var(--text);
+  }
+  .inv-qty {
+    flex: none;
+    font-family: var(--font-ui); font-size: 14px; font-weight: 700;
+    color: var(--accent-text);
+  }
   .inv-empty { color: var(--text-3); font-style: italic; justify-content: center; }
   .inv-actions { display: flex; gap: 2px; flex: none; }
   .inv-actions button {
     font-size: 12px;
-    width: 22px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 6px;
-    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-3);
     cursor: pointer;
   }
-  .inv-actions button:hover { background: var(--bg); color: var(--text); }
+  .inv-actions button:hover { background: var(--selected); color: var(--heading); }
   .inv-add { display: flex; gap: 4px; align-items: center; }
   .inv-input {
     font-family: var(--font-body);
-    font-size: 12.5px;
-    padding: 4px 7px;
-    border: 2px solid var(--border);
-    border-radius: 8px 3px 8px 3px;
-    background: var(--bg);
+    font-size: 13px;
+    padding: 6px 9px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
     color: var(--text);
     outline: none;
     min-width: 0;
     flex: 1;
   }
-  .inv-input.narrow { flex: none; width: 52px; }
-  .inv-give { border-top: 1px dashed var(--border-soft); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-  .inv-give-head { font-size: 11.5px; color: var(--text-2); font-weight: 700; letter-spacing: 0.4px; }
+  .inv-input.narrow { flex: none; width: 54px; }
+  .inv-give {
+    border-top: 1px solid var(--surface-raised);
+    padding-top: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .inv-give-head {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
+  }
   .inv-money { display: flex; gap: 4px; align-items: center; }
+  .inv-give-btn {
+    height: 42px;
+    font-family: var(--font-ui); font-size: 15px; font-weight: 700;
+    color: #d8d0bc;
+    background: var(--panel);
+    border: 1.5px solid var(--border-strong-2);
+    border-radius: 21px;
+    cursor: pointer;
+  }
+  .inv-give-btn:hover:not(:disabled) { border-color: var(--accent-border); color: var(--heading); }
+  .inv-give-btn:disabled { opacity: 0.5; cursor: default; }
 </style>

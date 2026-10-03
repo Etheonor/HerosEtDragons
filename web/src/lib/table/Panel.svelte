@@ -291,7 +291,8 @@
     flex: 1;
     min-width: 0;
     font-family: var(--font-title);
-    font-size: 15px;
+    font-size: 17px;
+    font-weight: 400;
     color: var(--heading);
     white-space: nowrap;
     overflow: hidden;

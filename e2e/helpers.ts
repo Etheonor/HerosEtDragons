@@ -38,9 +38,17 @@ export async function openTable(page: Page, user: string) {
   await seed(page.request);
   await login(page, user);
   await page.goto(`/campaigns/${CAMPAIGN}/table`);
-  // On attend un élément présent pour TOUT le monde (le panneau à onglets) :
-  // la barre d'outils n'existe que pour le MJ.
-  await expect(page.getByRole("button", { name: "Journal" })).toBeVisible();
+  // On attend un élément présent pour TOUT le monde (la fenêtre Journal,
+  // ouverte par défaut) : la barre d'outils n'existe que pour le MJ.
+  await expect(page.locator(".journal-panel")).toBeVisible();
+}
+
+/** Ouvre une fenêtre par son raccourci (J / D / I). */
+export async function openPanel(page: Page, kind: "journal" | "dice" | "inventory") {
+  const key = kind === "journal" ? "j" : kind === "dice" ? "d" : "i";
+  await page.keyboard.press(key);
+  const cls = kind === "inventory" ? "inv-panel" : `${kind}-panel`;
+  await expect(page.locator(`.${cls}`)).toBeVisible();
 }
 
 /** Le store WS est-il connecté (pastille / titre de session) ? */

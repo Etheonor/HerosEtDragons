@@ -24,7 +24,7 @@ const OUT = process.env.SHOT_OUT || "/tmp";
   }
 
   await page.goto(`${URL}/campaigns/dev-camp/table`);
-  await page.getByRole("button", { name: "Journal" }).waitFor();
+  await page.locator(".journal-panel").waitFor();
 
   // Carte active : sans elle, le HUD de zoom n'est pas rendu.
   await page.getByRole("button", { name: "Bibliothèque" }).click();
@@ -32,6 +32,13 @@ const OUT = process.env.SHOT_OUT || "/tmp";
   await dialog.getByRole("tab", { name: /Cartes/ }).click();
   await dialog.locator(".asset-card", { hasText: "Carte illustrée" }).dblclick();
   await page.waitForTimeout(900);
+
+  if (process.env.SHOT_PANELS) {
+    await page.locator(".map-frame").click({ position: { x: 700, y: 400 } });
+    await page.keyboard.press("d");
+    await page.keyboard.press("i");
+    await page.waitForTimeout(500);
+  }
 
   await page.screenshot({ path: `${OUT}/table-full.png` });
   await page.screenshot({
@@ -58,6 +65,12 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     });
     await page.waitForTimeout(1200);
     await page.screenshot({ path: `${OUT}/dice-after.png` });
+  }
+
+  if (process.env.SHOT_PANELS) {
+    await page.keyboard.press("d");
+    await page.keyboard.press("i");
+    await page.waitForTimeout(500);
   }
 
   if (process.env.SHOT_TIMER) {

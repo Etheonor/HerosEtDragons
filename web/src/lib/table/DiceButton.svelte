@@ -48,8 +48,9 @@
     display: grid;
     place-items: center;
     padding: 0 5px;
-    font-family: var(--font-title);
-    font-size: 14px;
+    font-family: var(--font-ui);
+    font-size: 15px;
+    font-weight: 700;
     color: #1b1917;
     background: var(--parchemin);
     border: 2px solid var(--border-default);
