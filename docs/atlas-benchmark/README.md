@@ -142,7 +142,10 @@ carte, double-clic sur la carte pour ouvrir la table). Reste **7.2**
 chrome**. **Lot 10 entamé** : le **TargetFrame partagé** est livré (le MJ cible
 un pion — clic, re-clic retire ; tout le monde voit le cadre, croix MJ seule ;
 un PNJ non révélé cible ne sort jamais chez les joueurs, filtre B5 au snapshot
-et au broadcast).
+et au broadcast) ; le **GroupFrame remplace la Compagnie** (PJ toujours
+affichés, PNJ seulement posés ; clic = cibler/recentrer, double-clic =
+recentrer/placer, clic droit = menu complet PV/états/taille/modèle, survol de
+la barre = −/+ PV ; la liste complète reste en secours par la palette).
 
 ---
 

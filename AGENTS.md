@@ -198,8 +198,10 @@ PNJ réservées au MJ (API + tests), compendium en **grande fenêtre par-dessus 
 table**, **fiche en panneau flottant** et **accueil** avec sélecteur de
 personnage (les routes `/compendium` et `/characters/:id` restent pour les liens
 directs) ; reste la surbrillance des modifications de feuille, reportée.
-**Lot peaux Penpot entamé** : TargetFrame partagé livré (cible MJ filtrée B5).
-Référence : `docs/atlas-benchmark/10-lot-peaux-penpot.md`.
+**Lot peaux Penpot en cours** : TargetFrame partagé (cible MJ filtrée B5) et
+GroupFrame (remplace la Compagnie : PJ toujours affichés, PNJ posés, menu
+contextuel complet) livrés. Référence :
+`docs/atlas-benchmark/10-lot-peaux-penpot.md`.
 
 | Document                                             | Contenu                                                                                                     |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |

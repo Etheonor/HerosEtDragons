@@ -47,3 +47,18 @@ export async function openTable(page: Page, user: string) {
 export async function waitConnected(page: Page) {
   await expect(page.getByText(/Mode exploration|Tour suivant|à vos d20/)).toBeVisible();
 }
+
+/** Place un personnage depuis la bibliothèque (double-clic = poser). */
+export async function placeFromLibrary(page: Page, tab: "Personnages" | "PNJ", name: string) {
+  await page.getByRole("button", { name: "Bibliothèque" }).click();
+  const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+  await dialog.getByRole("tab", { name: new RegExp(tab) }).click();
+  await dialog.locator(".asset-card", { hasText: name }).first().dblclick();
+  await expect(page.locator(".token", { hasText: name }).first()).toBeVisible();
+}
+
+/** Place un PJ au double-clic sur son GroupFrame (MJ), carte déjà choisie. */
+export async function placePjFromFrame(page: Page, name: string) {
+  await page.locator(".gf", { hasText: name }).first().dblclick();
+  await expect(page.locator(".token", { hasText: name }).first()).toBeVisible();
+}

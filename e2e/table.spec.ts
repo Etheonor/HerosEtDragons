@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { CAMPAIGN, KAELITH, MAP_IMAGE, MJ, RAGNAR, login, openTable, seed } from "./helpers";
+import {
+  CAMPAIGN,
+  KAELITH,
+  MAP_IMAGE,
+  MJ,
+  RAGNAR,
+  login,
+  openTable,
+  placeFromLibrary,
+  placePjFromFrame,
+  seed,
+} from "./helpers";
 
 test.describe("Connexion et table", () => {
   test("sans cookie de dev, le bypass est inerte (API 401, table vide)", async ({ page }) => {
@@ -11,8 +22,9 @@ test.describe("Connexion et table", () => {
     expect(api.status()).toBe(401);
 
     await page.goto(`/campaigns/${CAMPAIGN}/table`);
-    await expect(page.getByText("Aucun personnage joueur")).toBeVisible();
     await expect(page.getByText("Le MJ n'a pas encore choisi de carte.")).toBeVisible();
+    // Sans personnage, le GroupFrame ne rend rien du tout.
+    await expect(page.locator(".group-rail")).toHaveCount(0);
   });
 
   test("un joueur arrive sur la table et voit sa compagnie", async ({ page }) => {
@@ -27,9 +39,9 @@ test.describe("Connexion et table", () => {
       ),
     );
     expect(leaked).toBe(false);
-    // Les deux PJ sont dans la colonne de gauche, le sien en particulier.
-    await expect(page.locator(".compagnie")).toContainText("Kaelith");
-    await expect(page.locator(".compagnie")).toContainText("Ragnar");
+    // Les deux PJ sont dans la colonne de gauche (GroupFrame), le sien en particulier.
+    await expect(page.locator(".group-rail")).toContainText("Kaelith");
+    await expect(page.locator(".group-rail")).toContainText("Ragnar");
   });
 
   test("le MJ voit la barre d'outils complète, un joueur n'a que la Main", async ({
@@ -149,21 +161,18 @@ test.describe("Chrome : palette et aide (Lot 2)", () => {
 test.describe("Panneaux flottants (Lot 1)", () => {
   test("ils se ferment, persistent au rechargement, et se rouvrent", async ({ page }) => {
     await openTable(page, MJ);
-    await expect(page.locator(".compagnie")).toBeVisible();
     await expect(page.locator(".panel")).toBeVisible();
 
-    await page.getByRole("button", { name: "Fermer la compagnie" }).click();
-    await expect(page.locator(".compagnie")).toHaveCount(0);
-    await expect(page.locator(".panel")).toBeVisible();
+    await page.getByRole("button", { name: "Fermer le panneau" }).click();
+    await expect(page.locator(".panel")).toHaveCount(0);
 
     // L'état survit au rechargement (localStorage, par navigateur).
     await page.reload();
-    await expect(page.locator(".compagnie")).toHaveCount(0);
-    await expect(page.locator(".panel")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Journal" })).toHaveCount(0);
 
-    // Le taquet latéral la rouvre.
-    await page.getByRole("button", { name: "Afficher la compagnie" }).click();
-    await expect(page.locator(".compagnie")).toBeVisible();
+    // Le taquet latéral le rouvre.
+    await page.getByRole("button", { name: "Afficher le panneau" }).click();
+    await expect(page.locator(".panel")).toBeVisible();
   });
 });
 
@@ -392,10 +401,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
 
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placeFromLibrary(page, "PNJ", "Gobelin");
 
     const mjToken = page.locator(".token", { hasText: "Gobelin" });
     await expect(mjToken).toBeVisible();
@@ -420,10 +426,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });
     const label = token.locator(".token-label");
@@ -436,14 +439,8 @@ test.describe("Pions vivants (Lot 3)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
+    await placeFromLibrary(page, "PNJ", "Gobelin");
     await page.locator(".mode-btn", { hasText: "Combat" }).click();
 
     // Lance l'initiative de chaque PJ en attente : le bouton n'arrive qu'avec
@@ -492,8 +489,7 @@ test.describe("Pions vivants (Lot 3)", () => {
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
 
-    const card = page.locator(".pj-card", { hasText: "Kaelith" });
-    await card.getByRole("button", { name: "Placer sur la carte" }).click();
+    await placePjFromFrame(page, "Kaelith");
     const token = page.locator(".token", { hasText: "Kaelith" });
     await expect(token).toBeVisible();
     // Grille du seed : 32 px ; échelle par défaut : 1 case.
@@ -507,7 +503,10 @@ test.describe("Pions vivants (Lot 3)", () => {
     await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
     const plToken = p2.locator(".token", { hasText: "Kaelith" });
 
-    await card.locator(".size-select").selectOption("2");
+    // Taille du pion : clic droit sur le frame → sous-menu « Taille du pion ».
+    await page.locator(".gf", { hasText: "Kaelith" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Taille du pion" }).hover();
+    await page.getByRole("menuitem", { name: "2 cases" }).click();
     await expect.poll(async () => Math.round((await token.boundingBox())!.width)).toBe(64);
     await expect.poll(async () => Math.round((await plToken.boundingBox())!.width)).toBe(64);
 
@@ -526,10 +525,7 @@ test.describe("Historique (Lot 4)", () => {
     await expect(undoBtn).toBeDisabled();
     await expect(redoBtn).toBeDisabled();
 
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
     const token = page.locator(".token", { hasText: "Kaelith" });
     await expect(token).toBeVisible();
     await expect(undoBtn).toBeEnabled();
@@ -548,10 +544,7 @@ test.describe("Historique (Lot 4)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });
     await expect(token).toBeVisible();
@@ -579,6 +572,10 @@ test.describe("Historique (Lot 4)", () => {
 test.describe("Panneaux et initiative (Lot 5)", () => {
   test("le panneau Compagnie se déplace et garde sa position au rechargement", async ({ page }) => {
     await openTable(page, MJ);
+    // La Compagnie est la liste complète de secours : elle s'ouvre par la palette.
+    await page.locator(".palette-btn").click();
+    await page.getByPlaceholder(/rechercher une action/i).fill("compagnie");
+    await page.locator(".palette-item", { hasText: "Compagnie (liste complète)" }).click();
     const panel = page.locator(".compagnie");
     await expect(panel).toBeVisible();
     const before = (await panel.boundingBox())!;
@@ -634,11 +631,15 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
 
-    // Enregistre le gobelin comme modèle, puis ouvre la bibliothèque.
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "modèle" })
-      .click();
+    // Place le gobelin (bibliothèque), puis enregistre-le comme modèle par le
+    // menu du frame — le chemin de la Compagnie a disparu avec elle.
+    await placeFromLibrary(page, "PNJ", "Gobelin");
+    await page.locator(".gf", { hasText: "Gobelin" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Enregistrer comme modèle" }).click();
+    // L'original repart de la carte : le test ne compte que la pose ×N.
+    await page.locator(".gf", { hasText: "Gobelin" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Retirer de la carte" }).click();
+    await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(0);
     await page.getByRole("button", { name: "Bibliothèque" }).click();
     const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
     await expect(dialog).toBeVisible();
@@ -878,10 +879,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
     const token = page.locator(".token", { hasText: "Kaelith" });
     await expect(token).toBeVisible();
 
@@ -902,10 +900,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placeFromLibrary(page, "PNJ", "Gobelin");
 
     // Ouverture par la palette (surface à la demande).
     await page.keyboard.press("Space");
@@ -935,17 +930,15 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placeFromLibrary(page, "PNJ", "Gobelin");
 
     const token = page.locator(".token", { hasText: "Gobelin" });
     await expect(token).toBeVisible();
     await token.click({ button: "right" });
 
     await expect(page.getByRole("menuitem", { name: "Dupliquer le PNJ" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: /Taille : 1 case/ })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Taille du pion" }).hover();
+    await expect(page.getByRole("menuitem", { name: "1 case" })).toBeVisible();
     await page.getByRole("menuitem", { name: "Dupliquer le PNJ" }).click();
     await expect(page.locator(".token", { hasText: "Gobelin" })).toHaveCount(2);
   });
@@ -968,14 +961,8 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
-    await page
-      .locator(".pnj-card", { hasText: "Gobelin" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
+    await placeFromLibrary(page, "PNJ", "Gobelin");
     await page.locator(".mode-btn", { hasText: "Combat" }).click();
 
     const pendingRoll = page.locator(".roll-init-btn:not([disabled])");
@@ -1008,10 +995,8 @@ test.describe("Fiche en panneau (Lot 7)", () => {
     await openTable(page, MJ);
     const urlAvant = page.url();
 
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Feuille" })
-      .click();
+    await page.locator(".gf", { hasText: "Kaelith" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Ouvrir la feuille" }).click();
     const fiche = page.locator(".panel-surface", { hasText: "Feuille de personnage" });
     await expect(fiche).toBeVisible();
     await expect(fiche).toContainText("Kaelith");
@@ -1077,6 +1062,35 @@ test.describe("Compendium par-dessus la table (Lot 7)", () => {
   });
 });
 
+test.describe("GroupFrame (Lot 10)", () => {
+  test("le frame liste les PJ, soigne au survol et cible au clic", async ({ page }) => {
+    await openTable(page, MJ);
+    const rail = page.locator(".group-rail");
+    await expect(rail).toContainText("Kaelith");
+    // Un PNJ non posé n'est pas dans le frame (il vit dans la bibliothèque).
+    await expect(rail).not.toContainText("Gobelin");
+
+    await page.getByRole("button", { name: "Cartes" }).click();
+    await page.getByRole("button", { name: /Carte illustrée/ }).click();
+    await placePjFromFrame(page, "Kaelith");
+
+    // Soigner : survol de la barre → − / + (MJ), sans quitter la table.
+    const frame = page.locator(".gf", { hasText: "Kaelith" });
+    await frame.locator(".gf-hp-wrap").hover();
+    await frame.getByRole("button", { name: /Retirer 1 PV/ }).click();
+    await expect(frame).toContainText("44 / 45");
+    await frame.locator(".gf-hp-wrap").hover();
+    await frame.getByRole("button", { name: /Rendre 1 PV/ }).click();
+    await expect(frame).toContainText("45 / 45");
+
+    // Clic = cibler / retirer la cible.
+    await frame.click();
+    await expect(page.locator(".target")).toContainText("Kaelith");
+    await frame.click();
+    await expect(page.locator(".target")).toHaveCount(0);
+  });
+});
+
 test.describe("Cible partagée (Lot 10)", () => {
   test("le MJ cible un pion : le cadre apparaît chez tous, seul le MJ le ferme", async ({
     page,
@@ -1085,10 +1099,7 @@ test.describe("Cible partagée (Lot 10)", () => {
     await openTable(page, MJ);
     await page.getByRole("button", { name: "Cartes" }).click();
     await page.getByRole("button", { name: /Carte illustrée/ }).click();
-    await page
-      .locator(".pj-card", { hasText: "Kaelith" })
-      .getByRole("button", { name: "Placer sur la carte" })
-      .click();
+    await placePjFromFrame(page, "Kaelith");
 
     const token = page.locator(".token", { hasText: "Kaelith" });
     await token.click();

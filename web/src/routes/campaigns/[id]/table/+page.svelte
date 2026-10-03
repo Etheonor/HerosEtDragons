@@ -4,6 +4,7 @@
   import { api, type MapSummary } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
   import type {
+    CharacterCard,
     ClientMessage,
     JournalEntry,
     MapLink,
@@ -40,6 +41,7 @@
   import AssetManager from '$lib/table/AssetManager.svelte';
   import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
   import TargetFrame from '$lib/table/TargetFrame.svelte';
+  import GroupFrame from '$lib/table/GroupFrame.svelte';
   import GmDashboard from '$lib/table/GmDashboard.svelte';
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import NpcLibrary from '$lib/components/NpcLibrary.svelte';
@@ -159,7 +161,7 @@
   // ── Panneaux flottants (Lot 1) ───────────────────────────────
   // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
   // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
-  const PANELS_KEY = 'hd-table-panels';
+  const PANELS_KEY = 'hd-table-panels-v2';
   type PanelId = 'compagnie' | 'panel' | 'dashboard';
 
   function loadPanelState(): Record<PanelId, boolean> {
@@ -167,9 +169,10 @@
       const raw = localStorage.getItem(PANELS_KEY);
       if (raw) {
         const p = JSON.parse(raw) as Partial<Record<PanelId, boolean>>;
-        // Le dashboard MJ est fermé par défaut (surface à la demande).
+        // Compagnie et dashboard fermés par défaut (le GroupFrame remplace la
+        // Compagnie ; la liste complète reste en secours par la palette).
         return {
-          compagnie: p.compagnie !== false,
+          compagnie: p.compagnie === true,
           panel: p.panel !== false,
           dashboard: p.dashboard === true,
         };
@@ -177,7 +180,7 @@
     } catch {
       /* stockage indisponible : on garde les panneaux ouverts */
     }
-    return { compagnie: true, panel: true, dashboard: false };
+    return { compagnie: false, panel: true, dashboard: false };
   }
 
   let panelsOpen = $state(loadPanelState());
@@ -284,9 +287,9 @@
     const cmds: PaletteCommand[] = [
       {
         id: 'panel.compagnie',
-        label: panelsOpen.compagnie ? 'Masquer la compagnie' : 'Afficher la compagnie',
+        label: 'Compagnie (liste complète)',
         group: 'Actions',
-        keywords: ['panneau', 'compagnie', 'sidebar'],
+        keywords: ['panneau', 'compagnie', 'sidebar', 'liste'],
         run: () => setPanelOpen('compagnie', !panelsOpen.compagnie),
       },
       {
@@ -1018,6 +1021,10 @@
 
   const targetCard = $derived(store.state.target ? charById(store.state.target) : null);
   const pjCards = $derived(store.characters.filter((c) => c.kind === 'pj' && c.active));
+  const groupPj = $derived(store.characters.filter((c) => c.kind === 'pj'));
+  const groupPnj = $derived(
+    store.characters.filter((c) => c.kind === 'pnj' && !!store.state.tokens[c.id]),
+  );
   const pnjCards = $derived(store.characters.filter((c) => c.kind === 'pnj'));
   const activeCharId = $derived(
     store.state.mode === 'combat' &&
@@ -1222,6 +1229,25 @@
   function placeOnMap(charId: string) {
     const n = Object.keys(store.state.tokens).length;
     sendWs({ type: 'token.put', charId, x: 46 + ((n % 5) - 2) * 4, y: 50 });
+  }
+
+  function groupActivate(c: CharacterCard) {
+    if (!c.active) return;
+    if (isMj) {
+      sendWs({ type: 'target.set', charId: store.state.target === c.id ? null : c.id });
+    } else if (store.state.tokens[c.id]) {
+      focusToken(c.id);
+    }
+  }
+
+  function groupFocusOrPlace(c: CharacterCard) {
+    if (store.state.tokens[c.id]) focusToken(c.id);
+    else if (isMj) placeOnMap(c.id);
+  }
+
+  function presentColorFor(c: CharacterCard): string | null {
+    if (!c.ownerId) return null;
+    return store.presence.find((p) => p.userId === c.ownerId)?.color ?? null;
   }
 
   // ── Carte : sélection / import ──────────────────────────────
@@ -1815,35 +1841,88 @@
 
     if (t.kind === 'token') {
       const c = charById(t.charId);
-      const items: ContextMenuItem[] = [
-        { id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) },
-      ];
+      const placed = !!store.state.tokens[t.charId];
+      const items: ContextMenuItem[] = placed
+        ? [{ id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) }]
+        : isMj
+          ? [{ id: 'place', label: 'Placer sur la carte', onSelect: () => placeOnMap(t.charId) }]
+          : [];
       if (t.charKind === 'pj' || isMj) {
         items.push({ id: 'sheet', label: 'Ouvrir la feuille', onSelect: () => openSheet(t.charId) });
       }
       if (isMj) {
-        for (const s of TOKEN_SCALES) {
+        items.push({
+          id: 'target',
+          label: store.state.target === t.charId ? 'Retirer la cible' : 'Cibler',
+          onSelect: () =>
+            sendWs({
+              type: 'target.set',
+              charId: store.state.target === t.charId ? null : t.charId,
+            }),
+        });
+        items.push({
+          id: 'hp',
+          label: 'Points de vie',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: [-5, -1, 1, 5].map((d) => ({
+            id: `hp.${d}`,
+            label: `${d > 0 ? '+' : ''}${d} PV`,
+            onSelect: () => pvDelta(t.charId, d),
+          })),
+        });
+        const conditions = c?.conditions ?? [];
+        const available = stateOptions.filter((cond) => !conditions.includes(cond));
+        if (conditions.length > 0 || available.length > 0) {
           items.push({
-            id: `size.${s}`,
-            label: `Taille : ${scaleLabel(s)}`,
-            separatorBefore: s === TOKEN_SCALES[0],
-            disabled: c?.tokenScale === s,
-            onSelect: () => sendWs({ type: 'char.scale', charId: t.charId, scale: s }),
-          });
-        }
-        if (t.charKind === 'pnj') {
-          items.push({
-            id: 'dup',
-            label: 'Dupliquer le PNJ',
-            separatorBefore: true,
-            onSelect: () => sendWs({ type: 'npc.duplicate', charId: t.charId }),
+            id: 'conditions',
+            label: 'États',
+            onSelect: () => {},
+            children: [
+              ...conditions.map((cond) => ({
+                id: `cond.off.${cond}`,
+                label: `Retirer : ${cond}`,
+                onSelect: () => removeCondition(t.charId, cond),
+              })),
+              ...available.map((cond) => ({
+                id: `cond.on.${cond}`,
+                label: `+ ${cond}`,
+                onSelect: () => sendWs({ type: 'char.condition', charId: t.charId, cond, on: true }),
+              })),
+            ],
           });
         }
         items.push({
-          id: 'remove-token',
-          label: 'Retirer de la carte',
-          onSelect: () => sendWs({ type: 'token.remove', charId: t.charId }),
+          id: 'size',
+          label: 'Taille du pion',
+          onSelect: () => {},
+          children: TOKEN_SCALES.map((s) => ({
+            id: `size.${s}`,
+            label: scaleLabel(s),
+            disabled: c?.tokenScale === s,
+            onSelect: () => sendWs({ type: 'char.scale', charId: t.charId, scale: s }),
+          })),
         });
+        if (t.charKind === 'pnj') {
+          items.push({
+            id: 'save-template',
+            label: 'Enregistrer comme modèle',
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'npc.saveAsTemplate', charId: t.charId }),
+          });
+          items.push({
+            id: 'dup',
+            label: 'Dupliquer le PNJ',
+            onSelect: () => sendWs({ type: 'npc.duplicate', charId: t.charId }),
+          });
+        }
+        if (placed) {
+          items.push({
+            id: 'remove-token',
+            label: 'Retirer de la carte',
+            onSelect: () => sendWs({ type: 'token.remove', charId: t.charId }),
+          });
+        }
         if (t.charKind === 'pnj') {
           items.push({
             id: 'delete-npc',
@@ -2518,6 +2597,46 @@
     />
   {/if}
 
+  {#if groupPj.length > 0 || groupPnj.length > 0}
+    <div class="group-rail" aria-label="Compagnie">
+      {#each groupPj as c (c.id)}
+        <GroupFrame
+          card={c}
+          {isMj}
+          canHeal={isMj || c.ownerId === session?.user.id}
+          presentColor={presentColorFor(c)}
+          isActive={activeCharId === c.id}
+          hasToken={!!store.state.tokens[c.id]}
+          down={c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+          onActivate={() => groupActivate(c)}
+          onFocusOrPlace={() => groupFocusOrPlace(c)}
+          onContextMenu={(e) => openTokenMenu(e, c.id, c.kind)}
+          onHpDelta={(d) => pvDelta(c.id, d)}
+          onRemoveCondition={(cond) => removeCondition(c.id, cond)}
+        />
+      {/each}
+      {#if groupPnj.length > 0}
+        <div class="group-sub">PNJ présents</div>
+        {#each groupPnj as c (c.id)}
+          <GroupFrame
+            card={c}
+            {isMj}
+            canHeal={isMj || c.ownerId === session?.user.id}
+            presentColor={presentColorFor(c)}
+            isActive={activeCharId === c.id}
+            hasToken
+            down={c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+            onActivate={() => groupActivate(c)}
+            onFocusOrPlace={() => groupFocusOrPlace(c)}
+            onContextMenu={(e) => openTokenMenu(e, c.id, c.kind)}
+            onHpDelta={(d) => pvDelta(c.id, d)}
+            onRemoveCondition={(cond) => removeCondition(c.id, cond)}
+          />
+        {/each}
+      {/if}
+    </div>
+  {/if}
+
     <!-- Compagnie : panneau flottant, déplaçable et redimensionnable (Lot 5). -->
     {#if panelsOpen.compagnie}
     <Panel
@@ -2660,7 +2779,7 @@
     </Panel>
     {/if}
 
-      <div class="map-header surface-raised" class:shifted={panelsOpen.compagnie}>
+      <div class="map-header surface-raised">
         <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
         <span class="explore-label">
           {store.state.mode === 'combat'
@@ -2914,9 +3033,6 @@
         </div>
       </div>
 
-      {#if !panelsOpen.compagnie}
-        <button class="panel-toggle left" aria-label="Afficher la compagnie" onclick={() => setPanelOpen('compagnie', true)}>›</button>
-      {/if}
       {#if !panelsOpen.panel}
         <button class="panel-toggle right" aria-label="Afficher le panneau" onclick={() => setPanelOpen('panel', true)}>‹</button>
       {/if}
@@ -3576,11 +3692,29 @@
   .map-header {
     position: absolute;
     top: 56px;
-    left: 16px;
+    left: 340px;
     z-index: var(--z-map-hud);
     display: flex; align-items: center; gap: 10px; padding: 6px 12px;
   }
-  .map-header.shifted { left: calc(var(--w-compagnie) + 32px); }
+  .group-rail {
+    position: fixed;
+    top: 56px;
+    left: 12px;
+    width: 312px;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-right: 4px;
+    z-index: var(--z-chrome);
+    pointer-events: auto;
+  }
+  .group-sub {
+    font-family: var(--font-body);
+    font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); margin: 2px 0 -4px 14px;
+  }
   .map-name { font-family: var(--font-title); font-size: 17px; color: var(--heading); }
   .explore-label { font-size: 13px; font-weight: 500; color: var(--text-2); }
   .scale-label { font-size: 12px; color: var(--text-3); }
