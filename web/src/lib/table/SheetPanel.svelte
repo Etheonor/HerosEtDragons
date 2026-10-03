@@ -2,6 +2,7 @@
   import { api, type CharacterDetail } from '$lib/api';
   import { tableStore, sendWs } from '$lib/ws.svelte';
   import CharacterSheet from '$lib/components/CharacterSheet.svelte';
+  import Skeleton from '$lib/ds/Skeleton.svelte';
 
   let {
     charId,
@@ -59,7 +60,11 @@
 </script>
 
 {#if loading}
-  <div class="sheet-state"><p>…</p></div>
+  <div class="sheet-loading" aria-busy="true" aria-label="Chargement de la fiche">
+    <Skeleton w="100%" h={40} />
+    <Skeleton w="100%" h={88} radius="var(--radius-md)" />
+    <Skeleton w="100%" h={190} radius="var(--radius-md)" />
+  </div>
 {:else if error}
   <div class="sheet-state"><p class="error">{error}</p></div>
 {:else if char}
@@ -67,6 +72,15 @@
 {/if}
 
 <style>
+  .sheet-loading {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
   .sheet-state {
     flex: 1;
     display: grid;

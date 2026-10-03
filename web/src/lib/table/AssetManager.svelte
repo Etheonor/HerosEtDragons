@@ -25,6 +25,7 @@
   import { api, type MapSummary, type NpcTemplate } from '$lib/api';
   import type { CharacterCard, MapLink } from '@rollwith/shared/protocol';
   import { portraitUrl } from '$lib/portraits';
+  import { showToast } from '$lib/toast.svelte';
   import type { AssetTarget } from './context-menu';
 
   interface Props {
@@ -90,7 +91,7 @@
       const res = await api.npcTemplates.list(campaignId);
       templates = res.templates;
     } catch {
-      /* la bibliothèque reste vide ; l'onglet Cartes fonctionne */
+      showToast('Modèles de PNJ indisponibles', 'error');
     }
   }
 

@@ -1099,6 +1099,17 @@ test.describe("GroupFrame (Lot 10)", () => {
   });
 });
 
+test.describe("Toasts et squelettes (Lot 8)", () => {
+  test("une erreur réseau s'affiche dans le toast global", async ({ page }) => {
+    await seed(page.request);
+    await login(page, MJ);
+    // La liste des cartes échoue : l'utilisateur doit le voir, pas un silence.
+    await page.route("**/api/maps/campaigns/**", (route) => route.abort());
+    await page.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(page.locator(".toast")).toContainText("Liste des cartes indisponible");
+  });
+});
+
 test.describe("Fenêtres et DicePad (Lot 10)", () => {
   test("le panneau se réduit à sa barre de titre et se restaure", async ({ page }) => {
     await openTable(page, MJ);

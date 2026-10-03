@@ -6,6 +6,7 @@
   import '../lib/ds/surfaces.css';
   import '../lib/ds/app.css';
   import { applyEncre, getEncre } from '$lib/encre';
+  import Toaster from '$lib/components/Toaster.svelte';
 
   let { children } = $props();
 
@@ -19,3 +20,4 @@
 <BitsConfig defaultPortalTo="body" />
 
 {@render children()}
+<Toaster />

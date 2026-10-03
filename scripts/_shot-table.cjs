@@ -11,6 +11,18 @@ const OUT = process.env.SHOT_OUT || "/tmp";
   const page = await browser.newPage({ viewport: { width: W, height: H } });
   await page.request.post(`${URL}/api/dev/seed`, { data: { reset: true } });
   await page.request.post(`${URL}/api/dev/login`, { data: { user: USER } });
+
+  if (process.env.SHOT_SLOW) {
+    await page.route("**/api/campaigns", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      await route.continue();
+    });
+    await page.goto(`${URL}/`);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${OUT}/home-skeleton.png` });
+    await page.unroute("**/api/campaigns");
+  }
+
   await page.goto(`${URL}/campaigns/dev-camp/table`);
   await page.getByRole("button", { name: "Journal" }).waitFor();
 

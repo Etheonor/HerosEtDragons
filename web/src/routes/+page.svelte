@@ -4,6 +4,7 @@
   import { api, type CampaignListItem } from '$lib/api';
   import { auth, type Session } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
+  import Skeleton from '$lib/ds/Skeleton.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import EncreSelector from '$lib/ds/EncreSelector.svelte';
   import CharacterCreateModal from '$lib/components/CharacterCreateModal.svelte';
@@ -112,7 +113,13 @@
 
 {#if loading}
   <div class="center-page">
-    <p class="muted">…</p>
+    <div class="dash-skeleton" aria-busy="true" aria-label="Chargement des campagnes">
+      <Skeleton w="220px" h={30} />
+      <div class="sk-grid">
+        <Skeleton h={150} radius="var(--radius-md)" />
+        <Skeleton h={150} radius="var(--radius-md)" />
+      </div>
+    </div>
   </div>
 {:else if !session}
   <div class="center-page">
@@ -277,6 +284,18 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
+  }
+  .dash-skeleton {
+    width: 860px;
+    max-width: calc(100vw - 60px);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .sk-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
   }
   .hero-card {
     background: var(--panel);

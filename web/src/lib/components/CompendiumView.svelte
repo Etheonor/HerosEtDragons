@@ -5,6 +5,7 @@
   import { monsterAveragePv, monsterCa, type MonsterMeta } from '@rollwith/shared/compendium';
   import { caracMod } from '@rollwith/shared/hd';
   import CloseButton from '$lib/ds/CloseButton.svelte';
+  import Skeleton from '$lib/ds/Skeleton.svelte';
 
   let {
     campaign,
@@ -27,6 +28,7 @@
   let addedToLibrary = $state(false);
   let sharedOk = $state(false);
   let loadingEntry = $state(false);
+  let listLoading = $state(false);
 
   const LABELS: Record<string, string> = {
     bestiaire: 'Bestiaire',
@@ -97,6 +99,7 @@
     }
     listError = '';
     if (append) loadingMore = true;
+    else listLoading = true;
     try {
       const res = await api.compendium.entries(campaign, {
         q: search.trim() || undefined,
@@ -118,6 +121,7 @@
       listError = e instanceof Error ? e.message : 'Recherche impossible';
     } finally {
       loadingMore = false;
+      listLoading = false;
     }
   }
 
@@ -265,6 +269,13 @@
             {/if}
           </div>
           <div class="list">
+            {#if listLoading && entries.length === 0}
+              <div class="list-skeleton" aria-busy="true" aria-label="Chargement de la liste">
+                {#each [0, 1, 2, 3, 4] as i (i)}
+                  <Skeleton w="100%" h={34} radius="var(--radius-sm)" />
+                {/each}
+              </div>
+            {/if}
             {#each entries as e (e.category + '/' + e.slug)}
               <button
                 class="row"
@@ -275,9 +286,10 @@
                 {#if search.trim()}<span class="row-cat">{LABELS[e.category] ?? e.category}</span>{/if}
                 {#if summary(e)}<span class="row-sub">{summary(e)}</span>{/if}
               </button>
-            {:else}
-              <p class="list-empty">Aucun résultat.</p>
             {/each}
+            {#if entries.length === 0 && !listLoading}
+              <p class="list-empty">Aucun résultat.</p>
+            {/if}
           </div>
           {#if entries.length < total}
             <div class="list-more">
@@ -291,7 +303,14 @@
         <!-- Fiche -->
         <article class="entry-col">
           {#if loadingEntry}
-            <p class="entry-empty">Chargement…</p>
+            <div class="entry-skeleton" aria-busy="true" aria-label="Chargement de la fiche">
+              <Skeleton w="45%" h={28} />
+              <Skeleton w="28%" h={13} />
+              <Skeleton w="100%" h={44} radius="var(--radius-md)" />
+              <Skeleton w="100%" h={14} />
+              <Skeleton w="96%" h={14} />
+              <Skeleton w="88%" h={14} />
+            </div>
           {:else if selected}
             {@const m = (selected.meta ?? {}) as Record<string, any>}
             <div class="entry-head">
@@ -526,9 +545,11 @@
   .row-sub { font-size: 11.5px; color: var(--text-2); }
   .row.on .row-sub { color: var(--text-2); }
   .list-empty { padding: 12px; color: var(--text-3); font-style: italic; font-size: 13px; }
+  .list-skeleton { display: flex; flex-direction: column; gap: 6px; padding: 2px; }
 
   .entry-col { overflow-y: auto; padding: 18px 26px 60px; min-height: 0; }
   .entry-empty { color: var(--text-3); font-style: italic; }
+  .entry-skeleton { display: flex; flex-direction: column; gap: 12px; }
   .entry-head h2 { font-family: var(--font-title); font-size: 26px; color: var(--heading); line-height: 1.1; }
   .entry-source { font-size: 12px; color: var(--text-3); margin-top: 2px; }
   .stat-strip {

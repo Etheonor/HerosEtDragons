@@ -22,6 +22,7 @@
   import { inlineHtml, toBlocks } from '$lib/markdown-lite';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
+  import { showToast } from '$lib/toast.svelte';
   import Button from '$lib/ds/Button.svelte';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
@@ -136,7 +137,6 @@
       });
     }
   });
-  let toast = $state('');
   let olderEntries = $state<JournalEntry[]>([]);
   let hasMoreOlder = $state(true);
   let loadingOlder = $state(false);
@@ -156,7 +156,7 @@
         if (journalEl) journalEl.scrollTop = prevTop + (journalEl.scrollHeight - prevHeight);
       });
     } catch {
-      /* ignore */
+      showToast('Entrées antérieures indisponibles', 'error');
     }
     loadingOlder = false;
   }
@@ -268,7 +268,7 @@
       await api.maps.update(mapId, { gridSize: size });
       await refreshMaps();
     } catch {
-      toast = 'Réglage de la grille impossible';
+      showToast('Réglage de la grille impossible', 'error');
     }
   }
 
@@ -279,7 +279,7 @@
       await api.maps.update(mapId, { gridColor: color });
       await refreshMaps();
     } catch {
-      toast = 'Réglage de la grille impossible';
+      showToast('Réglage de la grille impossible', 'error');
     }
   }
 
@@ -288,7 +288,7 @@
     try {
       await api.campaigns.updateSettings(campaignId, patch);
     } catch {
-      toast = 'Réglage impossible';
+      showToast('Réglage impossible', 'error');
     }
   }
 
@@ -1166,7 +1166,7 @@
       const detail = await api.campaigns.detail(campaignId);
       isMj = detail.role === 'mj';
     } catch {
-      /* ignore */
+      showToast('Rôle dans la campagne indisponible', 'error');
     }
     await refreshMaps();
 
@@ -1182,7 +1182,7 @@
       const res = await api.maps.list(campaignId);
       maps = res.maps;
     } catch {
-      /* ignore */
+      showToast('Liste des cartes indisponible', 'error');
     }
   }
 
@@ -1725,18 +1725,13 @@
   });
 
   let lastShownError: string | null = null;
-  let toastTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const err = store.error;
     if (err === lastShownError) return;
     lastShownError = err;
     if (!err) return;
-    toast = err;
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast = '';
-      clearWsError();
-    }, 4000);
+    showToast(err, 'error');
+    clearWsError();
   });
 
   const diceTypes = [4, 6, 8, 10, 12, 20];
@@ -2182,7 +2177,7 @@
       await api.maps.create(campaignId, mapNameFromFile(file.name), file);
       await refreshMaps();
     } catch {
-      toast = "Import de la carte impossible";
+      showToast("Import de la carte impossible", 'error');
     }
   }
 
@@ -2191,7 +2186,7 @@
       await api.maps.update(mapId, { image: file });
       await refreshMaps();
     } catch {
-      toast = "Remplacement de l'image impossible";
+      showToast("Remplacement de l'image impossible", 'error');
     }
   }
 
@@ -2200,7 +2195,7 @@
       await api.maps.update(mapId, { name });
       await refreshMaps();
     } catch {
-      toast = 'Renommage impossible';
+      showToast('Renommage impossible', 'error');
     }
   }
 
@@ -2244,7 +2239,7 @@
     try {
       await api.characters.updatePortrait(charId, file);
     } catch {
-      toast = "Import de l'avatar impossible";
+      showToast("Import de l'avatar impossible", 'error');
     }
   }
 
@@ -2253,7 +2248,7 @@
       await api.npcTemplates.remove(templateId);
       templatesRevision += 1;
     } catch {
-      toast = 'Suppression du modèle impossible';
+      showToast('Suppression du modèle impossible', 'error');
     }
   }
 
@@ -3358,10 +3353,6 @@
   <!-- Couche popups : éléments flottants non portalés (le reste passe par
        bits-ui + <BitsConfig>, donc dans le top layer). -->
   <div class="layer-popups">
-  {#if toast}
-    <div class="toast" role="status">{toast}</div>
-  {/if}
-
   {#if previewChar && preview}
     <div
       class="token-preview surface-overlay"
@@ -3680,15 +3671,6 @@
   .model-btn:hover { border-color: var(--accent); border-style: solid; color: var(--accent-text); }
   .lib-toggle { border-radius: 10px 3px 12px 3px; }
   .lib-toggle.on { border-color: var(--accent-border); border-style: solid; color: var(--accent-text); background: var(--panel); }
-  .toast {
-    position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
-    background: var(--panel); border: 2px solid var(--accent-border);
-    border-radius: var(--radius-md);
-    padding: 8px 22px; z-index: var(--z-toast); text-align: center;
-    font-size: 13.5px; font-weight: 500; color: var(--text);
-    box-shadow: 3px 4px 0 var(--shadow-1);
-  }
-
   /* ── Carte ── */
   .group-rail {
     position: fixed;

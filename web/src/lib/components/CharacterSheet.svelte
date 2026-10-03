@@ -4,6 +4,7 @@
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
+  import { showToast } from '$lib/toast.svelte';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
   import {
     findRace,
@@ -337,7 +338,7 @@
         touch();
       }
     } catch {
-      /* compendium indisponible : la montée reste complète (PV/DV/slots) */
+      showToast('Aptitudes du niveau indisponibles (compendium)', 'error');
     }
   }
 

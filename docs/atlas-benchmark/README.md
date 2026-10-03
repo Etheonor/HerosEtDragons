@@ -165,6 +165,12 @@ de la révélation.
 L'initiative est resserrée sur la maquette (ligne 46 px, badge de score carré,
 valeur de PV, flèches au survol).
 
+**Lot 8 entamé** : **8.1** — `<Toaster>` global monté par le layout (piles de 4,
+fermeture manuelle ou après 3,2 s / 5,2 s, variantes info/succès/erreur) ;
+**8.2** — squelettes de chargement (accueil, fiche plein écran et en panneau,
+liste et fiche du compendium) et erreurs auparavant silencieuses remontées au
+toast (cartes, journal, notes MJ, modèles PNJ, inspiration, niveau).
+
 ---
 
 ## 1. Le verdict en une page

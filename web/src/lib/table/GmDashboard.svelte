@@ -10,6 +10,7 @@
   import { api, type MapSummary } from '$lib/api';
   import type { CharacterCard } from '@rollwith/shared/protocol';
   import { portraitUrl } from '$lib/portraits';
+  import { showToast } from '$lib/toast.svelte';
 
   interface Props {
     campaignId: string;
@@ -47,7 +48,7 @@
       noteDraft = note?.content ?? '';
       noteSaved = true;
     } catch {
-      /* la note reste vide ; le reste du dashboard fonctionne */
+      showToast('Notes de la carte indisponibles', 'error');
     }
   }
 
@@ -58,7 +59,7 @@
       await api.notes.set(campaignId, 'map', mapId, noteDraft.trim());
       noteSaved = true;
     } catch {
-      /* le bouton reste actif : le MJ peut réessayer */
+      showToast("Enregistrement de la note impossible", 'error');
     }
   }
 
