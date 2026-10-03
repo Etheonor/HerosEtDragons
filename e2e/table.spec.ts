@@ -1249,6 +1249,36 @@ test.describe("Accessibilité (Lot 8)", () => {
   });
 });
 
+test.describe("Tutoriel (Lot 8)", () => {
+  test("se lance une fois par navigateur, se parcourt et se ferme", async ({ browser }) => {
+    // Contexte SANS l'initScript de `login` : le tutoriel doit s'auto-ouvrir.
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await seed(page.request);
+    await page.request.post("/api/dev/login", { data: { user: MJ } });
+    await page.goto(`/campaigns/${CAMPAIGN}/table`);
+
+    const tut = page.getByRole("dialog", { name: "Tutoriel" });
+    await expect(tut).toBeVisible();
+    await expect(tut).toContainText("Étape 1 / 4");
+    await expect(tut).toContainText("La compagnie");
+
+    await tut.getByRole("button", { name: "Suivant" }).click();
+    await expect(tut).toContainText("Étape 2 / 4");
+    await tut.getByRole("button", { name: "Suivant" }).click();
+    await tut.getByRole("button", { name: "Suivant" }).click();
+    await expect(tut).toContainText("Étape 4 / 4");
+    await tut.getByRole("button", { name: "Terminer" }).click();
+    await expect(tut).toHaveCount(0);
+
+    // Marqué vu : un rechargement ne le rouvre plus.
+    await page.reload();
+    await expect(page.locator(".journal-panel")).toBeVisible();
+    await expect(tut).toHaveCount(0);
+    await ctx.close();
+  });
+});
+
 test.describe("Toasts et squelettes (Lot 8)", () => {
   test("une erreur réseau s'affiche dans le toast global", async ({ page }) => {
     await seed(page.request);

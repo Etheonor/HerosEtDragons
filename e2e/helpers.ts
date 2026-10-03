@@ -29,6 +29,15 @@ export async function seed(request: APIRequestContext, { reset = true } = {}) {
 
 /** Pose le cookie du bypass d'auth pour un utilisateur dev. */
 export async function login(page: Page, user: string) {
+  // Le tutoriel MJ s'ouvre une fois par navigateur : les tests le marquent vu
+  // via un script d'init (le test dédié utilise un contexte sans ce script).
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("hd-tutoriel-mj", "1");
+    } catch {
+      /* ignore */
+    }
+  });
   const res = await page.request.post("/api/dev/login", { data: { user } });
   expect(res.ok()).toBeTruthy();
 }

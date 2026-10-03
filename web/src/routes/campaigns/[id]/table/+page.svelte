@@ -56,6 +56,8 @@
   import PromptDialog from '$lib/components/PromptDialog.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import NpcTemplateDialog from '$lib/table/NpcTemplateDialog.svelte';
+  import Tutorial from '$lib/table/Tutorial.svelte';
+  import { MJ_TUTORIAL_STEPS } from '$lib/table/tutorial-steps';
 
   let { params } = $props();
   let campaignId = params.id;
@@ -267,6 +269,32 @@
     onConfirm: () => void;
   } | null>(null);
   let editTemplate = $state<NpcTemplate | null>(null);
+  const TUTORIAL_KEY = 'hd-tutoriel-mj';
+  let tutorialOpen = $state(false);
+  let tutorialChecked = false;
+
+  /** Le tutoriel MJ s'ouvre une fois par navigateur, quand la table est prête. */
+  $effect(() => {
+    if (tutorialChecked || !isMj || store.characters.length === 0) return;
+    tutorialChecked = true;
+    try {
+      if (localStorage.getItem(TUTORIAL_KEY) !== '1') {
+        setTimeout(() => (tutorialOpen = true), 700);
+      }
+    } catch {
+      /* stockage refusé : pas de tutoriel automatique */
+    }
+  });
+
+  function closeTutorial() {
+    tutorialOpen = false;
+    try {
+      localStorage.setItem(TUTORIAL_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }
+
   let toolbarWidth = $state(1280);
 
   function onToolbarResize(node: HTMLElement) {
@@ -432,6 +460,13 @@
           keywords: ['dashboard', 'tableau', 'pnj', 'notes', 'scène'],
           active: panelsOpen.dashboard,
           run: () => setPanelOpen('dashboard', !panelsOpen.dashboard),
+        },
+        {
+          id: 'tutorial.open',
+          label: 'Revoir le tutoriel',
+          group: 'Aide',
+          keywords: ['tutoriel', 'guide', 'découverte', 'aide'],
+          run: () => (tutorialOpen = true),
         },
         {
           id: 'history.undo',
@@ -3786,6 +3821,10 @@
 
   <CommandPalette open={paletteOpen} onOpenChange={(o) => (paletteOpen = o)} commands={paletteCommands} />
   <HotkeyHelp open={helpOpen} onOpenChange={(o) => (helpOpen = o)} {isMj} />
+
+  {#if isMj}
+    <Tutorial open={tutorialOpen} steps={MJ_TUTORIAL_STEPS} onClose={closeTutorial} />
+  {/if}
 
   <!-- Dé animé overlay -->
   <DiceOverlay anim={store.diceAnim} />
