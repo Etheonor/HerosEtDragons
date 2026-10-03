@@ -300,9 +300,9 @@ test.describe("Carte : grille et vue", () => {
     await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
     await page.mouse.wheel(0, -600);
 
-    await expect(page.locator(".hud-fit")).not.toHaveText("100%");
+    await expect(page.locator(".hud-fit")).not.toHaveText("100 %");
     await page.locator(".hud-fit").click();
-    await expect(page.locator(".hud-fit")).toHaveText("100%");
+    await expect(page.locator(".hud-fit")).toHaveText("100 %");
   });
 
   test("l'outil Main déplace réellement la carte (quand elle déborde)", async ({ page }) => {
@@ -320,7 +320,7 @@ test.describe("Carte : grille et vue", () => {
     // d'abord pour créer un débordement — c'est la condition du panoramique.
     await page.mouse.move(cx, cy);
     await page.mouse.wheel(0, -600);
-    await expect(page.locator(".hud-fit")).not.toHaveText("100%");
+    await expect(page.locator(".hud-fit")).not.toHaveText("100 %");
 
     const before = (await page.locator(".map-surface").boundingBox())!;
     await page.mouse.move(cx, cy);
@@ -331,7 +331,7 @@ test.describe("Carte : grille et vue", () => {
     const after = (await page.locator(".map-surface").boundingBox())!;
     // La carte a bougé à l'écran, sans revenir à 100 %.
     expect(Math.abs(after.x - before.x)).toBeGreaterThan(40);
-    await expect(page.locator(".hud-fit")).not.toHaveText("100%");
+    await expect(page.locator(".hud-fit")).not.toHaveText("100 %");
   });
 
   test("un JOUEUR déplace la carte : clic droit, ou le bouton du HUD", async ({
@@ -364,7 +364,7 @@ test.describe("Carte : grille et vue", () => {
     const cy = frame.y + frame.height / 2;
     await p2.mouse.move(cx, cy);
     await p2.mouse.wheel(0, -600);
-    await expect(p2.locator(".hud-fit")).not.toHaveText("100%");
+    await expect(p2.locator(".hud-fit")).not.toHaveText("100 %");
 
     const before = (await p2.locator(".map-surface").boundingBox())!;
     await p2.mouse.move(cx, cy);

@@ -2543,7 +2543,7 @@
               class="hud-fit"
               class:off={camera.zoom === 1 && camera.panX === 0 && camera.panY === 0}
               title="Revenir à la carte entière"
-              onclick={resetView}>{Math.round(camera.zoom * 100)}%</button
+              onclick={resetView}>{Math.round(camera.zoom * 100)} %</button
             >
             <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
           </div>
@@ -3980,34 +3980,36 @@
     z-index: var(--z-map-hud);
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px;
+    gap: 2px;
+    height: 56px;
+    padding: 0 10px;
+    box-sizing: border-box;
     background: var(--surface-canvas);
     border: 1.5px solid var(--border-default);
-    border-radius: var(--radius-md);
+    border-radius: 28px;
     box-shadow: 0 4px 14px var(--shadow-2);
   }
   /* Le panneau de droite est ouvert : le HUD se décale pour rester visible. */
   .map-hud.behind-panel { right: calc(var(--w-panel) + 26px); }
   .map-hud button {
-    font-family: var(--font-body);
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: 16px;
     font-weight: 700;
-    min-width: 32px;
-    height: 32px;
+    min-width: 38px;
+    height: 38px;
     padding: 0 8px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-full);
     color: #d8d0bc;
     cursor: pointer;
   }
   .map-hud button:hover { background: var(--surface-raised); color: var(--heading); }
-  .map-hud .hud-fit { color: var(--parchemin); font-size: 12px; }
+  .map-hud .hud-fit { color: #d8d0bc; font-size: 16px; }
   .map-hud .hud-fit.off { opacity: 0.55; }
   /* bouton « Main » : disponible pour tout le monde, contrairement à la barre
      d'outils MJ. S'allume quand le panoramique au clic gauche est actif. */
-  .map-hud .hud-hand { font-size: 14px; opacity: 0.7; }
+  .map-hud .hud-hand { font-size: 16px; opacity: 0.7; }
   .map-hud .hud-hand:hover { opacity: 1; }
   .map-hud .hud-hand.on {
     opacity: 1;
