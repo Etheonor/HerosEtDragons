@@ -129,12 +129,14 @@ passages secrets, onglet Liens), **aperçu au survol** et **notes épinglées**
 (panneau markdown-lite). Le design system Penpot est la source (19 couleurs,
 17 typographies, 37 composants).
 
-**Lot 7 entamé** : **7.0** — les feuilles de PNJ sont réservées au MJ (API :
+**Lot 7 en cours** : **7.0** — les feuilles de PNJ sont réservées au MJ (API :
 détail + liste filtrés, tests REST) ; **7.3** — le compendium s'ouvre en
 **grande fenêtre par-dessus la table** (même `CompendiumView` que la route
 `/compendium`, conservée pour les liens directs ; tooltip d'état, partages du
-journal et commande palette branchés dessus). Restent **7.1** (feuille en
-panneau), **7.2** (surbrillance des modifications, reporté) et **7.4** (accueil).
+journal et commande palette branchés dessus) ; **7.1** — la **fiche s'ouvre en
+panneau flottant** (plusieurs fiches à la fois, drag/resize persistés, jets et
+PV branchés sur la table ; la route `/characters/:id` reste en plein écran).
+Restent **7.2** (surbrillance des modifications, reporté) et **7.4** (accueil).
 Ensuite : le **lot peaux Penpot du chrome**.
 
 ---

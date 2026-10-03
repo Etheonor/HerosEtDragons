@@ -1001,6 +1001,40 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
   });
 });
 
+test.describe("Fiche en panneau (Lot 7)", () => {
+  test("le MJ ouvre la fiche d'un PJ depuis la Compagnie, sans quitter la table", async ({
+    page,
+  }) => {
+    await openTable(page, MJ);
+    const urlAvant = page.url();
+
+    await page
+      .locator(".pj-card", { hasText: "Kaelith" })
+      .getByRole("button", { name: "Feuille" })
+      .click();
+    const fiche = page.locator(".panel-surface", { hasText: "Feuille de personnage" });
+    await expect(fiche).toBeVisible();
+    await expect(fiche).toContainText("Kaelith");
+    expect(page.url()).toBe(urlAvant);
+
+    await fiche.getByRole("button", { name: "Fermer la fiche" }).click();
+    await expect(fiche).toHaveCount(0);
+  });
+
+  test("un joueur ouvre sa feuille par la palette", async ({ page }) => {
+    await openTable(page, KAELITH);
+    await page.locator(".palette-btn").click();
+    await page.getByPlaceholder(/rechercher une action/i).fill("feuille");
+    await page.locator(".palette-item", { hasText: "Ouvrir ma feuille de personnage" }).click();
+
+    const fiche = page.locator(".panel-surface", { hasText: "Feuille de personnage" });
+    await expect(fiche).toBeVisible();
+    await expect(fiche).toContainText("Kaelith");
+    // Le propriétaire édite : les valeurs éditables sont rendues.
+    await expect(fiche.locator(".ed").first()).toBeVisible();
+  });
+});
+
 test.describe("Compendium par-dessus la table (Lot 7)", () => {
   test("la fenêtre s'ouvre sans quitter la séance, et se ferme", async ({ page }) => {
     await openTable(page, MJ);

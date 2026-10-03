@@ -32,10 +32,12 @@
     char,
     onRoll,
     onPvDelta,
+    embedded = false,
   }: {
     char: CharacterDetail;
     onRoll?: (mod: number, label: string) => void;
     onPvDelta?: (delta: number) => void;
+    embedded?: boolean;
   } = $props();
 
   const caracs: CaracKey[] = ['for', 'dex', 'con', 'int', 'sag', 'cha'];
@@ -344,10 +346,12 @@
   );
 </script>
 
-<div class="sheet">
+<div class="sheet" class:embedded>
   <!-- Barre haute -->
   <header class="sheet-header">
-    <a href="/campaigns/{char.campaignId}/table" class="back-btn">← retour à la table</a>
+    {#if !embedded}
+      <a href="/campaigns/{char.campaignId}/table" class="back-btn">← retour à la table</a>
+    {/if}
     <div class="header-title">Feuille de personnage</div>
     <div class="header-hint">
       {#if readonly}
@@ -696,6 +700,26 @@
     color: var(--text);
     font-family: var(--font-body);
     padding-bottom: 60px;
+  }
+  .sheet.embedded {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .sheet.embedded .sheet-header {
+    padding: 8px 14px;
+    gap: 12px;
+  }
+  .sheet.embedded .char-header-wrap {
+    max-width: none;
+    margin-top: 12px;
+    padding: 0 14px;
+  }
+  .sheet.embedded .sheet-body {
+    max-width: none;
+    padding: 0 14px;
+    grid-template-columns: 168px 226px minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .sheet-header {

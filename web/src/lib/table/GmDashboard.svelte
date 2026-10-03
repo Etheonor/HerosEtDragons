@@ -17,9 +17,10 @@
     tokenCharIds: string[];
     activeMap: MapSummary | null;
     onFocus: (charId: string) => void;
+    onOpenSheet: (charId: string) => void;
   }
 
-  const { campaignId, characters, tokenCharIds, activeMap, onFocus }: Props = $props();
+  const { campaignId, characters, tokenCharIds, activeMap, onFocus, onOpenSheet }: Props = $props();
 
   const sceneNpcs = $derived(
     characters.filter((c) => c.kind === 'pnj' && tokenCharIds.includes(c.id)),
@@ -105,7 +106,7 @@
               {#if c.pv !== null && c.pvMax !== null}<span>PV {c.pv}/{c.pvMax}</span>{/if}
             </span>
           </button>
-          <a class="dash-sheet" href={`/characters/${c.id}`} title="Ouvrir la fiche">fiche</a>
+          <button class="dash-sheet" type="button" title="Ouvrir la fiche" onclick={() => onOpenSheet(c.id)}>fiche</button>
         </div>
         {#if c.conditions.length > 0}
           <div class="dash-conds">
@@ -233,9 +234,11 @@
   .dash-sheet {
     display: grid; place-items: center;
     padding: 0 7px;
+    font-family: var(--font-body);
     font-size: 11px; font-weight: 600; color: var(--accent-text);
     background: transparent; border: 1.5px dashed var(--border);
     border-radius: var(--radius-sm); text-decoration: none;
+    cursor: pointer;
   }
   .dash-sheet:hover { border-style: solid; border-color: var(--accent-border); }
   .dash-conds { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 2px 34px; }

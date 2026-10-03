@@ -33,6 +33,8 @@
   import { portraitUrl } from '$lib/portraits';
   import { ICONS } from '$lib/ds/icons';
   import Panel from '$lib/table/Panel.svelte';
+  import { bringToFront } from '$lib/table/panelStack.svelte';
+  import SheetPanel from '$lib/table/SheetPanel.svelte';
   import ContextMenu from '$lib/table/ContextMenu.svelte';
   import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
@@ -188,6 +190,20 @@
     }
   }
 
+  // ── Fiches de personnage en panneaux (Lot 7.1) ───────────────
+  // Éphémères (pas de persistance) : une fiche s'ouvre à la demande et le MJ
+  // peut en garder plusieurs ouvertes. Le z-order est celui de panelStack.
+  let openSheets = $state<string[]>([]);
+
+  function openSheet(charId: string) {
+    if (!openSheets.includes(charId)) openSheets = [...openSheets, charId];
+    bringToFront(`fiche:${charId}`);
+  }
+
+  function closeSheet(charId: string) {
+    openSheets = openSheets.filter((id) => id !== charId);
+  }
+
   // ── Chrome (Lot 2) : palette, aide, barre d'outils ───────────
   let paletteOpen = $state(false);
   let helpOpen = $state(false);
@@ -318,9 +334,7 @@
         label: 'Ouvrir ma feuille de personnage',
         group: 'Actions',
         keywords: ['personnage', 'feuille'],
-        run: () => {
-          globalThis.location.href = `/characters/${myCharId}`;
-        },
+        run: () => openSheet(myCharId),
       });
     }
 
@@ -1775,7 +1789,8 @@
           id: 'sheet',
           label: 'Ouvrir la feuille',
           onSelect: () => {
-            globalThis.location.href = `/characters/${t.charId}`;
+            assetManagerOpen = false;
+            openSheet(t.charId);
           },
         },
       );
@@ -1787,6 +1802,9 @@
       const items: ContextMenuItem[] = [
         { id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) },
       ];
+      if (t.charKind === 'pj' || isMj) {
+        items.push({ id: 'sheet', label: 'Ouvrir la feuille', onSelect: () => openSheet(t.charId) });
+      }
       if (isMj) {
         for (const s of TOKEN_SCALES) {
           items.push({
@@ -2505,7 +2523,7 @@
           </div>
           <div class="card-row">
             <div class="card-sub">{c.sub}</div>
-            <a href={`/characters/${c.id}`} class="sheet-link">Feuille</a>
+            <button class="sheet-link" onclick={() => openSheet(c.id)}>Feuille</button>
           </div>
           <div class="hp-row">
             <div class="hp-bar-bg"><div class="hp-bar-fill" style="width: {c.pvMax && c.pvMax > 0 ? Math.max(0, Math.min(100, ((c.pv ?? 0) / c.pvMax) * 100)) : 0}%;"></div></div>
@@ -3091,9 +3109,30 @@
         tokenCharIds={Object.keys(store.state.tokens)}
         activeMap={activeMap}
         onFocus={focusToken}
+        onOpenSheet={openSheet}
       />
     </Panel>
     {/if}
+
+    {#each openSheets as id (id)}
+    <Panel
+      id={`fiche:${id}`}
+      title={charById(id)?.name ?? 'Feuille de personnage'}
+      campaignId={campaignId}
+      onClose={() => closeSheet(id)}
+      closeLabel="Fermer la fiche"
+      initial={{
+        x: 96,
+        y: 64,
+        w: Math.min(1180, innerWidth - 64),
+        h: Math.min(840, innerHeight - 128),
+      }}
+      minW={720}
+      minH={420}
+    >
+      <SheetPanel charId={id} onPvDelta={(d) => pvDelta(id, d)} />
+    </Panel>
+    {/each}
 
     {#if openPin}
     <Panel
@@ -3432,7 +3471,11 @@
   .pnj-name { font-size: 15.5px; }
   .card-ca { font-size: 12px; color: var(--text-2); }
   .card-sub { font-size: 11.5px; color: var(--text-2); font-style: italic; }
-  .sheet-link { font-size: 12px; font-weight: 500; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+  .sheet-link {
+    font-family: var(--font-body); font-size: 12px; font-weight: 500;
+    color: var(--accent-text); text-decoration: none; white-space: nowrap;
+    background: none; border: none; padding: 0; cursor: pointer;
+  }
   .sheet-link:hover { color: var(--accent-link-hover); }
   .stats { font-size: 11.5px; color: var(--text-2); }
 
