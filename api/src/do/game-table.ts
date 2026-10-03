@@ -4,6 +4,7 @@ import { createSheet } from "@rollwith/shared/sheet";
 import { applyDamage } from "@rollwith/shared/damage";
 import {
   addItem,
+  addMoney,
   removeItem,
   transferItem,
   transferMoney,
@@ -170,6 +171,7 @@ type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
 type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
 type InvGiveMsg = Extract<ClientMessageInput, { type: "inv.give" }>;
+type InvAddMoneyMsg = Extract<ClientMessageInput, { type: "inv.addMoney" }>;
 type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
 type CombatReorderMsg = Extract<ClientMessageInput, { type: "combat.reorder" }>;
@@ -1245,6 +1247,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "inv.drop":
           await this.handleInvDrop(ws, attachment, m);
+          break;
+        case "inv.addMoney":
+          await this.handleInvAddMoney(ws, attachment, m);
           break;
         case "inv.give":
           await this.handleInvGive(ws, attachment, m);
@@ -2843,6 +2848,21 @@ export class GameTableDO extends DurableObject<Env> {
     await this.journalInv(
       [msg.charId],
       `✦ Le MJ ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${msg.item.trim()} à ${target.name}.`,
+      att,
+    );
+    await this.broadcastInventories();
+  }
+
+  /** MJ seulement : ajoute de l'argent à un sac (butin, récompense). */
+  private async handleInvAddMoney(ws: WebSocket, att: WsAttachment, msg: InvAddMoneyMsg) {
+    if (att.role !== "mj") return;
+    const target = await this.loadInv(msg.charId);
+    if (!target) return;
+    const inv: Inventory = { ...target.inv, money: addMoney(target.inv.money, msg.money) };
+    await this.saveInv(msg.charId, inv);
+    await this.journalInv(
+      [msg.charId],
+      `✦ Le MJ ajoute ${formatMoney(msg.money)} à ${target.name}.`,
       att,
     );
     await this.broadcastInventories();

@@ -743,6 +743,7 @@ describe("GameTableDO — intégration", () => {
     // 1. Le MJ ajoute des objets et de l'argent à Kaelith.
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 2 });
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 1 });
+    mj.send({ type: "inv.addMoney", charId: "pj-1", money: { po: 10, pa: 2, pc: 0 } });
     await mj.nextWhere((m) => m.type === "inv");
 
     // La fusion par nom est insensible à la casse : 2 + 1 = 3.
@@ -750,6 +751,17 @@ describe("GameTableDO — intégration", () => {
     const asInv = (m: Record<string, unknown>) =>
       (m.inventories as Record<string, { items: { name: string; qty: number }[] }>)["pj-1"]!;
     expect(asInv(mjInv).items).toEqual([{ name: "Potion de soin", qty: 3 }]);
+
+    // La bourse reçoit le montant ajouté (et le journal le trace).
+    const moneyMsg = await mj.nextWhere((m) => {
+      const bags = m.inventories as
+        | Record<string, { money: { po: number; pa: number } }>
+        | undefined;
+      return bags?.["pj-1"]?.money.po === 10 && bags["pj-1"]!.money.pa === 2;
+    });
+    expect(
+      (moneyMsg.inventories as Record<string, { money: { po: number } }>)["pj-1"]!.money.po,
+    ).toBe(10);
 
     // 2. Le joueur ne voit QUE son sac (R9.1) : pas celui de l'autre PJ.
     const plInv = await kaelith.nextWhere((m) => m.type === "inv");
@@ -801,7 +813,13 @@ describe("GameTableDO — intégration", () => {
       to: "pj-1",
       item: "Torche",
     });
-    // 3. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
+    // 3. Ajouter de l'argent (MJ seulement) → refusé.
+    kaelith.send({
+      type: "inv.addMoney",
+      charId: "pnj-1",
+      money: { po: 1, pa: 0, pc: 0 },
+    });
+    // 4. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
     //    cas légitime), donc on cible bien pnj-1 pour tester le refus.
     await new Promise((r) => setTimeout(r, 150));
 
@@ -810,10 +828,12 @@ describe("GameTableDO — intégration", () => {
       .from(schema.characters)
       .where(eq(schema.characters.id, "pnj-1"))
       .get();
-    // La torche est toujours là, à 4 : ni jetée, ni donnée.
+    // La torche est toujours là, à 4 : ni jetée, ni donnée, et la bourse
+    // n'a pas été créditée par un joueur.
     expect((npj!.inventory as { items: { name: string; qty: number }[] }).items).toEqual([
       { name: "Torche", qty: 4 },
     ]);
+    expect((npj!.inventory as { money: { po: number } }).money.po).toBe(5);
   });
 
   it("inventaire (R9) : transfert d'argent et d'objet, atomique et vérifié des deux côtés", async () => {

@@ -1149,6 +1149,9 @@
   let invPoDraft = $state(0);
   let invPaDraft = $state(0);
   let invPcDraft = $state(0);
+  let invAddPo = $state(0);
+  let invAddPa = $state(0);
+  let invAddPc = $state(0);
 
   function invAddItem() {
     const name = invItemDraft.trim();
@@ -1156,6 +1159,18 @@
     sendWs({ type: 'inv.add', charId: invTarget, item: name, qty: Math.max(1, invQtyDraft | 0) });
     invItemDraft = '';
     invQtyDraft = 1;
+  }
+
+  function invAddMoney() {
+    if (!invTarget || !isMj) return;
+    const po = Math.max(0, invAddPo | 0);
+    const pa = Math.max(0, invAddPa | 0);
+    const pc = Math.max(0, invAddPc | 0);
+    if (po + pa + pc === 0) return;
+    sendWs({ type: 'inv.addMoney', charId: invTarget, money: { po, pa, pc } });
+    invAddPo = 0;
+    invAddPa = 0;
+    invAddPc = 0;
   }
 
   function invDrop(item: string) {
@@ -3466,6 +3481,13 @@
                 <input class="inv-input narrow" type="number" min="1" max="9999" bind:value={invQtyDraft} title="quantité" />
                 <button class="ghost-btn" onclick={invAddItem}>Ajouter</button>
               </div>
+              <div class="inv-add">
+                <span class="inv-add-label">Argent</span>
+                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="po" aria-label="Pièces d'or à ajouter" bind:value={invAddPo} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
+                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="pa" aria-label="Pièces d'argent à ajouter" bind:value={invAddPa} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
+                <input class="inv-input narrow" type="number" min="0" max="999999" placeholder="pc" aria-label="Pièces de cuivre à ajouter" bind:value={invAddPc} onkeydown={(e) => e.key === 'Enter' && invAddMoney()} />
+                <button class="ghost-btn" onclick={invAddMoney}>Ajouter l'argent</button>
+              </div>
             {/if}
 
             {#if invGiveTargets.length > 0}
@@ -4720,6 +4742,10 @@
   }
   .inv-actions button:hover { background: var(--selected); color: var(--heading); }
   .inv-add { display: flex; gap: 4px; align-items: center; }
+  .inv-add-label {
+    flex: none;
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
+  }
   .inv-input {
     font-family: var(--font-body);
     font-size: 13px;

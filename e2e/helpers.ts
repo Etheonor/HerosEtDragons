@@ -49,6 +49,11 @@ export async function openPanel(page: Page, kind: "journal" | "dice" | "inventor
   await page.keyboard.press(key);
   const cls = kind === "inventory" ? "inv-panel" : `${kind}-panel`;
   await expect(page.locator(`.${cls}`)).toBeVisible();
+  if (kind === "inventory") {
+    // Le titre « Sac de … » attend le snapshot WS : sans ça, une action du MJ
+    // partirait sans cible et serait ignorée.
+    await expect(page.locator(".inv-panel .panel-title")).not.toHaveText(/…/);
+  }
 }
 
 /** Le store WS est-il connecté (pastille / titre de session) ? */

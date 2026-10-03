@@ -472,6 +472,12 @@ export interface InvDropMsg {
   item: string;
 }
 
+export interface InvAddMoneyMsg {
+  type: "inv.addMoney";
+  charId: string;
+  money: { po: number; pa: number; pc: number };
+}
+
 export type ClientMessage =
   | TokenMoveMsg
   | TokenPutMsg
@@ -515,7 +521,8 @@ export type ClientMessage =
   | InvGiveMoneyMsg
   | InvGiveItemMsg
   | InvAddMsg
-  | InvDropMsg;
+  | InvDropMsg
+  | InvAddMoneyMsg;
 
 // ── Serveur → Client ──────────────────────────────────────────
 
@@ -673,6 +680,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "inv.give",
     "inv.add",
     "inv.drop",
+    "inv.addMoney",
   ];
   return validTypes.includes(type as ClientMessage["type"]);
 }

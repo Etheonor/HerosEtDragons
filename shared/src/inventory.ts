@@ -69,6 +69,16 @@ export function canAfford(source: Money, amount: Money): boolean {
   return source.po >= amount.po && source.pa >= amount.pa && source.pc >= amount.pc;
 }
 
+/** Ajoute un montant à une bourse (chaque pièce plafonnée à 999 999). */
+export function addMoney(source: Money, amount: Money): Money {
+  const add = (a: number, b: number) => Math.min(999999, a + Math.max(0, b));
+  return {
+    po: add(source.po, amount.po),
+    pa: add(source.pa, amount.pa),
+    pc: add(source.pc, amount.pc),
+  };
+}
+
 export function transferMoney(from: Money, to: Money, amount: Money): [Money, Money] {
   if (!canAfford(from, amount)) {
     throw new Error("Fonds insuffisants (pas de conversion entre monnaies)");

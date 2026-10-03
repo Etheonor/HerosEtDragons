@@ -94,7 +94,7 @@ test.describe("Inventaire (R9)", () => {
     await openTable(page, MJ);
     await openPanel(page, "inventory");
     await page.locator(".inv-add input").first().fill("Élan");
-    await page.getByRole("button", { name: "Ajouter" }).click();
+    await page.getByRole("button", { name: "Ajouter", exact: true }).click();
     // Le sac contient désormais deux objets : on cible le nouveau par son texte.
     await expect(page.locator(".inv-name", { hasText: "Élan" })).toHaveCount(1);
 
@@ -103,6 +103,26 @@ test.describe("Inventaire (R9)", () => {
     await openTable(p2, KAELITH);
     await openPanel(p2, "inventory");
     await expect(p2.locator(".inv-add")).toHaveCount(0);
+    await ctx.close();
+  });
+
+  test("le MJ peut ajouter de l'argent ; le joueur ne peut pas", async ({ page, browser }) => {
+    await openTable(page, MJ);
+    await openPanel(page, "inventory");
+    await page.getByLabel("Pièces d'or à ajouter").fill("10");
+    await page.getByRole("button", { name: "Ajouter l'argent" }).click();
+    await expect(page.locator(".coin.po")).toHaveText("22 po");
+
+    // Le joueur voit la même bourse (celle de Kaelith) mais n'a pas le champ.
+    // On ne re-seede PAS : le reset purgerait le DO et la bourse ajoutée avec.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.locator(".journal-panel")).toBeVisible();
+    await openPanel(p2, "inventory");
+    await expect(p2.locator(".coin.po")).toHaveText("22 po");
+    await expect(p2.getByLabel("Pièces d'or à ajouter")).toHaveCount(0);
     await ctx.close();
   });
 

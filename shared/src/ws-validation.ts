@@ -279,6 +279,16 @@ export const invDropSchema = z.object({
   item: itemName,
 });
 
+export const invAddMoneySchema = z.object({
+  type: z.literal("inv.addMoney"),
+  charId: id,
+  money: z.object({
+    po: intField(0, 999999, "pièces d'or"),
+    pa: intField(0, 999999, "pièces d'argent"),
+    pc: intField(0, 999999, "pièces de cuivre"),
+  }),
+});
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   chatSaySchema,
   diceRollSchema,
@@ -321,6 +331,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   invGiveSchema,
   invAddSchema,
   invDropSchema,
+  invAddMoneySchema,
 ]);
 
 export type ClientMessageInput = z.infer<typeof clientMessageSchema>;
