@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
+  import {
+    tableStore,
+    connectWs,
+    disconnectWs,
+    sendWs,
+    clearWsError,
+    DICE_REVEAL_MS,
+    DICE_ROTATE_MS,
+  } from '$lib/ws.svelte';
   import { api, type MapSummary } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
   import type {
@@ -1197,15 +1205,23 @@
   }
 
   /** Le résultat du jet local (`dice.result` n'est envoyé qu'à son auteur)
-   *  complète la dernière entrée de l'historique restée sans total. */
+   *  complète la dernière entrée de l'historique restée sans total — mais
+   *  seulement quand l'animation centrale a fini de le révéler : le badge du
+   *  DiceButton sert de conclusion, pas de spoiler. */
   let lastDiceAnim: typeof store.diceAnim = null;
   $effect(() => {
     const anim = store.diceAnim;
     if (!anim || anim === lastDiceAnim) return;
     lastDiceAnim = anim;
-    const idx = diceHistory.findIndex((h) => h.total === null);
-    if (idx < 0) return;
-    diceHistory = diceHistory.map((h, i) => (i === idx ? { ...h, total: anim.total } : h));
+    const pending = diceHistory.find((h) => h.total === null);
+    if (!pending) return;
+    const id = pending.id;
+    setTimeout(
+      () => {
+        diceHistory = diceHistory.map((h) => (h.id === id ? { ...h, total: anim.total } : h));
+      },
+      DICE_ROTATE_MS + DICE_REVEAL_MS,
+    );
   });
 
   function setMode(mode: 'exploration' | 'combat') {

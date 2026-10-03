@@ -31,6 +31,23 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     clip: { x: 0, y: H - 130, width: W, height: 130 },
   });
 
+  if (process.env.SHOT_DICE) {
+    await page.getByRole("button", { name: "Ouvrir les dés" }).click();
+    await page.getByRole("button", { name: /Lancer 1d20 \+ 0/ }).click();
+    await page.waitForTimeout(600);
+    await page.screenshot({
+      path: `${OUT}/dice-spin.png`,
+      clip: { x: W / 2 - 220, y: H / 2 - 180, width: 440, height: 360 },
+    });
+    await page.waitForTimeout(1300);
+    await page.screenshot({
+      path: `${OUT}/dice-reveal.png`,
+      clip: { x: W / 2 - 220, y: H / 2 - 180, width: 440, height: 360 },
+    });
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: `${OUT}/dice-after.png` });
+  }
+
   const shots = process.env.SHOT_EXTRA ? process.env.SHOT_EXTRA.split(",") : [];
   for (const s of shots) {
     const [name, sel] = s.split("=");

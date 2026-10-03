@@ -46,7 +46,13 @@ export interface DiceAnim {
   detail: string;
   n: number;
   mod: number;
+  cron?: boolean;
+  fumble?: boolean;
 }
+
+/** Phases du jet (ms) — partagées entre le store, l'overlay et le badge. */
+export const DICE_ROTATE_MS = 1400;
+export const DICE_REVEAL_MS = 1000;
 
 export interface Ping {
   id: number;
@@ -294,9 +300,12 @@ function handleMessage(msg: Record<string, unknown>) {
 
     case "dice.result": {
       tableStore.diceAnim = msg.anim as DiceAnim;
-      setTimeout(() => {
-        tableStore.diceAnim = null;
-      }, 1700);
+      setTimeout(
+        () => {
+          tableStore.diceAnim = null;
+        },
+        DICE_ROTATE_MS + DICE_REVEAL_MS + 200,
+      );
       break;
     }
 
