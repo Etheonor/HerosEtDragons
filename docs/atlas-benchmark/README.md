@@ -154,9 +154,11 @@ pas-à-pas, dés D4-D20 sélectionnables, gros bouton « Lancer 1dN ± n »,
 historique avec résultats). **Lot 10 complet** : la toolbar est passée en icônes
 seules dans une **pilule** (raccourci dans un tooltip `<kbd>`, outil actif en
 rouge, accordéon d'options conservé ; Bibliothèque, Cartes et PNJ en carrés
-d'icônes avec badges), le **header est épuré** (toggle de mode en pilule, nom de
-campagne discret, palette en icône ; dés rapides et présence retirés) et le
-**DiceButton** flottant ouvre le pad avec le dernier résultat en badge.
+d'icônes avec badges), le **header est réduit au toggle de mode** et à la barre
+de 4 actions à droite (commandes, compendium, tableau de bord, aide) — le titre
+de campagne, les dés rapides et la présence ont disparu — et le **DiceButton**
+flottant (64 px, badge du dernier résultat) ouvre le pad, aligné avec le Zoom à
+droite de la barre du bas.
 L'initiative est resserrée sur la maquette (ligne 46 px, badge de score carré,
 valeur de PV, flèches au survol).
 

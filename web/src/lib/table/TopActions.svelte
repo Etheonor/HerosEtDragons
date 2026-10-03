@@ -3,11 +3,13 @@
 
   let {
     isMj,
+    onCommands,
     onCompendium,
     onDashboard,
     onHelp,
   }: {
     isMj: boolean;
+    onCommands: () => void;
     onCompendium: () => void;
     onDashboard: () => void;
     onHelp: () => void;
@@ -15,6 +17,15 @@
 </script>
 
 <div class="top-actions" role="toolbar" aria-label="Actions rapides">
+  <button
+    type="button"
+    class="ta-btn"
+    aria-label="Command palette (Espace)"
+    title="Commandes (Espace)"
+    onclick={onCommands}
+  >
+    <ICONS.commands size={22} strokeWidth={1.8} />
+  </button>
   <button
     type="button"
     class="ta-btn"

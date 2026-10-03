@@ -20,19 +20,19 @@
   title="Dés — lancer et historique"
   onclick={onOpen}
 >
-  <ICONS.dice size={30} strokeWidth={1.8} aria-hidden="true" />
+  <ICONS.dice size={34} strokeWidth={1.8} aria-hidden="true" />
   {#if lastResult !== null}<span class="dice-badge">{lastResult}</span>{/if}
 </button>
 
 <style>
   .dice-fab {
     position: fixed;
-    right: 190px;
-    bottom: 12px;
+    right: 20px;
+    bottom: 16px;
     z-index: var(--z-chrome);
     pointer-events: auto;
-    width: 56px;
-    height: 56px;
+    width: 64px;
+    height: 64px;
     display: grid;
     place-items: center;
     color: var(--accent-fg);
@@ -42,7 +42,7 @@
     cursor: pointer;
     box-shadow: 0 6px 18px var(--shadow-2);
   }
-  .dice-fab.shifted { right: calc(var(--w-panel) + 26px + 178px); }
+  .dice-fab.shifted { right: calc(var(--w-panel) + 20px); }
   .dice-fab:hover { background: var(--accent-hover); }
   .dice-badge {
     position: absolute;

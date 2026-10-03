@@ -29,7 +29,7 @@ test.describe("Connexion et table", () => {
 
   test("un joueur arrive sur la table et voit sa compagnie", async ({ page }) => {
     await openTable(page, KAELITH);
-    await expect(page.getByText("Campagne de dev")).toBeVisible();
+    await expect(page.locator(".mode-toggle")).toBeVisible();
 
     // Garde-fou : les commentaires de doc des composants ne doivent jamais être
     // rendus (en Svelte, du texte avant <script> devient du contenu affiché).
@@ -352,9 +352,9 @@ test.describe("Carte : grille et vue", () => {
     await expect(p2.getByRole("button", { name: "Journal" })).toBeVisible();
     await expect(p2.locator(".map-surface")).toBeVisible();
 
-    // 1. Le bouton « Main » du HUD existe pour un joueur (il n'y a pas de
-    //    barre d'outils MJ pour lui) : c'est le reproche initial.
-    const hand = p2.locator(".hud-hand");
+    // 1. Le bouton « Main » existe pour un joueur : c'est le seul outil de sa
+    //    barre du bas (les outils MJ sont filtrés par le rôle).
+    const hand = p2.getByRole("button", { name: "Main" }).first();
     await expect(hand).toBeVisible();
 
     // 2. Clic droit glissé = panoramique, sans passer par l'outil Main. Il faut
@@ -573,7 +573,7 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
   test("le panneau Compagnie se déplace et garde sa position au rechargement", async ({ page }) => {
     await openTable(page, MJ);
     // La Compagnie est la liste complète de secours : elle s'ouvre par la palette.
-    await page.locator(".palette-btn").click();
+    await page.getByRole("button", { name: "Command palette (Espace)" }).click();
     await page.getByPlaceholder(/rechercher une action/i).fill("compagnie");
     await page.locator(".palette-item", { hasText: "Compagnie (liste complète)" }).click();
     const panel = page.locator(".compagnie");
@@ -1009,7 +1009,7 @@ test.describe("Fiche en panneau (Lot 7)", () => {
 
   test("un joueur ouvre sa feuille par la palette", async ({ page }) => {
     await openTable(page, KAELITH);
-    await page.locator(".palette-btn").click();
+    await page.getByRole("button", { name: "Command palette (Espace)" }).click();
     await page.getByPlaceholder(/rechercher une action/i).fill("feuille");
     await page.locator(".palette-item", { hasText: "Ouvrir ma feuille de personnage" }).click();
 

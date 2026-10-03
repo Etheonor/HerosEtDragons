@@ -89,6 +89,7 @@
 
 <style>
   .tool-group {
+    position: relative;
     display: inline-flex;
     align-items: stretch;
     height: 44px;
@@ -129,28 +130,30 @@
     line-height: 1;
   }
   .tg-more {
+    position: absolute;
+    right: 2px;
+    bottom: 1px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
+    width: 16px;
+    height: 14px;
     padding: 0;
-    font-size: 10px;
+    font-size: 9px;
+    line-height: 1;
     color: var(--text-3);
     background: transparent;
     border: none;
-    border-left: 1.5px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .tg-more:hover {
     color: var(--heading);
-    background: color-mix(in oklab, var(--panel), var(--heading) 10%);
+    background: color-mix(in oklab, var(--panel), var(--heading) 12%);
   }
-  .tool-group.is-active .tg-more {
-    color: var(--accent-fg);
-    border-left-color: color-mix(in oklab, var(--accent-border), #000 25%);
-  }
+  .tool-group.is-active .tg-more { color: var(--accent-fg); }
   .tool-group.is-active .tg-more:hover {
-    background: color-mix(in oklab, var(--accent), #000 15%);
+    background: color-mix(in oklab, var(--accent), #000 18%);
   }
   :global(.tooltip) {
     display: flex;

@@ -157,7 +157,6 @@
   let diceSides = $state(20);
   let diceHistory: { id: number; label: string; total: number | null }[] = $state([]);
   let diceHistSeq = 0;
-  let campaignName = $state('');
   let session = $state<{ user: { id: string; name: string } } | null>(null);
   let isMj = $state(false);
 
@@ -1157,7 +1156,6 @@
     session = await auth.getSession();
     try {
       const detail = await api.campaigns.detail(campaignId);
-      campaignName = detail.name;
       isMj = detail.role === 'mj';
     } catch {
       /* ignore */
@@ -1734,11 +1732,11 @@
   // mesure au pixel — seuls les outils y participent, `Cartes` et la
   // bibliothèque restent toujours visibles.
   const toolbarItems = $derived([
-    { id: 'hand', width: 86, priority: 90, pinned: tool === 'hand' },
-    { id: 'move', width: 112, priority: 60, pinned: tool === 'move' },
-    { id: 'fog', width: 132, priority: 55, pinned: tool === 'fog' },
-    { id: 'marker', width: 110, priority: 50, pinned: tool === 'marker' },
-    { id: 'pnj', width: 94, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
+    { id: 'hand', width: 49, priority: 90, pinned: tool === 'hand' },
+    { id: 'move', width: 49, priority: 60, pinned: tool === 'move' },
+    { id: 'fog', width: 49, priority: 55, pinned: tool === 'fog' },
+    { id: 'marker', width: 49, priority: 50, pinned: tool === 'marker' },
+    { id: 'pnj', width: 49, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
   ]);
   const toolbarAvailable = $derived(
     Math.max(0, toolbarWidth - (panelsOpen.compagnie ? 316 : 0) - (panelsOpen.panel ? 352 : 0) - 224),
@@ -2549,13 +2547,6 @@
             onclick={(e) => e.stopPropagation()}
             ondblclick={(e) => e.stopPropagation()}
           >
-            <button
-              class="hud-hand"
-              class:on={tool === 'hand'}
-              title="Déplacer la carte — raccourci H, ou glissez au clic droit"
-              aria-pressed={tool === 'hand'}
-              onclick={() => toolSelect('hand')}>✋</button
-            >
             <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
             <button
               class="hud-fit"
@@ -2579,15 +2570,6 @@
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <span class="campaign-name">{campaignName || '…'}</span>
-    <button
-      class="palette-btn"
-      aria-label="Command palette (Espace)"
-      title="Commandes (Espace)"
-      onclick={() => (paletteOpen = true)}
-    >
-      <ICONS.commands size={18} strokeWidth={2} aria-hidden="true" />
-    </button>
     <div class="grow"></div>
   </header>
 
@@ -2601,6 +2583,7 @@
 
   <TopActions
     {isMj}
+    onCommands={() => (paletteOpen = true)}
     onCompendium={() => openCompendium()}
     onDashboard={() => setPanelOpen('dashboard', !panelsOpen.dashboard)}
     onHelp={() => (helpOpen = true)}
@@ -3521,10 +3504,6 @@
     gap: 12px;
     padding: 8px 14px;
   }
-  .campaign-name {
-    font-family: var(--font-title); font-size: 17px; line-height: 1.1;
-    color: var(--heading); opacity: 0.9;
-  }
   .grow { flex: 1; }
 
   .mode-toggle {
@@ -3544,13 +3523,7 @@
   .mode-btn.exp-active { background: var(--surface-raised); color: var(--heading); }
   .mode-btn.combat-active { background: var(--accent); color: var(--accent-fg); }
 
-  .palette-btn {
-    display: inline-grid; place-items: center;
-    width: 38px; height: 38px; padding: 0;
-    color: var(--text-2); background: var(--surface-canvas);
-    border: 1.5px solid var(--border-default); border-radius: var(--radius-md); cursor: pointer;
-  }
-  .palette-btn:hover { color: var(--heading); background: var(--surface-raised); }
+
 
   .asset-btn {
     display: inline-grid;
@@ -4011,8 +3984,8 @@
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
     position: absolute;
-    right: 12px;
-    bottom: 12px;
+    right: 100px;
+    bottom: 16px;
     z-index: var(--z-map-hud);
     display: flex;
     align-items: center;
@@ -4026,7 +3999,7 @@
     box-shadow: 0 4px 14px var(--shadow-2);
   }
   /* Le panneau de droite est ouvert : le HUD se décale pour rester visible. */
-  .map-hud.behind-panel { right: calc(var(--w-panel) + 26px); }
+  .map-hud.behind-panel { right: calc(var(--w-panel) + 100px); }
   .map-hud button {
     font-family: var(--font-ui);
     font-size: 16px;
@@ -4043,15 +4016,7 @@
   .map-hud button:hover { background: var(--surface-raised); color: var(--heading); }
   .map-hud .hud-fit { color: #d8d0bc; font-size: 16px; }
   .map-hud .hud-fit.off { opacity: 0.55; }
-  /* bouton « Main » : disponible pour tout le monde, contrairement à la barre
-     d'outils MJ. S'allume quand le panoramique au clic gauche est actif. */
-  .map-hud .hud-hand { font-size: 16px; opacity: 0.7; }
-  .map-hud .hud-hand:hover { opacity: 1; }
-  .map-hud .hud-hand.on {
-    opacity: 1;
-    background: var(--accent);
-    color: var(--accent-fg);
-  }
+
 
   .map-surface {
     position: relative;
