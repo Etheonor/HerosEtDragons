@@ -1738,8 +1738,10 @@
     { id: 'marker', width: 49, priority: 50, pinned: tool === 'marker' },
     { id: 'pnj', width: 49, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
   ]);
+  // 560 px réservés de chaque côté : le bloc Zoom + DiceButton vit à droite,
+  // la barre reste centrée sans jamais le chevaucher.
   const toolbarAvailable = $derived(
-    Math.max(0, toolbarWidth - (panelsOpen.compagnie ? 316 : 0) - (panelsOpen.panel ? 352 : 0) - 224),
+    Math.max(0, toolbarWidth - (panelsOpen.compagnie ? 316 : 0) - (panelsOpen.panel ? 352 : 0) - 560),
   );
   const toolbarFit = $derived(fitToolbar(toolbarItems, toolbarAvailable));
   const visibleToolIds = $derived(toolbarFit.visible.map((i) => i.id));
@@ -2539,7 +2541,6 @@
 
           <div
             class="map-hud"
-            class:behind-panel={panelsOpen.panel}
             role="toolbar"
             aria-label="Vue de la carte"
             tabindex="-1"
@@ -2591,7 +2592,6 @@
 
   <DiceButton
     lastResult={diceHistory[0]?.total ?? null}
-    shifted={panelsOpen.panel}
     onOpen={() => {
       setPanelOpen('panel', true);
       activeTab = 'dice';
@@ -3827,8 +3827,8 @@
   /* Barre d'outils : rangée pleine largeur (mesure disponible) + barre centrée. */
   .toolbar-row {
     position: absolute;
-    left: 16px;
-    right: 16px;
+    left: 0;
+    right: 0;
     bottom: 16px;
     display: flex;
     flex-direction: column;
@@ -3998,8 +3998,7 @@
     border-radius: 28px;
     box-shadow: 0 4px 14px var(--shadow-2);
   }
-  /* Le panneau de droite est ouvert : le HUD se décale pour rester visible. */
-  .map-hud.behind-panel { right: calc(var(--w-panel) + 100px); }
+
   .map-hud button {
     font-family: var(--font-ui);
     font-size: 16px;

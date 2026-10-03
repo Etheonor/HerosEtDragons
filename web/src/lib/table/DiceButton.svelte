@@ -3,18 +3,15 @@
 
   let {
     lastResult,
-    shifted = false,
     onOpen,
   }: {
     lastResult: number | null;
-    shifted?: boolean;
     onOpen: () => void;
   } = $props();
 </script>
 
 <button
   class="dice-fab"
-  class:shifted
   type="button"
   aria-label="Ouvrir les dés"
   title="Dés — lancer et historique"
@@ -42,7 +39,6 @@
     cursor: pointer;
     box-shadow: 0 6px 18px var(--shadow-2);
   }
-  .dice-fab.shifted { right: calc(var(--w-panel) + 20px); }
   .dice-fab:hover { background: var(--accent-hover); }
   .dice-badge {
     position: absolute;

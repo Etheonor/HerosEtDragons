@@ -5,8 +5,10 @@ const USER = process.env.SHOT_USER || "mj";
 const OUT = process.env.SHOT_OUT || "/tmp";
 
 (async () => {
+  const W = Number(process.env.SHOT_W || 1920);
+  const H = Number(process.env.SHOT_H || 1080);
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const page = await browser.newPage({ viewport: { width: W, height: H } });
   await page.request.post(`${URL}/api/dev/seed`, { data: { reset: true } });
   await page.request.post(`${URL}/api/dev/login`, { data: { user: USER } });
   await page.goto(`${URL}/campaigns/dev-camp/table`);
@@ -22,11 +24,11 @@ const OUT = process.env.SHOT_OUT || "/tmp";
   await page.screenshot({ path: `${OUT}/table-full.png` });
   await page.screenshot({
     path: `${OUT}/table-top.png`,
-    clip: { x: 0, y: 0, width: 1920, height: 90 },
+    clip: { x: 0, y: 0, width: W, height: 90 },
   });
   await page.screenshot({
     path: `${OUT}/table-bottom.png`,
-    clip: { x: 0, y: 950, width: 1920, height: 130 },
+    clip: { x: 0, y: H - 130, width: W, height: 130 },
   });
 
   const shots = process.env.SHOT_EXTRA ? process.env.SHOT_EXTRA.split(",") : [];
