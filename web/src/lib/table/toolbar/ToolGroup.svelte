@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { Popover, Tooltip } from 'bits-ui';
+  import { Popover } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
   import { ICONS, type IconKey } from '$lib/ds/icons';
 
   interface Props {
@@ -32,37 +33,23 @@
   const Icon = $derived(ICONS[icon]);
 </script>
 
-<Tooltip.Provider delayDuration={300}>
-  <div class="tool-group {active ? 'is-active' : ''} {className}">
-    <Tooltip.Root>
-      <Tooltip.Trigger>
-        {#snippet child({ props })}
-          <button
-            {...props}
-            type="button"
-            class="tg-main"
-            class:active
-            {disabled}
-            aria-pressed={active}
-            aria-label={label}
-            onclick={onselect}
-          >
-            <span class="tg-icon" aria-hidden="true"><Icon size={17} strokeWidth={2} /></span>
-          </button>
-        {/snippet}
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content
-          {...surfaceProps('overlay', 'tooltip')}
-          side="top"
-          align="center"
-          sideOffset={6}
+<div class="tool-group {active ? 'is-active' : ''} {className}">
+    <Tooltip label={label} kbd={hotkeyLabel}>
+      {#snippet children({ props })}
+        <button
+          {...props}
+          type="button"
+          class="tg-main"
+          class:active
+          {disabled}
+          aria-pressed={active}
+          aria-label={label}
+          onclick={onselect}
         >
-          <span class="tip-label">{label}</span>
-          {#if hotkeyLabel}<kbd class="tip-kbd">{hotkeyLabel}</kbd>{/if}
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+          <span class="tg-icon" aria-hidden="true"><Icon size={17} strokeWidth={2} /></span>
+        </button>
+      {/snippet}
+    </Tooltip>
     {#if options}
       <Popover.Root>
         <Popover.Trigger>
@@ -85,7 +72,6 @@
       </Popover.Root>
     {/if}
   </div>
-</Tooltip.Provider>
 
 <style>
   .tool-group {
@@ -155,27 +141,7 @@
   .tool-group.is-active .tg-more:hover {
     background: color-mix(in oklab, var(--accent), #000 18%);
   }
-  :global(.tooltip) {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 5px 9px;
-    font-size: 12.5px;
-    color: var(--text);
-  }
-  .tip-label {
-    white-space: nowrap;
-  }
-  .tip-kbd {
-    font-family: var(--font-body);
-    font-size: 10.5px;
-    font-weight: 700;
-    color: var(--text-2);
-    background: var(--bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    padding: 0 4px;
-  }
+
   :global(.tool-options) {
     width: 260px;
     padding: 10px;

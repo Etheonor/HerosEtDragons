@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ICONS } from '$lib/ds/icons';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
 
   let {
     isMj,
@@ -17,44 +18,48 @@
 </script>
 
 <div class="top-actions" role="toolbar" aria-label="Actions rapides">
-  <button
-    type="button"
-    class="ta-btn"
-    aria-label="Command palette (Espace)"
-    title="Commandes (Espace)"
-    onclick={onCommands}
-  >
-    <ICONS.commands size={22} strokeWidth={1.8} />
-  </button>
-  <button
-    type="button"
-    class="ta-btn"
-    aria-label="Compendium"
-    title="Compendium — fenêtre par-dessus la table"
-    onclick={onCompendium}
-  >
-    <ICONS.compendium size={22} strokeWidth={1.8} />
-  </button>
+  <Tooltip label="Commandes" kbd="Espace">
+    {#snippet children({ props })}
+      <button
+        {...props}
+        type="button"
+        class="ta-btn"
+        aria-label="Command palette (Espace)"
+        onclick={onCommands}
+      >
+        <ICONS.commands size={22} strokeWidth={1.8} />
+      </button>
+    {/snippet}
+  </Tooltip>
+  <Tooltip label="Compendium">
+    {#snippet children({ props })}
+      <button {...props} type="button" class="ta-btn" aria-label="Compendium" onclick={onCompendium}>
+        <ICONS.compendium size={22} strokeWidth={1.8} />
+      </button>
+    {/snippet}
+  </Tooltip>
   {#if isMj}
-    <button
-      type="button"
-      class="ta-btn"
-      aria-label="Tableau de bord"
-      title="Tableau de bord MJ"
-      onclick={onDashboard}
-    >
-      <ICONS.dashboard size={22} strokeWidth={1.8} />
-    </button>
+    <Tooltip label="Tableau de bord MJ">
+      {#snippet children({ props })}
+        <button
+          {...props}
+          type="button"
+          class="ta-btn"
+          aria-label="Tableau de bord"
+          onclick={onDashboard}
+        >
+          <ICONS.dashboard size={22} strokeWidth={1.8} />
+        </button>
+      {/snippet}
+    </Tooltip>
   {/if}
-  <button
-    type="button"
-    class="ta-btn"
-    aria-label="Aide clavier"
-    title="Aide clavier (?)"
-    onclick={onHelp}
-  >
-    <ICONS.help size={22} strokeWidth={1.8} />
-  </button>
+  <Tooltip label="Aide clavier" kbd="?">
+    {#snippet children({ props })}
+      <button {...props} type="button" class="ta-btn" aria-label="Aide clavier" onclick={onHelp}>
+        <ICONS.help size={22} strokeWidth={1.8} />
+      </button>
+    {/snippet}
+  </Tooltip>
 </div>
 
 <style>

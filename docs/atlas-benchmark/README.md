@@ -169,7 +169,10 @@ valeur de PV, flèches au survol).
 fermeture manuelle ou après 3,2 s / 5,2 s, variantes info/succès/erreur) ;
 **8.2** — squelettes de chargement (accueil, fiche plein écran et en panneau,
 liste et fiche du compendium) et erreurs auparavant silencieuses remontées au
-toast (cartes, journal, notes MJ, modèles PNJ, inspiration, niveau).
+toast (cartes, journal, notes MJ, modèles PNJ, inspiration, niveau) ;
+**8.3** — `<Tooltip>` générique bits-ui (label + `<kbd>`), appliqué au chrome :
+TopActions, DiceButton, fenêtres, HUD de zoom, historique, flèches d'initiative
+et outils de la barre.
 
 ---
 

@@ -30,6 +30,7 @@
   import CloseButton from '$lib/ds/CloseButton.svelte';
   import { scrollArea } from '$lib/ds/scroll-area';
   import { surfaceProps } from '$lib/ds/surface';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
   import HotkeyHelp from '$lib/components/HotkeyHelp.svelte';
   import CommandPalette from '$lib/table/CommandPalette.svelte';
   import ToolGroup from '$lib/table/toolbar/ToolGroup.svelte';
@@ -2560,14 +2561,26 @@
             onclick={(e) => e.stopPropagation()}
             ondblclick={(e) => e.stopPropagation()}
           >
-            <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
-            <button
-              class="hud-fit"
-              class:off={camera.zoom === 1 && camera.panX === 0 && camera.panY === 0}
-              title="Revenir à la carte entière"
-              onclick={resetView}>{Math.round(camera.zoom * 100)} %</button
-            >
-            <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
+            <Tooltip label="Dézoomer">
+              {#snippet children({ props })}
+                <button {...props} onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
+              {/snippet}
+            </Tooltip>
+            <Tooltip label="Revenir à la carte entière">
+              {#snippet children({ props })}
+                <button
+                  {...props}
+                  class="hud-fit"
+                  class:off={camera.zoom === 1 && camera.panX === 0 && camera.panY === 0}
+                  onclick={resetView}>{Math.round(camera.zoom * 100)} %</button
+                >
+              {/snippet}
+            </Tooltip>
+            <Tooltip label="Zoomer">
+              {#snippet children({ props })}
+                <button {...props} onclick={() => zoomAtCenter(1.3)}>+</button>
+              {/snippet}
+            </Tooltip>
           </div>
         {/if}
       </main>
@@ -2863,26 +2876,34 @@
                 <span class="init-score">{e.score ?? '—'}</span>
                 {#if isMj && store.state.combat.phase === 'run' && store.state.combat.order}
                   <span class="init-move">
-                    <button
-                      type="button"
-                      aria-label="Monter {c?.name}"
-                      title="Monter dans l'initiative"
-                      disabled={i === 0}
-                      onclick={(ev) => {
-                        ev.stopPropagation();
-                        reorderCombat(e.id, true);
-                      }}>▲</button
-                    >
-                    <button
-                      type="button"
-                      aria-label="Descendre {c?.name}"
-                      title="Descendre dans l'initiative"
-                      disabled={i === initChips.length - 1}
-                      onclick={(ev) => {
-                        ev.stopPropagation();
-                        reorderCombat(e.id, false);
-                      }}>▼</button
-                    >
+                    <Tooltip label="Monter dans l'initiative" side="left">
+                      {#snippet children({ props })}
+                        <button
+                          {...props}
+                          type="button"
+                          aria-label="Monter {c?.name}"
+                          disabled={i === 0}
+                          onclick={(ev) => {
+                            ev.stopPropagation();
+                            reorderCombat(e.id, true);
+                          }}>▲</button
+                        >
+                      {/snippet}
+                    </Tooltip>
+                    <Tooltip label="Descendre dans l'initiative" side="left">
+                      {#snippet children({ props })}
+                        <button
+                          {...props}
+                          type="button"
+                          aria-label="Descendre {c?.name}"
+                          disabled={i === initChips.length - 1}
+                          onclick={(ev) => {
+                            ev.stopPropagation();
+                            reorderCombat(e.id, false);
+                          }}>▼</button
+                        >
+                      {/snippet}
+                    </Tooltip>
                   </span>
                 {/if}
               </div>
@@ -2911,26 +2932,34 @@
         <div class="mj-toolbar surface-raised">
           {#if isMj}
             <div class="history-group" role="group" aria-label="Historique">
-              <button
-                class="history-btn"
-                type="button"
-                disabled={!store.history.canUndo || historyBusy}
-                title="Annuler — Ctrl/⌘ Z"
-                aria-label="Annuler"
-                onclick={doUndo}
-              >
-                <ICONS.undo size={16} strokeWidth={2} />
-              </button>
-              <button
-                class="history-btn"
-                type="button"
-                disabled={!store.history.canRedo || historyBusy}
-                title="Rétablir — Ctrl/⌘ ⇧ Z"
-                aria-label="Rétablir"
-                onclick={doRedo}
-              >
-                <ICONS.redo size={16} strokeWidth={2} />
-              </button>
+              <Tooltip label="Annuler" kbd="Ctrl/⌘ Z">
+                {#snippet children({ props })}
+                  <button
+                    {...props}
+                    class="history-btn"
+                    type="button"
+                    disabled={!store.history.canUndo || historyBusy}
+                    aria-label="Annuler"
+                    onclick={doUndo}
+                  >
+                    <ICONS.undo size={18} strokeWidth={2} />
+                  </button>
+                {/snippet}
+              </Tooltip>
+              <Tooltip label="Rétablir" kbd="Ctrl/⌘ ⇧ Z">
+                {#snippet children({ props })}
+                  <button
+                    {...props}
+                    class="history-btn"
+                    type="button"
+                    disabled={!store.history.canRedo || historyBusy}
+                    aria-label="Rétablir"
+                    onclick={doRedo}
+                  >
+                    <ICONS.redo size={18} strokeWidth={2} />
+                  </button>
+                {/snippet}
+              </Tooltip>
             </div>
             <span class="tsep"></span>
           {/if}

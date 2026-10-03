@@ -60,6 +60,15 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/dice-after.png` });
   }
 
+  if (process.env.SHOT_TIP) {
+    await page.getByRole("button", { name: "Aide clavier" }).hover();
+    await page.waitForTimeout(700);
+    await page.screenshot({
+      path: `${OUT}/tooltip.png`,
+      clip: { x: W - 420, y: 0, width: 420, height: 240 },
+    });
+  }
+
   const shots = process.env.SHOT_EXTRA ? process.env.SHOT_EXTRA.split(",") : [];
   for (const s of shots) {
     const [name, sel] = s.split("=");

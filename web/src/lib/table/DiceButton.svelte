@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ICONS } from '$lib/ds/icons';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
 
   let {
     lastResult,
@@ -10,16 +11,14 @@
   } = $props();
 </script>
 
-<button
-  class="dice-fab"
-  type="button"
-  aria-label="Ouvrir les dés"
-  title="Dés — lancer et historique"
-  onclick={onOpen}
->
-  <ICONS.dice size={34} strokeWidth={1.8} aria-hidden="true" />
-  {#if lastResult !== null}<span class="dice-badge">{lastResult}</span>{/if}
-</button>
+<Tooltip label="Dés — lancer et historique" side="left">
+  {#snippet children({ props })}
+    <button {...props} class="dice-fab" type="button" aria-label="Ouvrir les dés" onclick={onOpen}>
+      <ICONS.dice size={34} strokeWidth={1.8} aria-hidden="true" />
+      {#if lastResult !== null}<span class="dice-badge">{lastResult}</span>{/if}
+    </button>
+  {/snippet}
+</Tooltip>
 
 <style>
   .dice-fab {

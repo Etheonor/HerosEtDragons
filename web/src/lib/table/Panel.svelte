@@ -12,6 +12,7 @@
    */
   import { onMount, type Component, type Snippet } from 'svelte';
   import CloseButton from '$lib/ds/CloseButton.svelte';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
   import { ICONS } from '$lib/ds/icons';
   import { bringToFront, panelZ } from './panelStack.svelte';
 
@@ -221,18 +222,22 @@
       <span class="panel-icon"><Icon size={16} strokeWidth={1.8} /></span>
     {/if}
     <span class="panel-title">{title}</span>
-    <button
-      type="button"
-      class="panel-collapse"
-      aria-label={collapsed ? `Agrandir ${title.toLowerCase()}` : `Réduire ${title.toLowerCase()}`}
-      title={collapsed ? 'Agrandir' : 'Réduire'}
-      onclick={() => (collapsed = !collapsed)}
-    >
-      {#if collapsed}<ICONS.plus size={14} strokeWidth={2} />{:else}<ICONS.minus
-          size={14}
-          strokeWidth={2}
-        />{/if}
-    </button>
+    <Tooltip label={collapsed ? 'Agrandir' : 'Réduire la fenêtre'}>
+      {#snippet children({ props })}
+        <button
+          {...props}
+          type="button"
+          class="panel-collapse"
+          aria-label={collapsed ? `Agrandir ${title.toLowerCase()}` : `Réduire ${title.toLowerCase()}`}
+          onclick={() => (collapsed = !collapsed)}
+        >
+          {#if collapsed}<ICONS.plus size={14} strokeWidth={2} />{:else}<ICONS.minus
+              size={14}
+              strokeWidth={2}
+            />{/if}
+        </button>
+      {/snippet}
+    </Tooltip>
     {#if onClose}
       <CloseButton label={closeLabel ?? `Fermer ${title.toLowerCase()}`} onclick={onClose} />
     {/if}
