@@ -2871,7 +2871,10 @@
                   </span>
                 {/if}
                 <span class="init-body">
-                  <span class="init-name">{c?.name}</span>
+                  <span class="init-top">
+                    <span class="init-name">{c?.name}</span>
+                    {#if c && pct !== null}<span class="init-pv">{c.pv} / {c.pvMax}</span>{/if}
+                  </span>
                   {#if pct !== null}
                     <span class="init-hp">
                       <span class="init-hp-fill {pct >= 70 ? 'ok' : pct >= 30 ? 'mid' : 'low'}" style="width: {pct}%;"></span>
@@ -3789,7 +3792,7 @@
   .init-list { display: flex; flex-direction: column; gap: 3px; padding: 8px; overflow-y: auto; }
   .init-row {
     display: flex; align-items: center; gap: 8px;
-    padding: 5px 7px;
+    min-height: 46px; padding: 4px 6px;
     border: 1.5px solid transparent; border-left: 3px solid transparent;
     border-radius: var(--radius-sm);
     background: var(--panel);
@@ -3802,23 +3805,29 @@
   }
   .init-row.defeated { filter: grayscale(0.7); opacity: 0.55; }
   .init-portrait {
-    width: 28px; height: 28px; flex: none; object-fit: cover;
+    width: 34px; height: 34px; flex: none; object-fit: cover;
     border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
   }
   .init-initial {
-    width: 28px; height: 28px; flex: none;
+    width: 34px; height: 34px; flex: none;
     display: grid; place-items: center;
-    font-family: var(--font-title); font-size: 14px;
+    font-family: var(--font-title); font-size: 16px;
     color: var(--map-token-fg); background: var(--map-token-bg);
     border: 2px solid var(--token-color, var(--accent)); border-radius: 50%;
   }
-  .init-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .init-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .init-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
   .init-name {
-    font-family: var(--font-title); font-size: 13.5px; color: var(--heading);
+    font-family: var(--font-ui); font-size: 14px; color: var(--heading);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .init-pv {
+    flex: none;
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+    color: var(--text-2); white-space: nowrap;
+  }
   .init-hp {
-    display: block; height: 5px; border-radius: 3px;
+    display: block; height: 6px; border-radius: 3px;
     background: #2b2822; border: 1px solid #3a352d; overflow: hidden;
   }
   .init-hp-fill { display: block; height: 100%; background: var(--hp-ok); }
@@ -3829,11 +3838,16 @@
     color: var(--hp-low);
   }
   .init-score {
-    font-family: var(--font-body); font-size: 13px; font-weight: 700; color: var(--text-2);
-    min-width: 20px; text-align: right;
+    flex: none;
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 15px; color: var(--heading);
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
   }
-  .init-row.active .init-score { color: var(--heading); }
-  .init-move { display: flex; flex-direction: column; gap: 1px; }
+  .init-move { display: flex; flex-direction: column; gap: 1px; opacity: 0; transition: opacity 0.12s; }
+  .init-row:hover .init-move, .init-row:focus-within .init-move { opacity: 1; }
   .init-move button {
     font-size: 8px; line-height: 1; width: 18px; height: 12px; padding: 0;
     background: transparent; border: 1px solid var(--border); border-radius: 3px;

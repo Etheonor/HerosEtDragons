@@ -151,7 +151,10 @@ le lien Compendium du session-bar, le **Zoom** reprend la peau Penpot (pilule
 sombre, en bas à droite), les **fenêtres** gagnent l'en-tête Penpot (icône +
 réduire à la barre de titre) et le **DicePad** est enrichi (modificateur en
 pas-à-pas, dés D4-D20 sélectionnables, gros bouton « Lancer 1dN ± n »,
-historique avec résultats).
+historique avec résultats). **Lot 10 complet** : la toolbar est passée en icônes
+seules (raccourci dans un tooltip `<kbd>`, outil actif en rouge, accordéon
+d'options conservé) et l'initiative est resserrée sur la maquette (ligne 46 px,
+badge de score carré, valeur de PV, flèches au survol).
 
 ---
 

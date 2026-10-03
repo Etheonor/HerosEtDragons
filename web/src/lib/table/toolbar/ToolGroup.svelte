@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { Popover } from 'bits-ui';
+  import { Popover, Tooltip } from 'bits-ui';
   import { surfaceProps } from '$lib/ds/surface';
   import { ICONS, type IconKey } from '$lib/ds/icons';
 
@@ -32,42 +32,60 @@
   const Icon = $derived(ICONS[icon]);
 </script>
 
-<div class="tool-group {active ? 'is-active' : ''} {className}">
-  <button
-    type="button"
-    class="tg-main"
-    class:active
-    {disabled}
-    aria-pressed={active}
-    aria-label={label}
-    onclick={onselect}
-  >
-    <span class="tg-icon" aria-hidden="true"><Icon size={15} strokeWidth={2} /></span>
-    <span class="tg-label">{label}</span>
-    {#if hotkeyLabel}<kbd class="tg-kbd">{hotkeyLabel}</kbd>{/if}
-  </button>
-  {#if options}
-    <Popover.Root>
-      <Popover.Trigger class="tg-more" aria-label="Options — {label}">▾</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          {...surfaceProps('overlay', 'tool-options')}
+<Tooltip.Provider delayDuration={300}>
+  <div class="tool-group {active ? 'is-active' : ''} {className}">
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <button
+            {...props}
+            type="button"
+            class="tg-main"
+            class:active
+            {disabled}
+            aria-pressed={active}
+            aria-label={label}
+            onclick={onselect}
+          >
+            <span class="tg-icon" aria-hidden="true"><Icon size={17} strokeWidth={2} /></span>
+          </button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          {...surfaceProps('overlay', 'tooltip')}
           side="top"
           align="center"
-          sideOffset={8}
+          sideOffset={6}
         >
-          {@render options()}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  {/if}
-</div>
+          <span class="tip-label">{label}</span>
+          {#if hotkeyLabel}<kbd class="tip-kbd">{hotkeyLabel}</kbd>{/if}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+    {#if options}
+      <Popover.Root>
+        <Popover.Trigger class="tg-more" aria-label="Options — {label}">▾</Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            {...surfaceProps('overlay', 'tool-options')}
+            side="top"
+            align="center"
+            sideOffset={8}
+          >
+            {@render options()}
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    {/if}
+  </div>
+</Tooltip.Provider>
 
 <style>
   .tool-group {
     display: inline-flex;
     align-items: stretch;
-    height: var(--control-h);
+    height: 38px;
     background: var(--panel);
     border: 1.5px solid var(--border-default);
     border-radius: var(--radius-sm);
@@ -76,16 +94,14 @@
   }
   .tool-group.is-active {
     border-color: var(--accent-border);
-    background: var(--selected);
+    background: var(--accent);
   }
   .tg-main {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 9px;
-    font-family: var(--font-body);
-    font-size: 12.5px;
-    font-weight: 500;
+    justify-content: center;
+    width: 42px;
+    padding: 0;
     color: var(--text-2);
     background: transparent;
     border: none;
@@ -95,7 +111,7 @@
     color: var(--heading);
   }
   .tg-main.active {
-    color: var(--heading);
+    color: var(--accent-fg);
   }
   .tg-main:disabled {
     opacity: 0.45;
@@ -106,20 +122,11 @@
     align-items: center;
     line-height: 1;
   }
-  .tg-kbd {
-    font-family: var(--font-body);
-    font-size: 10.5px;
-    font-weight: 700;
-    color: var(--text-3);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    padding: 0 4px;
-  }
   .tg-more {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
+    width: 18px;
     padding: 0;
     font-size: 10px;
     color: var(--text-3);
@@ -130,7 +137,35 @@
   }
   .tg-more:hover {
     color: var(--heading);
-    background: var(--selected);
+    background: color-mix(in oklab, var(--panel), var(--heading) 10%);
+  }
+  .tool-group.is-active .tg-more {
+    color: var(--accent-fg);
+    border-left-color: color-mix(in oklab, var(--accent-border), #000 25%);
+  }
+  .tool-group.is-active .tg-more:hover {
+    background: color-mix(in oklab, var(--accent), #000 15%);
+  }
+  :global(.tooltip) {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 9px;
+    font-size: 12.5px;
+    color: var(--text);
+  }
+  .tip-label {
+    white-space: nowrap;
+  }
+  .tip-kbd {
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-2);
+    background: var(--bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    padding: 0 4px;
   }
   :global(.tool-options) {
     width: 260px;
