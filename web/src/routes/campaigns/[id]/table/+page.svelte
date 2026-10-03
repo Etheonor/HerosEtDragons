@@ -173,7 +173,7 @@
   // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
   // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
   const PANELS_KEY = 'hd-table-panels-v2';
-  type PanelId = 'compagnie' | 'panel' | 'dashboard';
+  type PanelId = 'compagnie' | 'panel' | 'dashboard' | 'initiative';
 
   function loadPanelState(): Record<PanelId, boolean> {
     try {
@@ -186,12 +186,13 @@
           compagnie: p.compagnie === true,
           panel: p.panel !== false,
           dashboard: p.dashboard === true,
+          initiative: p.initiative !== false,
         };
       }
     } catch {
       /* stockage indisponible : on garde les panneaux ouverts */
     }
-    return { compagnie: false, panel: true, dashboard: false };
+    return { compagnie: false, panel: true, dashboard: false, initiative: true };
   }
 
   let panelsOpen = $state(loadPanelState());
@@ -204,6 +205,16 @@
       /* ignore */
     }
   }
+
+  /** Entrer en combat rouvre l'initiative, même si elle avait été fermée. */
+  let wasInCombat = false;
+  $effect(() => {
+    const inCombat = store.state.mode === 'combat' && !!store.state.combat;
+    if (inCombat && !wasInCombat && !panelsOpen.initiative) {
+      setPanelOpen('initiative', true);
+    }
+    wasInCombat = inCombat;
+  });
 
   // ── Fiches de personnage en panneaux (Lot 7.1) ───────────────
   // Éphémères (pas de persistance) : une fiche s'ouvre à la demande et le MJ
@@ -310,6 +321,17 @@
         keywords: ['panneau', 'journal', 'dés', 'inventaire'],
         run: () => setPanelOpen('panel', !panelsOpen.panel),
       },
+      ...(store.state.mode === 'combat'
+        ? [
+            {
+              id: 'panel.initiative',
+              label: panelsOpen.initiative ? "Masquer l'initiative" : "Afficher l'initiative",
+              group: 'Actions',
+              keywords: ['panneau', 'initiative', 'combat', 'tour'],
+              run: () => setPanelOpen('initiative', !panelsOpen.initiative),
+            },
+          ]
+        : []),
       {
         id: 'map.reset',
         label: 'Recadrer la carte',
@@ -2806,19 +2828,24 @@
     </Panel>
     {/if}
 
-      {#if store.state.mode === 'combat' && store.state.combat}
-        <aside
-          class="initiative-rail surface-raised"
-          class:behind-panel={panelsOpen.panel}
-          aria-label="Initiative"
+      {#if store.state.mode === 'combat' && store.state.combat && panelsOpen.initiative}
+        <Panel
+          id="initiative"
+          title={store.state.combat.phase === 'run'
+            ? `Initiative · round ${store.state.combat.round}`
+            : 'Initiative · à vos d20'}
+          campaignId={campaignId}
+          icon={ICONS.attack}
+          onClose={() => setPanelOpen('initiative', false)}
+          closeLabel="Fermer l'initiative"
+          initial={{
+            x: Math.max(16, innerWidth - 340 - 276),
+            y: 112,
+            w: 264,
+            h: Math.min(560, innerHeight - 236),
+          }}
+          class="initiative-panel"
         >
-          <div class="init-head">
-            <span class="init-title">Initiative</span>
-            <span class="round-badge">
-              {store.state.combat.phase === 'run' ? `round ${store.state.combat.round}` : 'à vos d20'}
-            </span>
-          </div>
-
           {#if store.state.combat.phase === 'init'}
             <div class="init-pending">
               {#each pendingInit as pid (pid)}
@@ -2913,7 +2940,7 @@
           {#if isMj && store.state.combat.phase === 'run'}
             <button class="next-turn-btn" onclick={combatNext}>Tour suivant →</button>
           {/if}
-        </aside>
+        </Panel>
       {/if}
 
       <!-- Barre d'outils ancrée en bas, centrée, sortie par priorité (Lot 2). -->
@@ -3721,34 +3748,23 @@
     color: var(--text-3); margin: 2px 0 -4px 14px;
   }
 
-  /* ── Initiative verticale (Lot 5) ─────────────────────────────── */
-  .initiative-rail {
-    position: absolute;
-    top: 112px;
-    right: 12px;
-    width: 264px;
-    max-height: calc(100% - 132px);
-    z-index: var(--z-chrome);
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-  /* Le panneau de séance (à droite par défaut) ouvert : la rail se décale. */
-  .initiative-rail.behind-panel { right: 340px; }
-  .init-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 7px 12px; border-bottom: 2px solid var(--border); flex: none;
-  }
-  .init-title { font-family: var(--font-title); font-size: 15px; color: var(--heading); }
-  .round-badge {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
-    color: var(--accent-text);
+  /* ── Initiative (panneau flottant, comme Séance) ──────────────── */
+  .initiative-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
   .init-pending {
     display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
     border-bottom: 1.5px solid var(--border-soft); flex: none;
   }
   .init-pending .roll-init-btn { width: 100%; }
-  .init-list { display: flex; flex-direction: column; gap: 3px; padding: 8px; overflow-y: auto; }
+  .init-list {
+    flex: 1;
+    min-height: 0;
+    display: flex; flex-direction: column; gap: 3px; padding: 8px; overflow-y: auto;
+  }
   .init-row {
     display: flex; align-items: center; gap: 8px;
     min-height: 46px; padding: 4px 6px;
@@ -3824,9 +3840,11 @@
     background: transparent; border: 2px dashed var(--border); color: var(--text-2); cursor: default;
   }
   .next-turn-btn {
-    font-family: var(--font-body); font-size: 13px; padding: 6px 14px;
+    flex: none;
+    margin: 8px 10px 10px;
+    font-family: var(--font-body); font-size: 13px; padding: 7px 14px;
     background: var(--selected); color: var(--heading); border: 2px solid var(--border);
-    border-radius: 15px 230px 15px 225px / 225px 15px 255px 15px; cursor: pointer;
+    border-radius: var(--radius-md); cursor: pointer;
   }
   .next-turn-btn:hover { background: var(--accent); border-color: var(--accent-border); }
 

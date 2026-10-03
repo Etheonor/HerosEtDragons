@@ -60,6 +60,22 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/dice-after.png` });
   }
 
+  if (process.env.SHOT_COMBAT) {
+    await page.locator(".gf", { hasText: "Kaelith" }).dblclick();
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dlg = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dlg.getByRole("tab", { name: /PNJ/ }).click();
+    await dlg.locator(".asset-card", { hasText: "Gobelin" }).first().dblclick();
+    await page.getByRole("button", { name: "Combat", exact: true }).click();
+    const pending = page.locator(".roll-init-btn:not([disabled])");
+    for (let i = 0; i < 4 && (await pending.count()) > 0; i++) {
+      await pending.first().click();
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${OUT}/combat.png` });
+  }
+
   if (process.env.SHOT_TIP) {
     await page.getByRole("button", { name: "Aide clavier" }).hover();
     await page.waitForTimeout(700);
