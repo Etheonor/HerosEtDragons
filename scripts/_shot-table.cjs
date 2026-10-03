@@ -60,6 +60,19 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/dice-after.png` });
   }
 
+  if (process.env.SHOT_TIMER) {
+    await page.locator(".timer-value").dblclick();
+    const input = page.getByLabel("Durée du minuteur");
+    await input.fill("0:03");
+    await input.press("Enter");
+    console.log("apres reset:", await page.locator(".timer-value").innerText());
+    await page.getByRole("button", { name: "Démarrer" }).click();
+    for (let i = 0; i < 40; i++) {
+      console.log(`${i * 100}ms`, await page.locator(".timer-value").innerText());
+      await page.waitForTimeout(100);
+    }
+  }
+
   if (process.env.SHOT_MENU) {
     const info = await page.evaluate(() => {
       const el = document.elementFromPoint(640, 580);

@@ -32,6 +32,9 @@
 
   $effect(() => {
     if (!store.state.widgets.timer.running) return;
+    // `now` doit être frais AVANT le premier calcul : sinon l'écart entre le
+    // montage de la page et le lancement s'ajoute au décompte affiché.
+    now = Date.now();
     const t = setInterval(() => (now = Date.now()), 500);
     return () => clearInterval(t);
   });
