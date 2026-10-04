@@ -163,6 +163,15 @@ export interface TableSettings {
   tokenSize: number;
 }
 
+/**
+ * Keepalive WebSocket (audit P4) — chaînes BRUTES, échangées telles quelles :
+ * la réponse automatique de hibernation du DO (`setWebSocketAutoResponse`)
+ * exige une correspondance exacte, hors JSON.parse et hors Zod. Le handler
+ * `webSocketMessage` court-circuite aussi la requête quand le DO est éveillé.
+ */
+export const WS_HEARTBEAT_REQUEST = '{"type":"hb"}';
+export const WS_HEARTBEAT_RESPONSE = '{"type":"hb.ack"}';
+
 /** Valeurs par défaut — source unique (serveur et client pré-snapshot). */
 export const DEFAULT_SETTINGS: TableSettings = {
   pnjPvVisible: false,

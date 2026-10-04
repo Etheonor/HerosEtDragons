@@ -17,7 +17,23 @@ import type {
   HistoryState,
 } from "@rollwith/shared/protocol";
 import type { Inventory } from "@rollwith/shared/inventory";
-import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
+import { DEFAULT_SETTINGS, WS_HEARTBEAT_REQUEST } from "@rollwith/shared/protocol";
+
+/** Plafond mémoire du journal (entrées live + pagination cumulée). Le
+ *  serveur élague à 5 000 : au-delà de 2 000 en DOM, le coût de scroll et la
+ *  mémoire de l'onglet ne se justifient plus pour une session de jeu. */
+export const JOURNAL_MAX_ENTRIES = 2000;
+
+/** Keepalive (audit P4) : battement toutes les 25 s ; sans ack sous 70 s, la
+ *  connexion est un zombie (proxy coupé) : on ferme, le backoff reconnecte. */
+const HEARTBEAT_MS = 25_000;
+const HEARTBEAT_TIMEOUT_MS = 70_000;
+
+/** Plafond de reconnexion (audit P4) : après 8 échecs rapprochés (~40 s), on
+ *  passe à une tentative par minute — un onglet oublié ne martèle plus le
+ *  worker toutes les 8 s, mais finit quand même par revenir. */
+const MAX_FAST_ATTEMPTS = 8;
+const SLOW_RETRY_MS = 60_000;
 
 export interface TableState {
   mode: "exploration" | "combat";
@@ -128,9 +144,48 @@ export const tableStore = $state<TableStore>({
 let ws: WebSocket | null = null;
 let url = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let lastPongAt = 0;
 let disposed = true;
 let wasConnected = false;
 let attempts = 0;
+
+/** Fenêtre glissante : retire les plus anciennes entrées et oublie leurs ids. */
+function capJournal() {
+  const overflow = tableStore.journal.length - JOURNAL_MAX_ENTRIES;
+  if (overflow <= 0) return;
+  tableStore.journal.slice(0, overflow).forEach((e) => journalIds.delete(e.id));
+  tableStore.journal = tableStore.journal.slice(overflow);
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  lastPongAt = Date.now();
+  heartbeatTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+      tableStore.error = "Connexion perdue";
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      ws.send(WS_HEARTBEAT_REQUEST);
+    } catch {
+      /* ignore */
+    }
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
 
 /** N4 (audit) : remet le store singleton à zéro — passé d'une campagne à
  *  l'autre, l'écran affichait brièvement les personnages/journal de la
@@ -171,6 +226,7 @@ export function connectWs(campaignId: string) {
 
 function doConnect() {
   if (disposed) return;
+  stopHeartbeat();
   if (ws) {
     ws.onclose = null;
     ws.onerror = null;
@@ -190,6 +246,7 @@ function doConnect() {
     wasConnected = true;
     tableStore.connected = true;
     tableStore.error = null;
+    startHeartbeat();
   };
 
   ws.onmessage = (ev) => {
@@ -202,6 +259,7 @@ function doConnect() {
   };
 
   ws.onclose = () => {
+    stopHeartbeat();
     if (disposed) return;
     tableStore.connected = false;
     scheduleReconnect();
@@ -221,9 +279,11 @@ function scheduleReconnect() {
   if (disposed) return;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   attempts += 1;
-  // Backoff exponentiel + jitter (évite la rafale si 5 joueurs retombent ensemble)
-  const base = Math.min(8000, 1000 * 2 ** (attempts - 1));
-  const jitter = Math.random() * 800;
+  // Backoff exponentiel + jitter (évite la rafale si 5 joueurs retombent
+  // ensemble), puis rythme lent : un onglet oublié ne martèle plus le worker.
+  const slow = attempts > MAX_FAST_ATTEMPTS;
+  const base = slow ? SLOW_RETRY_MS : Math.min(8000, 1000 * 2 ** (attempts - 1));
+  const jitter = Math.random() * (slow ? 5000 : 800);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     doConnect();
@@ -240,6 +300,7 @@ function handleMessage(msg: Record<string, unknown>) {
       tableStore.settings = (msg.settings as TableSettings) ?? DEFAULT_SETTINGS;
       tableStore.journal = (msg.journalTail as JournalEntry[]) ?? [];
       journalIds = new Set(tableStore.journal.map((e) => e.id));
+      capJournal();
       tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
       tableStore.history = (msg.history as HistoryState) ?? { canUndo: false, canRedo: false };
@@ -304,6 +365,7 @@ function handleMessage(msg: Record<string, unknown>) {
       if (entry.id !== undefined && journalIds.has(entry.id)) break;
       if (entry.id !== undefined) journalIds.add(entry.id);
       tableStore.journal = [...tableStore.journal, entry];
+      capJournal();
       break;
     }
 
@@ -333,6 +395,10 @@ function handleMessage(msg: Record<string, unknown>) {
       break;
     }
 
+    case "hb.ack":
+      lastPongAt = Date.now();
+      break;
+
     case "ping": {
       const id = ++pingSeq;
       tableStore.pings = [...tableStore.pings, { id, x: msg.x as number, y: msg.y as number }];
@@ -360,6 +426,7 @@ export function sendWs(msg: object) {
 
 export function disconnectWs() {
   disposed = true;
+  stopHeartbeat();
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;

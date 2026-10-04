@@ -1069,6 +1069,16 @@ describe("GameTableDO — intégration", () => {
     );
   });
 
+  it("keepalive (audit P4) : le DO éveillé répond au battement hb", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    mj.send({ type: "hb" });
+    const ack = await mj.next("hb.ack");
+    expect(ack.type).toBe("hb.ack");
+  });
+
   it("fog.revealArea (lot 8.8) : une forme = un patch, un seul pas d'undo", async () => {
     await setupWorld();
     const mj = await connect(MJ);

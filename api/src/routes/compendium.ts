@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import type { CompendiumEntryDto, CompendiumListPage } from "@rollwith/shared/dto";
 import { createDb, schema } from "../db";
-import { eq, and, like, or, sql, count } from "drizzle-orm";
+import { eq, and, or, sql, count } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
@@ -24,6 +24,11 @@ const CATEGORIES = [
 ] as const;
 
 const memberOfCampaign = requireMemberOf((c) => c.req.query("campaign") ?? null);
+
+/** Échappe les jokers `LIKE` (audit P4) : `\` d'abord, puis `%` et `_`. */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
 
 const campaignQuery = zValidator("query", z.object({ campaign: z.string().min(1).max(64) }));
 
@@ -98,14 +103,18 @@ app.get("/entries", requireAuth, memberOfCampaign, entriesQuery, async (c) => {
   const conds = [visibilityWhere(isMj, campaignId)];
   if (category) conds.push(eq(schema.compendiumEntries.category, category));
   if (q) {
-    const needle = `%${q
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")}%`;
+    // Échappe \ % _ (audit P4) : sans ça, une recherche « % » matche toutes
+    // les fiches, « _ » n'importe quel caractère, et le LIKE scanne tout.
+    const needle = `%${escapeLike(
+      q
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, ""),
+    )}%`;
     conds.push(
       or(
-        like(schema.compendiumEntries.searchText, needle),
-        like(sql`lower(${schema.compendiumEntries.title})`, needle),
+        sql`${schema.compendiumEntries.searchText} LIKE ${needle} ESCAPE '\\'`,
+        sql`lower(${schema.compendiumEntries.title}) LIKE ${needle} ESCAPE '\\'`,
       ),
     );
   }

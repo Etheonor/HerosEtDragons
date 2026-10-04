@@ -140,16 +140,15 @@ Phases réellement **non commencées** :
 
 ## 7. Reste à faire de l'audit du 06/09 (`audit-herosetdragons-2026-09-06-v2.md`)
 
-Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
+Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2, P3 côté client (plafond
+mémoire du journal) et P4 (cache `createAuth`, jokers `LIKE`, keepalive WS,
+plafond de reconnexion). Il reste :
 
-- **P3 (partiel)** — plafond glissant côté client sur `tableStore.journal` et
-  `olderEntries` (le Set d'ids est fait, le plafond mémoire non). Pas
-  d'archivage R2 ni de politique de rétention décidée (la rétention DO est un
-  `trimJournal` à 5 000 lignes).
-- **P4** — cache de `createAuth()`, échappement des jokers `LIKE`, keepalive WS
-  (`setWebSocketAutoResponse`), plafond de reconnexion.
-- **Tests manquants** — REST sur `requireMemberOf` / `consumeInvitation`,
-  visibilité compendium (le fix B4 n'a pas de test), session à deux navigateurs.
+- **P3 (partiel)** — politique de rétention/archivage R2 du journal non décidée
+  (la rétention DO est un `trimJournal` à 5 000 lignes).
+- **Tests manquants** — visibilité compendium (le fix B4 n'a pas de test).
+  `requireMemberOf` / `consumeInvitation` et la session à deux navigateurs sont
+  désormais couverts (REST + e2e).
 
 ## 8. Conventions de code
 
@@ -237,8 +236,8 @@ envoie `pv/pvMax = null` à un joueur quand `pnjPvVisible=false` et filtre les
 pions non révélés (B5). Le client ne doit jamais déduire ou afficher une barre
 sans ces valeurs. Test e2e : « Pions vivants (Lot 3) ».
 
-⚠️ **`web/src/routes/dev/overlays/` est un harnais jetable de spike.**
-`adapter-static` le déploierait tel quel. Le supprimer avant toute mise en prod.
+Le harnais de spike `/dev/overlays` et ses scripts de diagnostic ont été
+supprimés avant le passage en prod (le chunk était embarqué dans le bundle).
 
 Trois pièges de développement, à respecter dès la première ligne (détaillés dans
 `docs/atlas-benchmark/README.md` §0) : le CSS scopé Svelte ne s'applique pas au

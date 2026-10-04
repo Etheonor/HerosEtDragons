@@ -339,3 +339,65 @@ describe("REST — inv.give de l'inventaire est bien inaccessible hors WS", () =
     expect(body).not.toContain("inventory");
   });
 });
+
+describe("REST — recherche compendium : les jokers LIKE sont échappés (audit P4)", () => {
+  beforeEach(async () => {
+    await seedWorld();
+    const d = await db();
+    await d
+      .insert(schema.compendiumEntries)
+      .values({
+        key: "bestiaire/gobelin",
+        category: "bestiaire",
+        slug: "gobelin",
+        title: "Gobelin",
+        searchText: "gobelin creature monstrueuse",
+        sortKey: "gobelin",
+        hash: "test",
+      })
+      .onConflictDoNothing();
+  });
+
+  it("une recherche « % » ne matche plus tout, « _ » n'est plus un joker", async () => {
+    const pct = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=%25`, OTHER)
+    ).json()) as { total: number };
+    expect(pct.total).toBe(0);
+
+    const underscore = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=gob_lin`, OTHER)
+    ).json()) as { total: number };
+    expect(underscore.total).toBe(0);
+  });
+
+  it("la recherche normale (casse et accents pliés) matche toujours", async () => {
+    const hit = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=Gob%C3%A9lin`, OTHER)
+    ).json()) as { total: number };
+    expect(hit.total).toBe(1);
+  });
+});
+
+describe("REST — createAuth mémoïsé (audit P4)", () => {
+  it("même origine + même cookie : même instance ; cookie d'invitation : instance distincte", async () => {
+    const { createAuth } = await import("../src/auth");
+    const a = createAuth(env, new Request("https://localhost/api/campaigns"));
+    const b = createAuth(env, new Request("https://localhost/api/campaigns"));
+    expect(a).toBe(b);
+
+    const c = createAuth(
+      env,
+      new Request("https://localhost/api/campaigns", {
+        headers: { cookie: "hd-invite=abcdefgh12345678" },
+      }),
+    );
+    expect(c).not.toBe(a);
+    const d = createAuth(
+      env,
+      new Request("https://localhost/api/campaigns", {
+        headers: { cookie: "hd-invite=abcdefgh12345678" },
+      }),
+    );
+    expect(d).toBe(c);
+  });
+});

@@ -11,19 +11,21 @@ import {
   type Inventory,
   type Money,
 } from "@rollwith/shared/inventory";
-import type {
-  JournalEntry,
-  Marker,
-  MapLink,
-  MapLinkKind,
-  MapPin,
-  FogState,
-  CombatState,
-  CharacterCard,
-  TableSettings,
-  TableLiveState,
-  TableWidgets,
-  HistoryState,
+import {
+  WS_HEARTBEAT_REQUEST,
+  WS_HEARTBEAT_RESPONSE,
+  type JournalEntry,
+  type Marker,
+  type MapLink,
+  type MapLinkKind,
+  type MapPin,
+  type FogState,
+  type CombatState,
+  type CharacterCard,
+  type TableSettings,
+  type TableLiveState,
+  type TableWidgets,
+  type HistoryState,
 } from "@rollwith/shared/protocol";
 import {
   undoLabel,
@@ -1042,6 +1044,11 @@ export class GameTableDO extends DurableObject<Env> {
     const server = pair[1] as WebSocket;
 
     this.ctx.acceptWebSocket(server);
+    // Keepalive (audit P4) : répond au battement sans réveiller le DO endormi
+    // (et sans handler ni facturation de durée dans ce cas).
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(WS_HEARTBEAT_REQUEST, WS_HEARTBEAT_RESPONSE),
+    );
 
     const attachment: WsAttachment = { userId, name, role, charId, color };
     server.serializeAttachment(attachment);
@@ -1073,6 +1080,17 @@ export class GameTableDO extends DurableObject<Env> {
   private mutationChain: Promise<void> = Promise.resolve();
 
   override webSocketMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    // Keepalive : réponse immédiate quand le DO est éveillé (endormi, c'est
+    // `setWebSocketAutoResponse` qui répond, sans passer ici). Le message
+    // n'entre ni dans la file de mutations, ni dans la validation Zod.
+    if (message === WS_HEARTBEAT_REQUEST) {
+      try {
+        ws.send(WS_HEARTBEAT_RESPONSE);
+      } catch {
+        /* socket fermée */
+      }
+      return Promise.resolve();
+    }
     this.mutationChain = this.mutationChain
       .then(() => this.handleWsMessage(ws, message))
       .catch(() => {

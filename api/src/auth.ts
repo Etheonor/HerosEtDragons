@@ -4,10 +4,9 @@ import { createDb, schema } from "./db";
 import { eq, and } from "drizzle-orm";
 import { consumeInvitation, inviteTokenFromCookie } from "./invitations";
 
-export function createAuth(env: Env, request: Request) {
-  const db = createDb(env.DB);
-
+function initAuth(env: Env, request: Request) {
   const baseURL = new URL(request.url).origin;
+  const db = createDb(env.DB);
 
   return betterAuth({
     baseURL,
@@ -114,4 +113,32 @@ export function createAuth(env: Env, request: Request) {
   });
 }
 
-export type Auth = ReturnType<typeof createAuth>;
+export type Auth = ReturnType<typeof initAuth>;
+
+/**
+ * Mémoïsation par origine (audit P4) : sans elle, betterAuth + drizzleAdapter
+ * + createDb étaient reconstruits à CHAQUE requête API (requireAuth appelle
+ * getSession partout). Le cookie d'invitation fait partie de la clé : le hook
+ * session.create.before lit `inviteTokenFromCookie(LA requête)` et doit donc
+ * ne jamais recevoir une instance capturée pour une autre requête. En pratique
+ * seul le flux OAuth porte ce cookie — le chemin chaud n'a qu'une entrée.
+ */
+const authCache = new Map<string, Auth>();
+
+export function createAuth(env: Env, request: Request): Auth {
+  const baseURL = new URL(request.url).origin;
+  const invite = inviteTokenFromCookie(request) ?? "";
+  const key = `${baseURL}\u0000${invite}`;
+  const cached = authCache.get(key);
+  if (cached) return cached;
+
+  const auth = initAuth(env, request);
+
+  // Borne anti-flood (cookies forgés) : on jette la plus ancienne entrée.
+  if (authCache.size >= 32) {
+    const oldest = authCache.keys().next().value;
+    if (oldest !== undefined) authCache.delete(oldest);
+  }
+  authCache.set(key, auth);
+  return auth;
+}

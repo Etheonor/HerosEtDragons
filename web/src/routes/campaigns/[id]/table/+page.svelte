@@ -8,6 +8,7 @@
     clearWsError,
     DICE_REVEAL_MS,
     DICE_ROTATE_MS,
+    JOURNAL_MAX_ENTRIES,
   } from '$lib/ws.svelte';
   import { api, type MapSummary, type NpcTemplate } from '$lib/api';
   import { DropdownMenu } from 'bits-ui';
@@ -152,7 +153,9 @@
     const prevTop = journalEl?.scrollTop ?? 0;
     try {
       const res = await api.campaigns.journalPage(campaignId, before);
-      olderEntries = [...res.entries, ...olderEntries];
+      // Fenêtre glissante : on garde les entrées les plus récentes (les
+      // prochaines pages arrivent plus anciennes, en tête du tableau).
+      olderEntries = [...res.entries, ...olderEntries].slice(-JOURNAL_MAX_ENTRIES);
       hasMoreOlder = res.hasMore;
       stickToBottom = false;
       requestAnimationFrame(() => {
