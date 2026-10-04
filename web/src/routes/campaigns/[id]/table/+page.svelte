@@ -1,18 +1,64 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { tableStore, connectWs, disconnectWs, sendWs, clearWsError } from '$lib/ws.svelte';
-  import { api, type MapSummary } from '$lib/api';
-  import type { JournalEntry } from '@rollwith/shared/protocol';
+  import {
+    tableStore,
+    connectWs,
+    disconnectWs,
+    sendWs,
+    clearWsError,
+    DICE_REVEAL_MS,
+    DICE_ROTATE_MS,
+    JOURNAL_MAX_ENTRIES,
+  } from '$lib/ws.svelte';
+  import { api, type MapSummary, type NpcTemplate } from '$lib/api';
+  import { DropdownMenu } from 'bits-ui';
+  import type {
+    CharacterCard,
+    ClientMessage,
+    JournalEntry,
+    MapLink,
+    MapPin,
+    TableSettings,
+  } from '@rollwith/shared/protocol';
+  import { inlineHtml, toBlocks } from '$lib/markdown-lite';
   import type { Inventory } from '@rollwith/shared/inventory';
   import { auth } from '$lib/auth-client';
-  import Button from '$lib/ds/Button.svelte';
-  import SketchyInput from '$lib/ds/SketchyInput.svelte';
+  import { showToast } from '$lib/toast.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import CompendiumTooltip from '$lib/components/CompendiumTooltip.svelte';
+  import CloseButton from '$lib/ds/CloseButton.svelte';
+  import { scrollArea } from '$lib/ds/scroll-area';
+  import { surfaceProps } from '$lib/ds/surface';
+  import Tooltip from '$lib/ds/Tooltip.svelte';
+  import HotkeyHelp from '$lib/components/HotkeyHelp.svelte';
+  import CommandPalette from '$lib/table/CommandPalette.svelte';
+  import ToolGroup from '$lib/table/toolbar/ToolGroup.svelte';
+  import { fitToolbar } from '$lib/table/toolbar/toolbarFit';
+  import { TOOL_FACES } from '$lib/table/toolbar/faces';
+  import { hotkeyIdFromEvent } from '$lib/hotkeys';
+  import { commandRegistry, type PaletteCommand } from '$lib/table/commands.svelte';
+  import { createCamera, type CameraPose } from '$lib/table/camera.svelte';
   import { slugify } from '$lib/slug';
-  import MapManager from '$lib/components/MapManager.svelte';
   import { portraitUrl } from '$lib/portraits';
-  import NpcLibrary from '$lib/components/NpcLibrary.svelte';
+  import { ICONS } from '$lib/ds/icons';
+  import Panel from '$lib/table/Panel.svelte';
+  import { bringToFront } from '$lib/table/panelStack.svelte';
+  import SheetPanel from '$lib/table/SheetPanel.svelte';
+  import ContextMenu from '$lib/table/ContextMenu.svelte';
+  import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
+  import AssetManager from '$lib/table/AssetManager.svelte';
+  import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
+  import TargetFrame from '$lib/table/TargetFrame.svelte';
+  import GroupFrame from '$lib/table/GroupFrame.svelte';
+  import TopActions from '$lib/table/TopActions.svelte';
+  import DiceButton from '$lib/table/DiceButton.svelte';
+  import WidgetBar from '$lib/table/WidgetBar.svelte';
+  import GmDashboard from '$lib/table/GmDashboard.svelte';
+  import PromptDialog from '$lib/components/PromptDialog.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import NpcTemplateDialog from '$lib/table/NpcTemplateDialog.svelte';
+  import Tutorial from '$lib/table/Tutorial.svelte';
+  import { MJ_TUTORIAL_STEPS } from '$lib/table/tutorial-steps';
 
   let { params } = $props();
   let campaignId = params.id;
@@ -26,6 +72,13 @@
   ];
   let stateOptions = $state<string[]>(CONDITIONS);
 
+  /** États qui couchent la figurine : voile sur le pion (les PV à 0 ont leur
+   *  propre traitement : grisé + translucide). */
+  const DOWN_CONDITIONS = new Set(['Inconscient', 'À terre']);
+
+  /** Presets de taille de pion, en cases (multiplicateur de `gridSize`). */
+  const TOKEN_SCALES = [0.5, 1, 2, 3, 4];
+
   // Store runes partagé (ws.svelte.ts) : l'objet mute en place, tout est réactif.
   // NB : PAS de $state() ici — tableStore est déjà un proxy $state (N4 audit),
   // envelopper une seconde fois crée une double proxification inutile.
@@ -34,7 +87,7 @@
   let chatText = $state('');
   let journalEl = $state<HTMLDivElement | null>(null);
   let stickToBottom = true;
-  let lastJournalTab = 'journal';
+  let lastJournalOpen = true;
 
   let unseen = $state<number[]>([]);
   const unseenCount = $derived(unseen.length);
@@ -76,18 +129,18 @@
 
   $effect(() => {
     void store.journal.length;
-    const tabChanged = activeTab !== lastJournalTab;
-    lastJournalTab = activeTab;
-    if (activeTab !== 'journal' || !journalEl) return;
+    const open = panelsOpen.journal;
+    const justOpened = open && !lastJournalOpen;
+    lastJournalOpen = open;
+    if (!open || !journalEl) return;
     const el = journalEl;
-    if (tabChanged) stickToBottom = true;
+    if (justOpened) stickToBottom = true;
     if (stickToBottom) {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
       });
     }
   });
-  let toast = $state('');
   let olderEntries = $state<JournalEntry[]>([]);
   let hasMoreOlder = $state(true);
   let loadingOlder = $state(false);
@@ -100,31 +153,509 @@
     const prevTop = journalEl?.scrollTop ?? 0;
     try {
       const res = await api.campaigns.journalPage(campaignId, before);
-      olderEntries = [...res.entries, ...olderEntries];
+      // Fenêtre glissante : on garde les entrées les plus récentes (les
+      // prochaines pages arrivent plus anciennes, en tête du tableau).
+      olderEntries = [...res.entries, ...olderEntries].slice(-JOURNAL_MAX_ENTRIES);
       hasMoreOlder = res.hasMore;
       stickToBottom = false;
       requestAnimationFrame(() => {
         if (journalEl) journalEl.scrollTop = prevTop + (journalEl.scrollHeight - prevHeight);
       });
     } catch {
-      /* ignore */
+      showToast('Entrées antérieures indisponibles', 'error');
     }
     loadingOlder = false;
   }
-  let activeTab = $state<'journal' | 'dice' | 'inv'>('journal');
   let diceMod = $state(0);
-  let diceHistory: { id: number; label: string }[] = $state([]);
+  let diceSides = $state(20);
+  let diceHistory: { id: number; label: string; total: number | null }[] = $state([]);
   let diceHistSeq = 0;
-  let campaignName = $state('');
   let session = $state<{ user: { id: string; name: string } } | null>(null);
   let isMj = $state(false);
+
+  // ── Panneaux flottants (Lot 1) ───────────────────────────────
+  // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
+  // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
+  const PANELS_KEY = 'hd-table-panels-v3';
+  type PanelId = 'compagnie' | 'journal' | 'dice' | 'inventory' | 'dashboard' | 'initiative';
+
+  function loadPanelState(): Record<PanelId, boolean> {
+    try {
+      const raw = localStorage.getItem(PANELS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<Record<PanelId, boolean>>;
+        // Compagnie, dés, inventaire et dashboard fermés par défaut (surfaces à
+        // la demande) ; le journal est la fenêtre permanente.
+        return {
+          compagnie: p.compagnie === true,
+          journal: p.journal !== false,
+          dice: p.dice === true,
+          inventory: p.inventory === true,
+          dashboard: p.dashboard === true,
+          initiative: p.initiative !== false,
+        };
+      }
+    } catch {
+      /* stockage indisponible : on garde les panneaux ouverts */
+    }
+    return {
+      compagnie: false,
+      journal: true,
+      dice: false,
+      inventory: false,
+      dashboard: false,
+      initiative: true,
+    };
+  }
+
+  let panelsOpen = $state(loadPanelState());
+
+  function setPanelOpen(id: PanelId, open: boolean) {
+    panelsOpen = { ...panelsOpen, [id]: open };
+    try {
+      localStorage.setItem(PANELS_KEY, JSON.stringify(panelsOpen));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Entrer en combat rouvre l'initiative, même si elle avait été fermée. */
+  let wasInCombat = false;
+  $effect(() => {
+    const inCombat = store.state.mode === 'combat' && !!store.state.combat;
+    if (inCombat && !wasInCombat && !panelsOpen.initiative) {
+      setPanelOpen('initiative', true);
+    }
+    wasInCombat = inCombat;
+  });
+
+  // ── Fiches de personnage en panneaux (Lot 7.1) ───────────────
+  // Éphémères (pas de persistance) : une fiche s'ouvre à la demande et le MJ
+  // peut en garder plusieurs ouvertes. Le z-order est celui de panelStack.
+  let openSheets = $state<string[]>([]);
+
+  function openSheet(charId: string) {
+    if (!openSheets.includes(charId)) openSheets = [...openSheets, charId];
+    bringToFront(`fiche:${charId}`);
+  }
+
+  function closeSheet(charId: string) {
+    openSheets = openSheets.filter((id) => id !== charId);
+  }
+
+  // ── Chrome (Lot 2) : palette, aide, barre d'outils ───────────
+  let paletteOpen = $state(false);
+  let helpOpen = $state(false);
+  let assetManagerOpen = $state(false);
+  let compendiumOpen = $state(false);
+  let compendiumDeep = $state<{ category: string; slug: string } | null>(null);
+
+  function openCompendium(category?: string, slug?: string) {
+    compendiumDeep = category && slug ? { category, slug } : null;
+    compendiumOpen = true;
+  }
+  /** Incrémenté après suppression d'un modèle : l'asset manager recharge. */
+  let templatesRevision = $state(0);
+  /** Boîte « demander une valeur » (renommage de carte, etc.). */
+  let prompt = $state<{
+    title: string;
+    label: string;
+    initial: string;
+    confirmLabel?: string;
+    onSubmit: (value: string) => void;
+  } | null>(null);
+  let confirmState = $state<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
+  let editTemplate = $state<NpcTemplate | null>(null);
+  const TUTORIAL_KEY = 'hd-tutoriel-mj';
+  let tutorialOpen = $state(false);
+  let tutorialChecked = false;
+
+  /** Le tutoriel MJ s'ouvre une fois par navigateur, quand la table est prête. */
+  $effect(() => {
+    if (tutorialChecked || !isMj || store.characters.length === 0) return;
+    tutorialChecked = true;
+    try {
+      if (localStorage.getItem(TUTORIAL_KEY) !== '1') {
+        setTimeout(() => (tutorialOpen = true), 700);
+      }
+    } catch {
+      /* stockage refusé : pas de tutoriel automatique */
+    }
+  });
+
+  function closeTutorial() {
+    tutorialOpen = false;
+    try {
+      localStorage.setItem(TUTORIAL_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let toolbarWidth = $state(1280);
+
+  function onToolbarResize(node: HTMLElement) {
+    const ro = new ResizeObserver((entries) => {
+      toolbarWidth = entries[0]?.contentRect.width ?? 0;
+    });
+    ro.observe(node);
+    return { destroy: () => ro.disconnect() };
+  }
+
+  // ── Réglages (palette) ───────────────────────────────────────
+  const GRID_SIZES = [16, 24, 32, 40, 48, 64];
+  const TOKEN_SIZES = [24, 32, 40, 48, 56];
+  const GRID_COLORS: [string, string][] = [
+    ['', 'du thème'],
+    ['#ffffff', 'blanche'],
+    ['#000000', 'noire'],
+    ['#c0392b', 'rouge'],
+    ['#5e8c61', 'verte'],
+    ['#4a7aa8', 'bleue'],
+  ];
+
+  async function setMapGrid(
+    mapId: string,
+    fields: { gridSize?: number | null; gridColor?: string | null },
+  ) {
+    if (!isMj) return;
+    try {
+      await api.maps.update(mapId, fields);
+      await refreshMaps();
+    } catch {
+      showToast('Réglage de la grille impossible', 'error');
+    }
+  }
+
+  function setGridSize(size: number | null) {
+    const mapId = store.state.mapId;
+    if (mapId) void setMapGrid(mapId, { gridSize: size });
+  }
+
+  function setGridColor(color: string | null) {
+    const mapId = store.state.mapId;
+    if (mapId) void setMapGrid(mapId, { gridColor: color });
+  }
+
+  async function removeMap(mapId: string) {
+    try {
+      await api.maps.remove(mapId);
+      await refreshMaps();
+      showToast('Carte supprimée', 'success');
+    } catch {
+      showToast('Suppression de la carte impossible', 'error');
+    }
+  }
+
+  async function setCampaignSetting(patch: Partial<TableSettings>) {
+    if (!isMj) return;
+    try {
+      await api.campaigns.updateSettings(campaignId, patch);
+    } catch {
+      showToast('Réglage impossible', 'error');
+    }
+  }
+
+  /** Commandes exposées à la palette — relues à chaque ouverture. */
+  function buildCommands(): PaletteCommand[] {
+    const cmds: PaletteCommand[] = [
+      {
+        id: 'panel.compagnie',
+        label: 'Compagnie (liste complète)',
+        group: 'Actions',
+        keywords: ['panneau', 'compagnie', 'sidebar', 'liste'],
+        run: () => setPanelOpen('compagnie', !panelsOpen.compagnie),
+      },
+      {
+        id: 'panel.journal',
+        label: panelsOpen.journal ? 'Masquer le journal' : 'Afficher le journal',
+        group: 'Actions',
+        keywords: ['panneau', 'journal', 'chat'],
+        run: () => setPanelOpen('journal', !panelsOpen.journal),
+      },
+      {
+        id: 'panel.dice',
+        label: panelsOpen.dice ? 'Masquer les dés' : 'Afficher les dés',
+        group: 'Actions',
+        keywords: ['panneau', 'dés', 'lancer'],
+        run: () => setPanelOpen('dice', !panelsOpen.dice),
+      },
+      {
+        id: 'panel.inventory',
+        label: panelsOpen.inventory ? "Masquer l'inventaire" : "Afficher l'inventaire",
+        group: 'Actions',
+        keywords: ['panneau', 'inventaire', 'sac'],
+        run: () => setPanelOpen('inventory', !panelsOpen.inventory),
+      },
+      ...(store.state.mode === 'combat'
+        ? [
+            {
+              id: 'panel.initiative',
+              label: panelsOpen.initiative ? "Masquer l'initiative" : "Afficher l'initiative",
+              group: 'Actions',
+              keywords: ['panneau', 'initiative', 'combat', 'tour'],
+              run: () => setPanelOpen('initiative', !panelsOpen.initiative),
+            },
+          ]
+        : []),
+      {
+        id: 'map.reset',
+        label: 'Recadrer la carte',
+        group: 'Actions',
+        keywords: ['caméra', 'zoom', 'centrer'],
+        shortcut: '0',
+        run: resetView,
+      },
+      {
+        id: 'tool.hand',
+        label: 'Outil Main',
+        group: 'Actions',
+        keywords: ['déplacer', 'panoramique'],
+        shortcut: 'H',
+        run: () => toolSelect('hand'),
+      },
+      {
+        id: 'help.open',
+        label: 'Aide clavier',
+        group: 'Aide',
+        keywords: ['raccourcis', 'touches', 'aide'],
+        shortcut: '?',
+        run: () => (helpOpen = true),
+      },
+      {
+        id: 'nav.compendium',
+        label: 'Ouvrir le compendium',
+        group: 'Actions',
+        keywords: ['règles', 'fiches'],
+        run: () => openCompendium(),
+      },
+    ];
+
+    if (myCharId) {
+      cmds.push({
+        id: 'nav.sheet',
+        label: 'Ouvrir ma feuille de personnage',
+        group: 'Actions',
+        keywords: ['personnage', 'feuille'],
+        run: () => openSheet(myCharId),
+      });
+    }
+
+    if (isMj) {
+      cmds.push(
+        {
+          id: 'assets.open',
+          label: 'Ouvrir la bibliothèque',
+          group: 'Actions',
+          keywords: ['bibliothèque', 'cartes', 'pnj', 'modèles', 'personnages', 'asset'],
+          run: () => (assetManagerOpen = true),
+        },
+        {
+          id: 'dashboard.toggle',
+          label: panelsOpen.dashboard ? 'Masquer le tableau de bord MJ' : 'Tableau de bord MJ',
+          group: 'Actions',
+          keywords: ['dashboard', 'tableau', 'pnj', 'notes', 'scène'],
+          active: panelsOpen.dashboard,
+          run: () => setPanelOpen('dashboard', !panelsOpen.dashboard),
+        },
+        {
+          id: 'tutorial.open',
+          label: 'Revoir le tutoriel',
+          group: 'Aide',
+          keywords: ['tutoriel', 'guide', 'découverte', 'aide'],
+          run: () => (tutorialOpen = true),
+        },
+        {
+          id: 'history.undo',
+          label: 'Annuler la dernière action',
+          group: 'Édition',
+          keywords: ['undo', 'annuler', 'retour', 'historique'],
+          shortcut: 'Ctrl/⌘ Z',
+          badge: store.history.canUndo ? undefined : 'aucune action',
+          run: doUndo,
+        },
+        {
+          id: 'history.redo',
+          label: 'Rétablir',
+          group: 'Édition',
+          keywords: ['redo', 'rétablir', 'refaire', 'historique'],
+          shortcut: 'Ctrl/⌘ ⇧ Z',
+          badge: store.history.canRedo ? undefined : 'rien à rétablir',
+          run: doRedo,
+        },
+        {
+          id: 'tool.move',
+          label: 'Outil Déplacer',
+          group: 'Actions',
+          keywords: ['pion', 'sélection'],
+          shortcut: 'V',
+          run: () => toolSelect('move'),
+        },
+        {
+          id: 'tool.pnj',
+          label: 'Outil PNJ',
+          group: 'Actions',
+          keywords: ['créer', 'monstre'],
+          shortcut: 'P',
+          run: () => toolSelect('pnj'),
+        },
+        {
+          id: 'tool.marker',
+          label: 'Outil Repère',
+          group: 'Actions',
+          keywords: ['annotation', 'note'],
+          shortcut: 'R',
+          run: () => toolSelect('marker'),
+        },
+        {
+          id: 'tool.fog',
+          label: 'Outil Brouillard',
+          group: 'Actions',
+          keywords: ['révéler', 'couvrir', 'vision'],
+          shortcut: 'B',
+          run: fogToggle,
+        },
+        {
+          id: 'combat.next',
+          label: 'Tour suivant',
+          group: 'Combat',
+          keywords: ['initiative', 'round'],
+          run: combatNext,
+        },
+        ...([4, 6, 8, 10, 12, 20] as const).map((sides, index) => ({
+          id: `dice.d${sides}`,
+          label: `Lancer 1d${sides}`,
+          group: 'Combat',
+          keywords: ['dé', 'jet', `d${sides}`],
+          shortcut: String(index + 1),
+          run: () => quickRoll(sides),
+        })),
+      );
+
+      if (activeMap) {
+        for (const size of GRID_SIZES) {
+          cmds.push({
+            id: `grid.size.${size}`,
+            label: `Grille : ${size} px`,
+            group: 'Réglages',
+            keywords: ['grille', 'quadrillage', 'taille', String(size)],
+            badge: activeGridSize === size ? 'actuel' : undefined,
+            active: activeGridSize === size,
+            run: () => void setGridSize(size),
+          });
+        }
+        cmds.push({
+          id: 'grid.size.off',
+          label: 'Grille : retirer',
+          group: 'Réglages',
+          keywords: ['grille', 'quadrillage', 'retirer', 'aucune'],
+          badge: activeGridSize === null ? 'actuel' : undefined,
+          run: () => void setGridSize(null),
+        });
+        for (const [color, label] of GRID_COLORS) {
+          const current = (activeGridColor ?? '') === color;
+          cmds.push({
+            id: `grid.color.${color || 'theme'}`,
+            label: `Grille : couleur ${label}`,
+            group: 'Réglages',
+            keywords: ['grille', 'couleur', label],
+            active: current,
+            badge: current ? 'actuel' : undefined,
+            run: () => void setGridColor(color || null),
+          });
+        }
+      }
+
+      cmds.push(
+        {
+          id: 'mode.exploration',
+          label: 'Passer en exploration',
+          group: 'Réglages',
+          keywords: ['mode', 'exploration'],
+          active: store.state.mode === 'exploration',
+          run: () => setMode('exploration'),
+        },
+        {
+          id: 'mode.combat',
+          label: 'Passer en combat',
+          group: 'Réglages',
+          keywords: ['mode', 'combat', 'initiative'],
+          active: store.state.mode === 'combat',
+          run: () => setMode('combat'),
+        },
+        {
+          id: 'fog.cover',
+          label: 'Brouillard : tout recouvrir',
+          group: 'Réglages',
+          keywords: ['brouillard', 'couvrir', 'cacher'],
+          run: fogCover,
+        },
+        {
+          id: 'fog.disable',
+          label: 'Brouillard : dissiper',
+          group: 'Réglages',
+          keywords: ['brouillard', 'dissiper', 'révéler'],
+          run: fogDisable,
+        },
+        ...TOKEN_SIZES.map((size) => ({
+          id: `token.size.${size}`,
+          label: `Pions : taille ${size} px`,
+          group: 'Réglages',
+          keywords: ['pion', 'jeton', 'taille', String(size)],
+          active: store.settings.tokenSize === size,
+          badge: store.settings.tokenSize === size ? 'actuel' : undefined,
+          run: () => void setCampaignSetting({ tokenSize: size }),
+        })),
+        {
+          id: 'campaign.pnjPv',
+          label: 'PNJ : afficher les PV aux joueurs',
+          group: 'Réglages',
+          keywords: ['pnj', 'pv', 'points de vie', 'visibilité'],
+          active: store.settings.pnjPvVisible,
+          badge: store.settings.pnjPvVisible ? 'activé' : 'désactivé',
+          run: () => void setCampaignSetting({ pnjPvVisible: !store.settings.pnjPvVisible }),
+        },
+        {
+          id: 'campaign.sheetsLocked',
+          label: "Feuilles : verrouiller l'édition",
+          group: 'Réglages',
+          keywords: ['feuille', 'verrou', 'édition'],
+          active: store.settings.sheetsLocked,
+          badge: store.settings.sheetsLocked ? 'activé' : 'désactivé',
+          run: () => void setCampaignSetting({ sheetsLocked: !store.settings.sheetsLocked }),
+        },
+      );
+    }
+
+    return cmds;
+  }
+
+  const paletteCommands = $derived(commandRegistry.list(isMj));
 
   // ── Carte ────────────────────────────────────────────────────
   let maps = $state<MapSummary[]>([]);
   let mapContainer = $state<HTMLDivElement | null>(null);
   let fogCanvas = $state<HTMLCanvasElement | null>(null);
   let tool = $state<'move' | 'hand' | 'pnj' | 'marker' | 'fog'>('move');
-  let markerText = $state('repère');
+  let pendingMarkerPos: { x: number; y: number } | null = null;
+
+  function openRenameMarkerPrompt(id: string) {
+    const m = store.state.markers.find((x) => x.id === id);
+    if (!m) return;
+    prompt = {
+      title: 'Renommer le repère',
+      label: 'Nom du repère',
+      initial: m.text,
+      confirmLabel: 'Renommer',
+      onSubmit: (name) => sendWs({ type: 'marker.set', id, x: m.x, y: m.y, text: name }),
+    };
+  }
   let npcName = $state('PNJ');
   let npcPv = $state(7);
   let npcCa = $state(13);
@@ -132,45 +663,129 @@
   let npcSaveAsTemplate = $state(false);
   let dragOverride = $state<Record<string, { x: number; y: number }>>({});
   let markerDragOverride = $state<Record<string, { x: number; y: number }>>({});
+  let pinDragOverride = $state<Record<string, { x: number; y: number }>>({});
 
-  let drag: { id: string; kind: 'token' | 'marker'; moved: boolean } | null = null;
+  let drag: {
+    id: string;
+    kind: 'token' | 'marker' | 'pin';
+    moved: boolean;
+    sent: boolean;
+  } | null = null;
+  /** Un drag de note ne doit pas ouvrir le panneau au relâchement. */
+  let pinJustDragged = false;
+  /** Un drag de pion ne doit pas cibler (TargetFrame) au relâchement. */
+  let tokenJustDragged = false;
   let fogErasing = false;
   let skipNextClick = false;
   let lastFogPoint: { x: number; y: number } | null = null;
   const FOG_SEND_MIN_DIST = 2.5;
 
+  type FogShape =
+    | { kind: 'rect'; start: { x: number; y: number }; end: { x: number; y: number } }
+    | { kind: 'lasso'; points: { x: number; y: number }[] };
+  let fogMode = $state<'brush' | 'rect' | 'lasso'>('brush');
+  let fogShape = $state<FogShape | null>(null);
+
   // P2 (audit) : un pointermove = jusqu'à 60-120 messages/s. On n'émet qu'une
-  // fois par rAF ET au plus toutes les TOKEN_SEND_MIN_MS : la position locale
-  // (dragOverride) reste fluide sans réseau, et les autres joueurs n'ont pas
-  // besoin de 60 Hz — 30/s est indiscernable et deux fois moins de trafic.
-  const TOKEN_SEND_MIN_MS = 33;
-  let pendingTokenMove: { id: string; x: number; y: number } | null = null;
-  let tokenMoveRaf = 0;
-  let tokenMoveLastSent = 0;
+  // fois par rAF ET au plus toutes les MOVE_SEND_MIN_MS : la position locale
+  // reste fluide sans réseau, et les autres joueurs n'ont pas besoin de 60 Hz.
+  // Vaut pour TOUS les drags — pions, repères et liens — sans quoi l'envoi à
+  // la frame tape dans le budget GÉNÉRAL du rate limit en plein geste.
+  const MOVE_SEND_MIN_MS = 33;
+  let pendingMove: { msg: ClientMessage; begin: boolean } | null = null;
+  let moveRaf = 0;
+  let moveLastSent = 0;
 
-  function flushTokenMove(force = false) {
-    if (tokenMoveRaf) cancelAnimationFrame(tokenMoveRaf);
-    tokenMoveRaf = 0;
-    const m = pendingTokenMove;
-    pendingTokenMove = null;
+  function flushMove(force = false) {
+    if (moveRaf) cancelAnimationFrame(moveRaf);
+    moveRaf = 0;
+    const m = pendingMove;
     if (!m) return;
-    if (!force && Date.now() - tokenMoveLastSent < TOKEN_SEND_MIN_MS) return;
-    tokenMoveLastSent = Date.now();
-    sendWs({ type: 'token.move', tokenId: m.id, x: m.x, y: m.y });
+    // Le `begin` ne doit jamais être perdu : s'il est trop tôt, on le garde en
+    // attente (c'est lui qui ouvre le pas d'undo du geste entier).
+    if (!force && !m.begin && Date.now() - moveLastSent < MOVE_SEND_MIN_MS) return;
+    pendingMove = null;
+    moveLastSent = Date.now();
+    sendWs(m.msg);
   }
 
-  function scheduleTokenMove(id: string, x: number, y: number) {
-    pendingTokenMove = { id, x, y };
-    if (tokenMoveRaf) return;
-    tokenMoveRaf = requestAnimationFrame(() => flushTokenMove());
+  function scheduleMove(msg: ClientMessage, begin = false) {
+    pendingMove = { msg, begin: begin || (pendingMove?.begin ?? false) };
+    if (moveRaf) return;
+    moveRaf = requestAnimationFrame(() => flushMove());
   }
 
-  function sendFogReveal(p: { x: number; y: number }) {
-    if (lastFogPoint && Math.hypot(p.x - lastFogPoint.x, p.y - lastFogPoint.y) < FOG_SEND_MIN_DIST) {
+  function sendFogReveal(p: { x: number; y: number }, begin = false) {
+    if (!begin && lastFogPoint && Math.hypot(p.x - lastFogPoint.x, p.y - lastFogPoint.y) < FOG_SEND_MIN_DIST) {
       return;
     }
     lastFogPoint = p;
-    sendWs({ type: 'fog.reveal', ...p });
+    sendWs({ type: 'fog.reveal', ...p, ...(begin ? { begin: true } : {}) });
+  }
+
+  // Formes (rectangle/lasso, lot 8.8) : le client rasterise en points espacés
+  // de FOG_SHAPE_STEP % (< diamètre de révélation, 9) et les envoie en UN
+  // message — un seul patch DO, un seul pas d'undo.
+  const FOG_SHAPE_STEP = 7;
+  const FOG_SHAPE_MAX_POINTS = 200;
+
+  function pointInPolygon(p: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      if (!a || !b) continue;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function rasterFogShape(shape: FogShape): { x: number; y: number }[] {
+    const bounds =
+      shape.kind === 'rect'
+        ? {
+            x0: Math.min(shape.start.x, shape.end.x),
+            x1: Math.max(shape.start.x, shape.end.x),
+            y0: Math.min(shape.start.y, shape.end.y),
+            y1: Math.max(shape.start.y, shape.end.y),
+          }
+        : {
+            x0: Math.min(...shape.points.map((p) => p.x)),
+            x1: Math.max(...shape.points.map((p) => p.x)),
+            y0: Math.min(...shape.points.map((p) => p.y)),
+            y1: Math.max(...shape.points.map((p) => p.y)),
+          };
+    const pts: { x: number; y: number }[] = [];
+    for (let x = bounds.x0; x <= bounds.x1; x += FOG_SHAPE_STEP) {
+      for (let y = bounds.y0; y <= bounds.y1; y += FOG_SHAPE_STEP) {
+        const p = {
+          x: Math.min(98, Math.max(2, x)),
+          y: Math.min(98, Math.max(2, y)),
+        };
+        if (shape.kind === 'lasso' && !pointInPolygon(p, shape.points)) continue;
+        pts.push(p);
+        if (pts.length >= FOG_SHAPE_MAX_POINTS) return pts;
+      }
+    }
+    return pts;
+  }
+
+  function commitFogShape() {
+    const shape = fogShape;
+    fogShape = null;
+    if (!shape || !fogOn) return;
+    if (shape.kind === 'rect') {
+      if (Math.abs(shape.end.x - shape.start.x) < 2 || Math.abs(shape.end.y - shape.start.y) < 2) {
+        return; // simple clic : rien à révéler
+      }
+    } else if (shape.points.length < 3) {
+      return;
+    }
+    const points = rasterFogShape(shape);
+    if (points.length === 0) return;
+    sendWs({ type: 'fog.revealArea', points, begin: true });
   }
 
   const activeMap = $derived(maps.find((m) => m.id === store.state.mapId) ?? null);
@@ -217,7 +832,7 @@
   // Taille du cadre (`.map-frame`) pour calculer la surface la plus grande qui
   // tient tout en gardant le ratio de l'image (aucun crop, quelle que soit la
   // résolution, large ou haute).
-  let frameRef = $state<HTMLDivElement | null>(null);
+  let frameRef = $state<HTMLElement | null>(null);
   let frameW = $state(0);
   let frameH = $state(0);
   $effect(() => {
@@ -248,65 +863,108 @@
       : null,
   );
 
-  // ── Vue : zoom + panoramique, STRICTEMENT locaux ─────────────
-  // Chaque joueur a son propre cadrage ; rien n'est stocké ni diffusé, donc le
-  // zoom d'un joueur ne change rien pour les autres. Le DO ignore tout ça : les
-  // pions restent en % de la surface, la transformation est purement visuelle.
-  const VIEW_MIN = 0.5;
-  const VIEW_MAX = 8;
-  let viewZoom = $state(1);
-  let viewPanX = $state(0);
-  let viewPanY = $state(0);
+  // ── Caméra : zoom + panoramique, STRICTEMENT locaux ──────────
+  // Chaque joueur a son propre cadrage ; rien n'est diffusé, donc le zoom d'un
+  // joueur ne change rien pour les autres. Le DO ignore tout ça : les pions
+  // restent en % de la surface, la transformation est purement visuelle.
+  // Le cadrage est persisté par carte dans localStorage (préférence locale).
   let panning = $state<{ x: number; y: number; id: number; btn: number } | null>(null);
-  let viewForMapId: string | null = null;
 
   /** Taille réelle de la surface (fitted = image ajustée, fill = cadre plein). */
   const surfaceSize = $derived(
     fittedSize ? { w: fittedSize.w, h: fittedSize.h } : { w: frameW, h: frameH },
   );
 
+  let cameraMapId: string | null = null;
+  let pendingPose = $state<CameraPose | null>(null);
+
+  const camera = createCamera(() => {
+    scheduleCameraSave();
+  });
+
+  function cameraKey(mapId: string): string {
+    return `hd-camera:${campaignId}:${mapId}`;
+  }
+
+  function loadCameraPose(mapId: string): CameraPose | null {
+    try {
+      const raw = localStorage.getItem(cameraKey(mapId));
+      if (!raw) return null;
+      const p = JSON.parse(raw) as Partial<CameraPose>;
+      if (typeof p.fx !== 'number' || typeof p.fy !== 'number' || typeof p.zoom !== 'number') {
+        return null;
+      }
+      return { fx: p.fx, fy: p.fy, zoom: p.zoom };
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCameraPose(mapId: string): void {
+    try {
+      localStorage.setItem(cameraKey(mapId), JSON.stringify(camera.pose));
+    } catch {
+      /* stockage plein ou refusé : le cadrage reste valable en mémoire */
+    }
+  }
+
+  let cameraSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleCameraSave(): void {
+    if (!cameraMapId) return;
+    if (cameraSaveTimer) clearTimeout(cameraSaveTimer);
+    cameraSaveTimer = setTimeout(() => {
+      cameraSaveTimer = null;
+      if (cameraMapId) saveCameraPose(cameraMapId);
+    }, 250);
+  }
+
+  function flushCameraSave(): void {
+    if (!cameraMapId) return;
+    if (cameraSaveTimer) {
+      clearTimeout(cameraSaveTimer);
+      cameraSaveTimer = null;
+    }
+    saveCameraPose(cameraMapId);
+  }
+
+  $effect(() => {
+    camera.setViewport(frameW, frameH);
+  });
+
+  $effect(() => {
+    camera.setSurface(surfaceSize.w, surfaceSize.h);
+  });
+
   $effect(() => {
     const id = activeMap?.id ?? null;
-    if (id === viewForMapId) return;
-    viewForMapId = id;
-    viewZoom = 1;
-    viewPanX = 0;
-    viewPanY = 0;
+    if (id === cameraMapId) return;
+    flushCameraSave();
+    cameraMapId = id;
+    // Un voyage par un lien arrive avec son point d'arrivée : il prime sur le
+    // cadrage sauvegardé de la carte cible.
+    const arrival = store.arrival;
+    if (id && arrival) {
+      store.arrival = null;
+      pendingPose = { fx: arrival.x / 100, fy: arrival.y / 100, zoom: 1 };
+    } else {
+      pendingPose = id ? (loadCameraPose(id) ?? { fx: 0.5, fy: 0.5, zoom: 1 }) : null;
+    }
+  });
+
+  const surfaceReady = $derived(
+    !!activeMap && frameW > 0 && frameH > 0 && (!activeMap.hasImage || !!fittedSize),
+  );
+
+  $effect(() => {
+    if (!pendingPose || !surfaceReady) return;
+    const p = pendingPose;
+    pendingPose = null;
+    camera.setSurface(surfaceSize.w, surfaceSize.h);
+    camera.setPose(p, { instant: true });
   });
 
   function resetView() {
-    viewZoom = 1;
-    viewPanX = 0;
-    viewPanY = 0;
-    scheduleFogRedraw();
-  }
-
-  /**
-   * Empêche de perdre la carte, sans casser l'ancrage « zoom sur le curseur ».
-   * Sans marge, dès que la carte couvrait le cadre (cas normal : une carte
-   * haute est d'abord letterboxée sur les côtés), le clamp refusait tout vide et
-   * le point sous la souris glissait de plusieurs % au premier palier. On
-   * autorise donc le cadre à dépasser la carte de VIEW_SLACK de sa taille : le
-   * zoom reste ancré, et le vide autour reste borné (la carte ne peut pas
-   * disparaître). Centrée quand la carte tient dans le cadre.
-   */
-  const VIEW_SLACK = 0.2;
-  function clampView() {
-    const { w: sw, h: sh } = surfaceSize;
-    const z = viewZoom;
-    if (!sw || !sh) return;
-    const sx = (frameW - sw) / 2;
-    const sy = (frameH - sh) / 2;
-    const slackX = frameW * VIEW_SLACK;
-    const slackY = frameH * VIEW_SLACK;
-    viewPanX =
-      z * sw >= frameW
-        ? Math.min(-z * sx + slackX, Math.max(frameW - z * (sx + sw) - slackX, viewPanX))
-        : (frameW * (1 - z)) / 2;
-    viewPanY =
-      z * sh >= frameH
-        ? Math.min(-z * sy + slackY, Math.max(frameH - z * (sy + sh) - slackY, viewPanY))
-        : (frameH * (1 - z)) / 2;
+    camera.reset();
   }
 
   /** Zoom ancré sur le curseur : le point sous la souris reste sous la souris. */
@@ -314,25 +972,46 @@
     const el = frameRef;
     if (!el || !frameW || !frameH) return;
     const r = el.getBoundingClientRect();
-    const cx = clientX - r.left;
-    const cy = clientY - r.top;
-    const z0 = viewZoom;
-    const z1 = Math.min(VIEW_MAX, Math.max(VIEW_MIN, z0 * factor));
-    if (z1 === z0) return;
-    const u = (cx - viewPanX) / z0;
-    const v = (cy - viewPanY) / z0;
-    viewZoom = z1;
-    viewPanX = cx - z1 * u;
-    viewPanY = cy - z1 * v;
-    clampView();
-    scheduleFogRedraw();
+    camera.zoomAtPoint(clientX - r.left, clientY - r.top, factor);
   }
 
   function zoomAtCenter(factor: number) {
-    const el = frameRef;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+    camera.zoomBy(factor, { instant: false });
+  }
+
+  /** Recadrage animé sur le pion d'un personnage (caméra locale, jamais diffusé). */
+  function focusToken(charId: string) {
+    const t = store.state.tokens[charId];
+    if (!t) return;
+    camera.centerOn(t.x / 100, t.y / 100);
+  }
+
+  // ── Historique (lot 4) ───────────────────────────────────────
+  // Le DO est la source de vérité : la route REST lui demande d'appliquer le
+  // pas, et le delta `history` reçu ensuite remet les boutons d'aplomb. La
+  // pile n'est jamais dans le client.
+  let historyBusy = $state(false);
+
+  async function historyStep(dir: 'undo' | 'redo') {
+    if (!isMj || historyBusy) return;
+    if (dir === 'undo' ? !store.history.canUndo : !store.history.canRedo) return;
+    historyBusy = true;
+    try {
+      if (dir === 'undo') await api.campaigns.undo(campaignId);
+      else await api.campaigns.redo(campaignId);
+    } catch {
+      /* table fermée ou pas déjà consommé : le prochain delta corrigera */
+    } finally {
+      historyBusy = false;
+    }
+  }
+
+  function doUndo() {
+    void historyStep('undo');
+  }
+
+  function doRedo() {
+    void historyStep('redo');
   }
 
   $effect(() => {
@@ -360,6 +1039,170 @@
     store.state.markers.map((m) => (markerDragOverride[m.id] ? { ...m, ...markerDragOverride[m.id] } : m)),
   );
 
+  let linkDragOverride = $state<Record<string, { x: number; y: number }>>({});
+  let linkDrag: { id: string; moved: boolean } | null = null;
+  let linkJustDragged = false;
+
+  const displayLinks = $derived(
+    store.state.links.map((l) => (linkDragOverride[l.id] ? { ...l, ...linkDragOverride[l.id] } : l)),
+  );
+
+  function linkPointerDown(l: MapLink, e: PointerEvent) {
+    if (!isMj) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (tool === 'hand') return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    linkDrag = { id: l.id, moved: false };
+  }
+
+  function linkPointerMove(e: PointerEvent) {
+    if (!linkDrag) return;
+    const { x, y } = mapXY(e);
+    linkDrag.moved = true;
+    linkDragOverride = { ...linkDragOverride, [linkDrag.id]: { x, y } };
+    scheduleMove({ type: 'link.move', id: linkDrag.id, x, y });
+  }
+
+  function linkPointerUp() {
+    if (!linkDrag) return;
+    const { id, moved } = linkDrag;
+    linkDrag = null;
+    linkJustDragged = moved;
+    // La position finale part TOUJOURS (le throttle a pu dropper la dernière).
+    if (moved) flushMove(true);
+    setTimeout(() => {
+      const { [id]: _drop, ...rest } = linkDragOverride;
+      linkDragOverride = rest;
+    }, 50);
+  }
+
+  /** Clic = voyager — sauf s'il vient de terminer un drag du pin. */
+  function onLinkClick(l: MapLink) {
+    if (linkJustDragged) {
+      linkJustDragged = false;
+      return;
+    }
+    sendWs({ type: 'link.travel', id: l.id });
+  }
+
+  // ── Notes épinglées (lot 6.7) ────────────────────────────────
+  let openPinId = $state<string | null>(null);
+  let pinEdit = $state(false);
+  let pinDraft = $state('');
+
+  const displayPins = $derived(
+    store.state.pins.map((p) => (pinDragOverride[p.id] ? { ...p, ...pinDragOverride[p.id] } : p)),
+  );
+  const openPin = $derived(
+    openPinId ? (store.state.pins.find((p) => p.id === openPinId) ?? null) : null,
+  );
+
+  /** Rendu markdown-lite de la note (blocs → HTML échappé par inlineHtml). */
+  const renderedPin = $derived.by(() => {
+    const pin = openPin;
+    if (!pin) return '';
+    return toBlocks(pin.text)
+      .map((b) => {
+        if (b.type === 'heading') return `<p class="pin-h">${inlineHtml(b.text)}</p>`;
+        if (b.type === 'list') {
+          return `<ul>${b.items.map((i) => `<li>${inlineHtml(i)}</li>`).join('')}</ul>`;
+        }
+        if (b.type === 'para') return `<p>${inlineHtml(b.text)}</p>`;
+        return `<p class="pin-h">${inlineHtml(b.headers.join(' · '))}</p>`;
+      })
+      .join('');
+  });
+
+  /** Ouvre une note en LECTURE (la création ouvre, elle, en édition). */
+  function openPinRead(pinId: string) {
+    pinEdit = false;
+    openPinId = pinId;
+  }
+
+  function onPinClick(p: MapPin) {
+    if (pinJustDragged) {
+      pinJustDragged = false;
+      return;
+    }
+    openPinRead(p.id);
+  }
+
+  function openPinMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'pin', id, x: e.clientX, y: e.clientY };
+  }
+
+  function createPinAt(x: number, y: number) {
+    prompt = {
+      title: 'Nouvelle note',
+      label: 'Titre',
+      initial: '',
+      confirmLabel: 'Créer',
+      onSubmit: (label) => {
+        const id = crypto.randomUUID();
+        sendWs({ type: 'pin.set', id, x, y, label, text: '' });
+        openPinId = id;
+        pinDraft = '';
+        pinEdit = true;
+      },
+    };
+  }
+
+  function openRenamePinPrompt(id: string) {
+    const p = store.state.pins.find((x) => x.id === id);
+    if (!p) return;
+    prompt = {
+      title: 'Renommer la note',
+      label: 'Titre',
+      initial: p.label,
+      confirmLabel: 'Renommer',
+      onSubmit: (label) =>
+        sendWs({ type: 'pin.set', id: p.id, x: p.x, y: p.y, label, text: p.text }),
+    };
+  }
+
+  function startPinEdit() {
+    if (!openPin) return;
+    pinDraft = openPin.text;
+    pinEdit = true;
+  }
+
+  function savePin() {
+    if (!openPin) return;
+    sendWs({
+      type: 'pin.set',
+      id: openPin.id,
+      x: openPin.x,
+      y: openPin.y,
+      label: openPin.label,
+      text: pinDraft,
+    });
+    pinEdit = false;
+  }
+
+  // ── Aperçu au survol (Cmd/Ctrl + survol) ─────────────────────
+  let preview = $state<{ charId: string; x: number; y: number } | null>(null);
+  const previewChar = $derived(preview ? charById(preview.charId) : null);
+
+  function onTokenHover(charId: string, e: PointerEvent) {
+    if (e.metaKey || e.ctrlKey) preview = { charId, x: e.clientX, y: e.clientY };
+    else if (preview) preview = null;
+  }
+
+  $effect(() => {
+    const clear = () => {
+      if (preview) preview = null;
+    };
+    globalThis.addEventListener('keyup', clear);
+    globalThis.addEventListener('blur', clear);
+    return () => {
+      globalThis.removeEventListener('keyup', clear);
+      globalThis.removeEventListener('blur', clear);
+    };
+  });
+
   function charById(id: string) {
     return store.characters.find((c) => c.id === id) ?? null;
   }
@@ -370,10 +1213,17 @@
     return !!c && c.ownerId === session?.user.id;
   }
 
+  const targetCard = $derived(store.state.target ? charById(store.state.target) : null);
   const pjCards = $derived(store.characters.filter((c) => c.kind === 'pj' && c.active));
+  const groupPj = $derived(store.characters.filter((c) => c.kind === 'pj'));
+  const groupPnj = $derived(
+    store.characters.filter((c) => c.kind === 'pnj' && !!store.state.tokens[c.id]),
+  );
   const pnjCards = $derived(store.characters.filter((c) => c.kind === 'pnj'));
   const activeCharId = $derived(
-    store.state.combat?.phase === 'run' && store.state.combat.order
+    store.state.mode === 'combat' &&
+      store.state.combat?.phase === 'run' &&
+      store.state.combat.order
       ? store.state.combat.order[store.state.combat.turn % store.state.combat.order.length]
       : null,
   );
@@ -407,6 +1257,8 @@
   let invPoDraft = $state(0);
   let invPaDraft = $state(0);
   let invPcDraft = $state(0);
+  /** Le MJ ajuste le sac choisi, un joueur le sien. */
+  const canEditInv = $derived(!!invTarget && (isMj || invTarget === myCharId));
 
   function invAddItem() {
     const name = invItemDraft.trim();
@@ -414,6 +1266,16 @@
     sendWs({ type: 'inv.add', charId: invTarget, item: name, qty: Math.max(1, invQtyDraft | 0) });
     invItemDraft = '';
     invQtyDraft = 1;
+  }
+
+  function invMoneyDelta(key: 'po' | 'pa' | 'pc', delta: number, shift = false) {
+    if (!invTarget || !canEditInv || delta === 0) return;
+    const d = delta * (shift ? 10 : 1);
+    sendWs({
+      type: 'inv.money',
+      charId: invTarget,
+      delta: { po: key === 'po' ? d : 0, pa: key === 'pa' ? d : 0, pc: key === 'pc' ? d : 0 },
+    });
   }
 
   function invDrop(item: string) {
@@ -465,6 +1327,25 @@
     sendWs({ type: 'combat.next' });
   }
 
+  function reorderCombat(charId: string, up: boolean) {
+    sendWs({ type: 'combat.reorder', charId, up });
+  }
+
+  onMount(() => {
+    commandRegistry.register('table', buildCommands);
+    return () => commandRegistry.unregister('table');
+  });
+
+  // Les cartes vivent en REST : le serveur pousse `mapsUpdated` après chaque
+  // mutation, chaque navigateur relit alors la liste (Lot 2).
+  let seenMapsRevision = 0;
+  $effect(() => {
+    const rev = store.mapsRevision;
+    if (rev === seenMapsRevision) return;
+    seenMapsRevision = rev;
+    void refreshMaps();
+  });
+
   onMount(async () => {
     // états pilotés par le compendium (noms officiels DRS)
     try {
@@ -479,10 +1360,9 @@
     session = await auth.getSession();
     try {
       const detail = await api.campaigns.detail(campaignId);
-      campaignName = detail.name;
       isMj = detail.role === 'mj';
     } catch {
-      /* ignore */
+      showToast('Rôle dans la campagne indisponible', 'error');
     }
     await refreshMaps();
 
@@ -498,7 +1378,7 @@
       const res = await api.maps.list(campaignId);
       maps = res.maps;
     } catch {
-      /* ignore */
+      showToast('Liste des cartes indisponible', 'error');
     }
   }
 
@@ -511,10 +1391,34 @@
   function quickRoll(sides: number) {
     sendWs({ type: 'dice.roll', sides, n: 1, mod: diceMod });
     diceHistory = [
-      { id: ++diceHistSeq, label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}` },
+      {
+        id: ++diceHistSeq,
+        label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}`,
+        total: null,
+      },
       ...diceHistory,
     ].slice(0, 6);
   }
+
+  /** Le résultat du jet local (`dice.result` n'est envoyé qu'à son auteur)
+   *  complète la dernière entrée de l'historique restée sans total — mais
+   *  seulement quand l'animation centrale a fini de le révéler : le badge du
+   *  DiceButton sert de conclusion, pas de spoiler. */
+  let lastDiceAnim: typeof store.diceAnim = null;
+  $effect(() => {
+    const anim = store.diceAnim;
+    if (!anim || anim === lastDiceAnim) return;
+    lastDiceAnim = anim;
+    const pending = diceHistory.find((h) => h.total === null);
+    if (!pending) return;
+    const id = pending.id;
+    setTimeout(
+      () => {
+        diceHistory = diceHistory.map((h) => (h.id === id ? { ...h, total: anim.total } : h));
+      },
+      DICE_ROTATE_MS + DICE_REVEAL_MS,
+    );
+  });
 
   function setMode(mode: 'exploration' | 'combat') {
     if (!isMj) return;
@@ -556,6 +1460,25 @@
     sendWs({ type: 'token.put', charId, x: 46 + ((n % 5) - 2) * 4, y: 50 });
   }
 
+  function groupActivate(c: CharacterCard) {
+    if (!c.active) return;
+    if (isMj) {
+      sendWs({ type: 'target.set', charId: store.state.target === c.id ? null : c.id });
+    } else if (store.state.tokens[c.id]) {
+      focusToken(c.id);
+    }
+  }
+
+  function groupFocusOrPlace(c: CharacterCard) {
+    if (store.state.tokens[c.id]) focusToken(c.id);
+    else if (isMj) placeOnMap(c.id);
+  }
+
+  function presentColorFor(c: CharacterCard): string | null {
+    if (!c.ownerId) return null;
+    return store.presence.find((p) => p.userId === c.ownerId)?.color ?? null;
+  }
+
   // ── Carte : sélection / import ──────────────────────────────
 
   function selectMap(mapId: string) {
@@ -579,11 +1502,11 @@
     const { w: sw, h: sh } = surfaceSize;
     if (!sw || !sh) return { x: 50, y: 50 };
     const r = el.getBoundingClientRect();
-    const z = viewZoom || 1;
+    const z = camera.zoom || 1;
     const sx = (r.width - sw) / 2;
     const sy = (r.height - sh) / 2;
-    const lx = (e.clientX - r.left - viewPanX) / z - sx;
-    const ly = (e.clientY - r.top - viewPanY) / z - sy;
+    const lx = (e.clientX - r.left - camera.panX) / z - sx;
+    const ly = (e.clientY - r.top - camera.panY) / z - sy;
     return {
       x: Math.min(98, Math.max(2, (lx / sw) * 100)),
       y: Math.min(97, Math.max(3, (ly / sh) * 100)),
@@ -603,8 +1526,50 @@
     if (!canMoveToken(charId)) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    drag = { id: charId, kind: 'token', moved: false };
+    drag = { id: charId, kind: 'token', moved: false, sent: false };
     skipNextClick = true;
+  }
+
+  /** Clic simple sur un pion : le MJ cible / retire la cible (TargetFrame).
+   *  Le clic remonte ensuite à `onMapClick`, qui l'avale via `skipNextClick`. */
+  function tokenClick(charId: string) {
+    if (tokenJustDragged) {
+      tokenJustDragged = false;
+      return;
+    }
+    if (!isMj || tool !== 'move') return;
+    sendWs({ type: 'target.set', charId: store.state.target === charId ? null : charId });
+  }
+
+  /** Clavier sur un pion : flèches = déplacer d'une case (Maj : 5), Entrée =
+   *  même action que le clic (cibler / recentrer). */
+  function tokenKeydown(charId: string, e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      tokenClick(charId);
+      return;
+    }
+    if (!canMoveToken(charId)) return;
+    const t = store.state.tokens[charId];
+    if (!t) return;
+    const step = (e.shiftKey ? 5 : 1) * (activeGridSize ?? store.settings.tokenSize);
+    const { w, h } = surfaceSize;
+    if (!w || !h) return;
+    let x = t.x;
+    let y = t.y;
+    if (e.key === 'ArrowLeft') x -= (step / w) * 100;
+    else if (e.key === 'ArrowRight') x += (step / w) * 100;
+    else if (e.key === 'ArrowUp') y -= (step / h) * 100;
+    else if (e.key === 'ArrowDown') y += (step / h) * 100;
+    else return;
+    e.preventDefault();
+    sendWs({
+      type: 'token.move',
+      tokenId: charId,
+      x: Math.min(98, Math.max(2, x)),
+      y: Math.min(97, Math.max(3, y)),
+      begin: true,
+    });
   }
 
   function markerPointerDown(id: string, e: PointerEvent) {
@@ -613,47 +1578,92 @@
     if (tool === 'hand') return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    drag = { id, kind: 'marker', moved: false };
+    drag = { id, kind: 'marker', moved: false, sent: false };
+    skipNextClick = true;
+  }
+
+  function pinPointerDown(id: string, e: PointerEvent) {
+    if (!isMj) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (tool === 'hand') return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag = { id, kind: 'pin', moved: false, sent: false };
     skipNextClick = true;
   }
 
   function onMapPointerMove(e: PointerEvent) {
+    if (isMj && tool === 'fog' && fogOn && !panning) updateFogCursor(e);
     if (panning) return;
     if (fogErasing) {
       if (fogOn) sendFogReveal(mapXY(e));
       return;
     }
+    if (fogShape) {
+      if (fogShape.kind === 'rect') {
+        fogShape = { ...fogShape, end: mapXY(e) };
+      } else {
+        const p = mapXY(e);
+        const last = fogShape.points[fogShape.points.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 1.5) {
+          fogShape = { ...fogShape, points: [...fogShape.points, p] };
+        }
+      }
+      return;
+    }
     if (!drag) return;
     drag.moved = true;
     const { x, y } = mapXY(e);
+    const begin = !drag.sent;
+    drag.sent = true;
     if (drag.kind === 'token') {
       dragOverride = { ...dragOverride, [drag.id]: { x, y } };
-      scheduleTokenMove(drag.id, x, y);
-    } else {
+      scheduleMove(
+        { type: 'token.move', tokenId: drag.id, x, y, ...(begin ? { begin: true } : {}) },
+        begin,
+      );
+    } else if (drag.kind === 'marker') {
       markerDragOverride = { ...markerDragOverride, [drag.id]: { x, y } };
-      sendWs({ type: 'marker.move', id: drag.id, x, y });
+      scheduleMove(
+        { type: 'marker.move', id: drag.id, x, y, ...(begin ? { begin: true } : {}) },
+        begin,
+      );
+    } else {
+      pinDragOverride = { ...pinDragOverride, [drag.id]: { x, y } };
+      scheduleMove({ type: 'pin.move', id: drag.id, x, y });
     }
+  }
+
+  function onMapPointerLeave() {
+    onMapPointerUp();
+    fogCursor = null;
   }
 
   function onMapPointerUp() {
     fogErasing = false;
     lastFogPoint = null;
+    if (fogShape) commitFogShape();
     // NB : on ne touche PAS à `panning` ici. Le setPointerCapture du cadre
     // déclenche un pointerleave immédiat sur la surface, qui appelait ce
     // handler et annulait le panoramique dès la première frame.
     if (drag) {
-      const { id, kind } = drag;
+      const { id, kind, moved } = drag;
       drag = null;
+      if (kind === 'pin') pinJustDragged = moved;
+      if (kind === 'token') tokenJustDragged = moved;
       // `true` : la position finale part TOUJOURS, même si le throttle vient de
       //DROP la précédente — sinon le pion resterait en retard d'un mouvement.
-      flushTokenMove(true);
+      flushMove(true);
       setTimeout(() => {
         if (kind === 'token') {
           const { [id]: _drop, ...rest } = dragOverride;
           dragOverride = rest;
-        } else {
+        } else if (kind === 'marker') {
           const { [id]: _drop, ...rest } = markerDragOverride;
           markerDragOverride = rest;
+        } else {
+          const { [id]: _drop, ...rest } = pinDragOverride;
+          pinDragOverride = rest;
         }
       }, 50);
     }
@@ -665,9 +1675,15 @@
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (!isMj || tool !== 'fog') return;
     if (!fogOn) return;
+    if (fogMode !== 'brush') {
+      const p = mapXY(e);
+      fogShape =
+        fogMode === 'rect' ? { kind: 'rect', start: p, end: p } : { kind: 'lasso', points: [p] };
+      return;
+    }
     fogErasing = true;
     lastFogPoint = null;
-    sendFogReveal(mapXY(e));
+    sendFogReveal(mapXY(e), true);
   }
 
   // ── Vue : panoramique (outil « Main », clic droit ou molette) ──
@@ -691,7 +1707,9 @@
     if (panning) return;
     if (e.pointerType === 'mouse' && PAN_BUTTONS.has(e.button)) {
       if (e.button === 2 && isOnToken(e)) return;
-      e.preventDefault();
+      // Pas de preventDefault sur le clic droit : sous Chromium il annule le
+      // `contextmenu` (un pan referme déjà le menu via `panMovedAt`).
+      if (e.button !== 2) e.preventDefault();
       panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: e.button };
       skipNextClick = true;
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -705,26 +1723,35 @@
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
 
-  /** Sur la carte, le clic droit panoramique : on supprime le menu natif, mais
-   *  pas celui des pions (qui passe par `onTokenContextMenu`). */
+  /** Clic droit sur la carte : ouvre le menu contextuel du vide (sauf sur un
+   *  pion/repère, qui a le sien), et n'ouvre rien si un panoramique vient de
+   *  se terminer — sinon chaque déplacement laisserait un menu derrière lui. */
   function onFrameContextMenu(e: MouseEvent) {
     if (isOnToken(e)) return;
     e.preventDefault();
+    if (Date.now() - panMovedAt < 400) return;
+    const p = mapXY(e);
+    ctxMenu = { kind: 'map', x: e.clientX, y: e.clientY, sx: p.x, sy: p.y };
   }
 
   function onFramePointerMove(e: PointerEvent) {
     if (!panning || panning.id !== e.pointerId) return;
-    viewPanX += e.clientX - panning.x;
-    viewPanY += e.clientY - panning.y;
+    const dx = e.clientX - panning.x;
+    const dy = e.clientY - panning.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      panMovedAt = Date.now();
+      // macOS dispatche contextmenu au mousedown : le menu de carte s'ouvre
+      // avant qu'on sache que c'est un pan — on le referme dès le mouvement.
+      if (ctxMenu?.kind === 'map') ctxMenu = null;
+    }
+    camera.panBy(dx, dy);
     panning = { x: e.clientX, y: e.clientY, id: e.pointerId, btn: panning.btn };
-    clampView();
   }
 
   function onFramePointerUp(e: PointerEvent) {
     if (!panning || (e && panning.id !== e.pointerId)) return;
     panning = null;
     skipNextClick = false;
-    scheduleFogRedraw();
   }
 
   // Filet de sécurité : si le pointeur est relâché hors du cadre (ou si le
@@ -770,7 +1797,18 @@
         saveAsTemplate: npcSaveAsTemplate,
       });
     } else if (tool === 'marker') {
-      sendWs({ type: 'marker.set', x, y, text: markerText.trim() || 'repère' });
+      pendingMarkerPos = { x, y };
+      prompt = {
+        title: 'Nouveau repère',
+        label: 'Nom du repère',
+        initial: '',
+        confirmLabel: 'Poser',
+        onSubmit: (name) => {
+          const pos = pendingMarkerPos;
+          if (pos) sendWs({ type: 'marker.set', x: pos.x, y: pos.y, text: name });
+          pendingMarkerPos = null;
+        },
+      };
     }
   }
 
@@ -782,10 +1820,6 @@
   function markerRemove(id: string, e: Event) {
     e.stopPropagation();
     sendWs({ type: 'marker.remove', id });
-  }
-
-  function clearMarkers() {
-    sendWs({ type: 'marker.clear' });
   }
 
   function fogToggle() {
@@ -816,22 +1850,30 @@
   let fogDrawnMapId: string | null = null;
   let fogDrawnCount = 0;
   let fogScale = 1;
-  let fogScaleTimer: ReturnType<typeof setTimeout> | null = null;
+  let fogCursor = $state<{ x: number; y: number } | null>(null);
 
-  /** Repeint le brouillard à la nouvelle résolution (le zoom change l'échelle
-   *  de la backing store). Regroupé pour ne pas redessiner à chaque molette. */
-  function scheduleFogRedraw() {
-    if (fogScaleTimer) clearTimeout(fogScaleTimer);
-    fogScaleTimer = setTimeout(() => {
-      fogScaleTimer = null;
-      drawFog();
-    }, 140);
+  /** Rayon de la brosse, en px de surface (identique au trou découpé). */
+  const FOG_BRUSH_RADIUS = 68;
+
+  /** Position surface (px) du curseur : le cercle de prévisualisation suit la
+   *  souris à la même échelle que les trous réellement découpés. */
+  function updateFogCursor(e: PointerEvent) {
+    const el = frameRef;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const z = camera.zoom || 1;
+    const sx = (r.width - surfaceSize.w) / 2;
+    const sy = (r.height - surfaceSize.h) / 2;
+    fogCursor = {
+      x: (e.clientX - r.left - camera.panX) / z - sx,
+      y: (e.clientY - r.top - camera.panY) / z - sy,
+    };
   }
 
   function cutFogHole(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
     const px = (x / 100) * w;
     const py = (y / 100) * h;
-    const rad = 68;
+    const rad = FOG_BRUSH_RADIUS;
     const g = ctx.createRadialGradient(px, py, rad * 0.35, px, py, rad);
     g.addColorStop(0, 'rgba(0,0,0,1)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
@@ -877,10 +1919,14 @@
     // décalerait tous les trous de brouillard.
     const w = Math.max(2, mapContainer.offsetWidth);
     const h = Math.max(2, mapContainer.offsetHeight);
+    // Résolution FIXE (dpr, plafonnée à 2) : le canvas est déjà mis à
+    // l'échelle par la transformation de la caméra. Le suivre à chaque zoom
+    // imposait un redraw complet (~30 ms à 4 Mpx, plein de hitches) pour un
+    // voile quasi uni — seuls les bords des trous, déjà doux, perdent en
+    // netteté au-delà de ×2.
     const dpr = globalThis.devicePixelRatio || 1;
-    const nextScale = Math.min(3, Math.max(1, viewZoom * dpr));
-    const scaleChanged = Math.abs(nextScale - fogScale) > 0.01;
-    fogScale = nextScale;
+    const scaleChanged = Math.abs(Math.min(2, Math.max(1, dpr)) - fogScale) > 0.01;
+    fogScale = Math.min(2, Math.max(1, dpr));
     const bw = Math.round(w * fogScale);
     const bh = Math.round(h * fogScale);
     const resized = fogCanvas.width !== bw || fogCanvas.height !== bh;
@@ -926,18 +1972,13 @@
   });
 
   let lastShownError: string | null = null;
-  let toastTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const err = store.error;
     if (err === lastShownError) return;
     lastShownError = err;
     if (!err) return;
-    toast = err;
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast = '';
-      clearWsError();
-    }, 4000);
+    showToast(err, 'error');
+    clearWsError();
   });
 
   const diceTypes = [4, 6, 8, 10, 12, 20];
@@ -945,114 +1986,685 @@
   // ── Pose depuis la bibliothèque de PNJ ───────────────────────
   let pendingPlace = $state<{ templateId: string; name: string; count: number } | null>(null);
 
-  // ── Menu contextuel sur les pions (MJ) ───────────────────────
-  let ctxMenu = $state<{ x: number; y: number; charId: string; kind: 'pj' | 'pnj' } | null>(null);
-  let ctxEl: HTMLDivElement | null = null;
+  // Largeurs estimées : la sortie est un classement par priorité, pas une
+  // mesure au pixel — seuls les outils y participent, `Cartes` et la
+  // bibliothèque restent toujours visibles.
+  const toolbarItems = $derived([
+    { id: 'hand', width: 49, priority: 90, pinned: tool === 'hand' },
+    { id: 'move', width: 49, priority: 60, pinned: tool === 'move' },
+    { id: 'fog', width: 49, priority: 55, pinned: tool === 'fog' },
+    { id: 'marker', width: 49, priority: 50, pinned: tool === 'marker' },
+    { id: 'pnj', width: 49, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
+  ]);
+  // 560 px réservés de chaque côté : le bloc Zoom + DiceButton vit à droite,
+  // la barre reste centrée sans jamais le chevaucher.
+  const toolbarAvailable = $derived(
+    Math.max(
+      0,
+      toolbarWidth -
+        (panelsOpen.compagnie ? 316 : 0) -
+        (panelsOpen.journal ? 432 : 0) -
+        (panelsOpen.dice || panelsOpen.inventory ? 364 : 0) -
+        240,
+    ),
+  );
+  const toolbarFit = $derived(fitToolbar(toolbarItems, toolbarAvailable));
+  const visibleToolIds = $derived(toolbarFit.visible.map((i) => i.id));
 
-  function onTokenContextMenu(e: MouseEvent, charId: string, kind: 'pj' | 'pnj') {
-    if (!isMj) return;
-    e.preventDefault();
-    e.stopPropagation();
-    ctxMenu = { x: e.clientX, y: e.clientY, charId, kind };
+  function runToolbarItem(id: string) {
+    switch (id) {
+      case 'hand':
+        toolSelect('hand');
+        break;
+      case 'move':
+        toolSelect('move');
+        break;
+      case 'pnj':
+        toolSelect('pnj');
+        break;
+      case 'marker':
+        toolSelect('marker');
+        break;
+      case 'fog':
+        fogToggle();
+        break;
+    }
   }
 
-  function ctxDuplicate() {
-    if (ctxMenu) sendWs({ type: 'npc.duplicate', charId: ctxMenu.charId });
-    ctxMenu = null;
-  }
-  function ctxRemoveToken() {
-    if (ctxMenu) sendWs({ type: 'token.remove', charId: ctxMenu.charId });
-    ctxMenu = null;
-  }
-  function ctxDeleteNpc() {
-    if (ctxMenu) sendWs({ type: 'npc.remove', charId: ctxMenu.charId });
-    ctxMenu = null;
-  }
 
-  $effect(() => {
-    if (!ctxMenu) return;
-    const close = (e: Event) => {
-      if (ctxEl && e.target instanceof Node && ctxEl.contains(e.target)) return;
-      ctxMenu = null;
-    };
-    // en capture : la fermeture précède le pointerdown du drag sur un autre pion
-    window.addEventListener('pointerdown', close, true);
-    window.addEventListener('contextmenu', close, true);
-    return () => {
-      window.removeEventListener('pointerdown', close, true);
-      window.removeEventListener('contextmenu', close, true);
-    };
+  // ── Menu contextuel unique (Lot 5) ───────────────────────────
+  // Une seule instance pilotée par la page ; chaque surface l'ouvre au
+  // pointeur avec ses entrées. bits-ui gère focus, flèches, Échap et clic
+  // extérieur (l'ancien menu maison a été retiré avec son listener global).
+  type CtxTarget =
+    | { kind: 'token'; charId: string; charKind: 'pj' | 'pnj'; x: number; y: number }
+    | { kind: 'marker'; id: string; x: number; y: number }
+    | { kind: 'link'; id: string; x: number; y: number }
+    | { kind: 'pin'; id: string; x: number; y: number }
+    /** `x/y` = pointeur écran (ancre du menu) ; `sx/sy` = % de surface. */
+    | { kind: 'map'; x: number; y: number; sx: number; sy: number }
+    | ({ x: number; y: number } & AssetTarget);
+
+  let ctxMenu = $state<CtxTarget | null>(null);
+  /** Un panoramique au clic droit ne doit pas ouvrir le menu au relâchement. */
+  let panMovedAt = 0;
+
+  const ctxItems = $derived.by<ContextMenuItem[]>(() => {
+    const t = ctxMenu;
+    if (!t) return [];
+
+    if (t.kind === 'asset-map') {
+      const map = maps.find((m) => m.id === t.mapId);
+      const items: ContextMenuItem[] = [
+        {
+          id: 'show',
+          label: 'Afficher cette carte',
+          onSelect: () => {
+            selectMap(t.mapId);
+            assetManagerOpen = false;
+          },
+        },
+        {
+          id: 'rename',
+          label: 'Renommer…',
+          separatorBefore: true,
+          onSelect: () => openRenameMapPrompt(t.mapId),
+        },
+        {
+          id: 'replace-image',
+          label: "Remplacer l'image…",
+          onSelect: () => pickFile(IMAGE_ACCEPT, (f) => void replaceMapImage(t.mapId, f)),
+        },
+        {
+          id: 'grid',
+          label: 'Grille',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: [
+            ...GRID_SIZES.map((size) => ({
+              id: `grid.${size}`,
+              label: `${size} px`,
+              disabled: map?.gridSize === size,
+              onSelect: () => void setMapGrid(t.mapId, { gridSize: size }),
+            })),
+            {
+              id: 'grid.none',
+              label: 'Retirer la grille',
+              disabled: !map?.gridSize,
+              onSelect: () => void setMapGrid(t.mapId, { gridSize: null }),
+            },
+          ],
+        },
+        {
+          id: 'grid-color',
+          label: 'Couleur de la grille',
+          onSelect: () => {},
+          children: GRID_COLORS.map(([color, label]) => ({
+            id: `gridcolor.${color || 'theme'}`,
+            label,
+            onSelect: () => void setMapGrid(t.mapId, { gridColor: color || null }),
+          })),
+        },
+        {
+          id: 'delete-map',
+          label: 'Supprimer la carte…',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => {
+            confirmState = {
+              title: 'Supprimer la carte',
+              message: `« ${map?.name ?? 'cette carte'} » sera définitivement retirée de la campagne.`,
+              confirmLabel: 'Supprimer',
+              danger: true,
+              onConfirm: () => void removeMap(t.mapId),
+            };
+          },
+        },
+      ];
+      return items;
+    }
+    if (t.kind === 'asset-template') {
+      const tpl = t.template;
+      const items: ContextMenuItem[] = [
+        {
+          id: 'spawn',
+          label: `Poser ×${t.count}`,
+          onSelect: () => {
+            armTemplate(tpl.id, tpl.name, t.count);
+            assetManagerOpen = false;
+          },
+        },
+        {
+          id: 'edit',
+          label: 'Modifier…',
+          onSelect: () => (editTemplate = tpl),
+        },
+      ];
+      if (isMj) {
+        items.push({
+          id: 'delete',
+          label: 'Supprimer le modèle',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => void deleteTemplate(tpl.id),
+        });
+      }
+      return items;
+    }
+    if (t.kind === 'asset-char') {
+      const placed = !!store.state.tokens[t.charId];
+      const items: ContextMenuItem[] = placed
+        ? [{ id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) }]
+        : [{ id: 'place', label: 'Placer sur la carte', onSelect: () => placeOnMap(t.charId) }];
+      items.push(
+        {
+          id: 'portrait',
+          label: "Changer l'avatar…",
+          separatorBefore: true,
+          onSelect: () => pickFile(IMAGE_ACCEPT, (f) => void changePortrait(t.charId, f)),
+        },
+        {
+          id: 'sheet',
+          label: 'Ouvrir la feuille',
+          onSelect: () => {
+            assetManagerOpen = false;
+            openSheet(t.charId);
+          },
+        },
+      );
+      return items;
+    }
+
+    if (t.kind === 'token') {
+      const c = charById(t.charId);
+      const placed = !!store.state.tokens[t.charId];
+      const items: ContextMenuItem[] = placed
+        ? [{ id: 'focus', label: 'Recentrer la caméra', onSelect: () => focusToken(t.charId) }]
+        : isMj
+          ? [{ id: 'place', label: 'Placer sur la carte', onSelect: () => placeOnMap(t.charId) }]
+          : [];
+      if (t.charKind === 'pj' || isMj) {
+        items.push({ id: 'sheet', label: 'Ouvrir la feuille', onSelect: () => openSheet(t.charId) });
+      }
+      if (isMj) {
+        items.push({
+          id: 'target',
+          label: store.state.target === t.charId ? 'Retirer la cible' : 'Cibler',
+          onSelect: () =>
+            sendWs({
+              type: 'target.set',
+              charId: store.state.target === t.charId ? null : t.charId,
+            }),
+        });
+        items.push({
+          id: 'hp',
+          label: 'Points de vie',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: [-5, -1, 1, 5].map((d) => ({
+            id: `hp.${d}`,
+            label: `${d > 0 ? '+' : ''}${d} PV`,
+            onSelect: () => pvDelta(t.charId, d),
+          })),
+        });
+        const conditions = c?.conditions ?? [];
+        const available = stateOptions.filter((cond) => !conditions.includes(cond));
+        if (conditions.length > 0 || available.length > 0) {
+          items.push({
+            id: 'conditions',
+            label: 'États',
+            onSelect: () => {},
+            children: [
+              ...conditions.map((cond) => ({
+                id: `cond.off.${cond}`,
+                label: `Retirer : ${cond}`,
+                onSelect: () => removeCondition(t.charId, cond),
+              })),
+              ...available.map((cond) => ({
+                id: `cond.on.${cond}`,
+                label: `+ ${cond}`,
+                onSelect: () => sendWs({ type: 'char.condition', charId: t.charId, cond, on: true }),
+              })),
+            ],
+          });
+        }
+        items.push({
+          id: 'size',
+          label: 'Taille du pion',
+          onSelect: () => {},
+          children: TOKEN_SCALES.map((s) => ({
+            id: `size.${s}`,
+            label: scaleLabel(s),
+            disabled: c?.tokenScale === s,
+            onSelect: () => sendWs({ type: 'char.scale', charId: t.charId, scale: s }),
+          })),
+        });
+        if (t.charKind === 'pnj') {
+          items.push({
+            id: 'save-template',
+            label: 'Enregistrer comme modèle',
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'npc.saveAsTemplate', charId: t.charId }),
+          });
+          items.push({
+            id: 'dup',
+            label: 'Dupliquer le PNJ',
+            onSelect: () => sendWs({ type: 'npc.duplicate', charId: t.charId }),
+          });
+        }
+        if (placed) {
+          items.push({
+            id: 'remove-token',
+            label: 'Retirer de la carte',
+            onSelect: () => sendWs({ type: 'token.remove', charId: t.charId }),
+          });
+        }
+        if (t.charKind === 'pnj') {
+          items.push({
+            id: 'delete-npc',
+            label: 'Supprimer le PNJ',
+            danger: true,
+            separatorBefore: true,
+            onSelect: () => sendWs({ type: 'npc.remove', charId: t.charId }),
+          });
+        }
+      }
+      return items;
+    }
+
+    if (t.kind === 'marker') {
+      const focusMarker = () => {
+        const m = store.state.markers.find((x) => x.id === t.id);
+        if (m) camera.centerOn(m.x / 100, m.y / 100);
+      };
+      const items: ContextMenuItem[] = [
+        { id: 'focus', label: 'Recentrer la caméra', onSelect: focusMarker },
+      ];
+      if (isMj) {
+        items.push(
+          {
+            id: 'rename',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenameMarkerPrompt(t.id),
+          },
+          {
+            id: 'remove',
+            label: 'Supprimer le repère',
+            onSelect: () => sendWs({ type: 'marker.remove', id: t.id }),
+          },
+          {
+            id: 'clear',
+            label: 'Effacer tous les repères',
+            danger: true,
+            onSelect: () => sendWs({ type: 'marker.clear' }),
+          },
+        );
+      }
+      return items;
+    }
+
+    if (t.kind === 'pin') {
+      const p = store.state.pins.find((x) => x.id === t.id);
+      if (!p) return [];
+      const items: ContextMenuItem[] = [
+        { id: 'open', label: 'Ouvrir la note', onSelect: () => openPinRead(p.id) },
+      ];
+      if (isMj) {
+        items.push(
+          {
+            id: 'rename-pin',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenamePinPrompt(p.id),
+          },
+          {
+            id: 'remove-pin',
+            label: 'Supprimer la note',
+            danger: true,
+            onSelect: () => sendWs({ type: 'pin.remove', id: p.id }),
+          },
+        );
+      }
+      return items;
+    }
+
+    if (t.kind === 'link') {
+      const l = store.state.links.find((x) => x.id === t.id);
+      if (!l) return [];
+      const items: ContextMenuItem[] = [
+        {
+          id: 'travel',
+          label: 'Emprunter ce lien',
+          onSelect: () => sendWs({ type: 'link.travel', id: t.id }),
+        },
+      ];
+      if (isMj) {
+        items.push(
+          {
+            id: 'rename-link',
+            label: 'Renommer…',
+            separatorBefore: true,
+            onSelect: () => openRenameLinkPrompt(l.id),
+          },
+          {
+            id: 'toggle-hidden',
+            label: l.hidden ? 'Révéler aux joueurs' : 'Cacher aux joueurs',
+            onSelect: () =>
+              sendWs({
+                type: 'link.set',
+                id: l.id,
+                x: l.x,
+                y: l.y,
+                targetMapId: l.targetMapId,
+                targetX: l.targetX,
+                targetY: l.targetY,
+                label: l.label,
+                kind: l.kind,
+                oneWay: l.oneWay,
+                hidden: !l.hidden,
+              }),
+          },
+          {
+            id: 'remove-link',
+            label: 'Supprimer le lien',
+            danger: true,
+            onSelect: () => sendWs({ type: 'link.remove', id: t.id }),
+          },
+        );
+      }
+      return items;
+    }
+
+    // Vide de carte.
+    const items: ContextMenuItem[] = [];
+    if (myCharId && store.state.tokens[myCharId]) {
+      items.push({
+        id: 'focus-me',
+        label: 'Recentrer sur mon pion',
+        onSelect: () => focusToken(myCharId),
+      });
+    }
+    items.push({ id: 'fit', label: 'Recadrer la carte', onSelect: resetView });
+    if (isMj) {
+      const otherMaps = maps.filter((m) => m.id !== store.state.mapId);
+      if (otherMaps.length > 0) {
+        items.push({
+          id: 'add-link',
+          label: 'Poser un lien ici…',
+          separatorBefore: true,
+          onSelect: () => {},
+          children: otherMaps.map((m) => ({
+            id: `link-to-${m.id}`,
+            label: m.name,
+            onSelect: () =>
+              sendWs({
+                type: 'link.set',
+                x: t.sx,
+                y: t.sy,
+                targetMapId: m.id,
+                label: m.name,
+                kind: 'door',
+              }),
+          })),
+        });
+      }
+      items.push({
+        id: 'add-pin',
+        label: 'Poser une note ici…',
+        onSelect: () => createPinAt(t.sx, t.sy),
+      });
+      if (store.state.markers.length > 0) {
+        items.push({
+          id: 'clear-markers',
+          label: 'Effacer tous les repères',
+          danger: true,
+          onSelect: () => sendWs({ type: 'marker.clear' }),
+        });
+      }
+      items.push(
+        {
+          id: 'tool.move',
+          label: 'Outil Déplacer',
+          separatorBefore: true,
+          onSelect: () => toolSelect('move'),
+        },
+        { id: 'tool.pnj', label: 'Outil PNJ', onSelect: () => toolSelect('pnj') },
+        { id: 'tool.marker', label: 'Outil Repère', onSelect: () => toolSelect('marker') },
+        {
+          id: 'fog.toggle',
+          label: fogOn ? 'Brouillard : désactiver' : 'Brouillard : activer',
+          separatorBefore: true,
+          onSelect: fogToggle,
+        },
+      );
+    }
+    return items;
   });
 
+  function openTokenMenu(e: MouseEvent, charId: string, charKind: 'pj' | 'pnj') {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'token', charId, charKind, x: e.clientX, y: e.clientY };
+  }
+
+  function openMarkerMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'marker', id, x: e.clientX, y: e.clientY };
+  }
+
+  function openLinkMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { kind: 'link', id, x: e.clientX, y: e.clientY };
+  }
+
+  /** Clic droit dans l'asset manager : même menu unique, cible « asset ». */
+  function openAssetMenu(e: MouseEvent, target: AssetTarget) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { ...target, x: e.clientX, y: e.clientY } as CtxTarget;
+  }
+
+  function armTemplate(templateId: string, name: string, count: number) {
+    tool = 'move';
+    pendingPlace = { templateId, name, count };
+  }
+
+  // ── Bibliothèque : import et renommage (lot 5.4, compléments) ──
+  /** Sélecteur de fichier programmatique (pas d'input permanent à l'écran). */
+  function pickFile(accept: string, onPick: (file: File) => void) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) onPick(f);
+    };
+    input.click();
+  }
+
+  const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp';
+
+  function mapNameFromFile(name: string): string {
+    return name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Nouvelle carte';
+  }
+
+  async function createMapFromFile(file: File) {
+    try {
+      const created = await api.maps.create(campaignId, mapNameFromFile(file.name), file);
+      await refreshMaps();
+      if (created?.id) selectMap(created.id);
+    } catch {
+      showToast("Import de la carte impossible", 'error');
+    }
+  }
+
+  async function replaceMapImage(mapId: string, file: File) {
+    try {
+      await api.maps.update(mapId, { image: file });
+      await refreshMaps();
+    } catch {
+      showToast("Remplacement de l'image impossible", 'error');
+    }
+  }
+
+  async function renameMap(mapId: string, name: string) {
+    try {
+      await api.maps.update(mapId, { name });
+      await refreshMaps();
+    } catch {
+      showToast('Renommage impossible', 'error');
+    }
+  }
+
+  function openRenameLinkPrompt(id: string) {
+    const l = store.state.links.find((x) => x.id === id);
+    if (!l) return;
+    prompt = {
+      title: 'Renommer le lien',
+      label: 'Nom',
+      initial: l.label,
+      confirmLabel: 'Renommer',
+      onSubmit: (v) =>
+        sendWs({
+          type: 'link.set',
+          id: l.id,
+          x: l.x,
+          y: l.y,
+          targetMapId: l.targetMapId,
+          targetX: l.targetX,
+          targetY: l.targetY,
+          label: v,
+          kind: l.kind,
+          oneWay: l.oneWay,
+          hidden: l.hidden,
+        }),
+    };
+  }
+
+  function openRenameMapPrompt(mapId: string) {
+    const map = maps.find((m) => m.id === mapId);
+    prompt = {
+      title: 'Renommer la carte',
+      label: 'Nom',
+      initial: map?.name ?? '',
+      confirmLabel: 'Renommer',
+      onSubmit: (v) => void renameMap(mapId, v),
+    };
+  }
+
+  async function changePortrait(charId: string, file: File) {
+    try {
+      await api.characters.updatePortrait(charId, file);
+    } catch {
+      showToast("Import de l'avatar impossible", 'error');
+    }
+  }
+
+  async function deleteTemplate(templateId: string) {
+    try {
+      await api.npcTemplates.remove(templateId);
+      templatesRevision += 1;
+    } catch {
+      showToast('Suppression du modèle impossible', 'error');
+    }
+  }
+
+  /** Double-clic dans la bibliothèque : poser, ou recentrer s'il l'est déjà. */
+  function placeCharFromLibrary(charId: string) {
+    if (store.state.tokens[charId]) focusToken(charId);
+    else placeOnMap(charId);
+  }
+
   // ── Raccourcis clavier ───────────────────────────────────────
+  function togglePanel(id: 'journal' | 'dice' | 'inventory') {
+    setPanelOpen(id, !panelsOpen[id]);
+  }
+
   function focusChat() {
-    activeTab = 'journal';
+    setPanelOpen('journal', true);
     requestAnimationFrame(() => {
       document.querySelector<HTMLInputElement>('.chat-input')?.focus();
     });
   }
 
   function onWindowKeydown(e: KeyboardEvent) {
-    const t = e.target as HTMLElement | null;
-    if (
-      t &&
-      (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
-    ) {
-      return;
-    }
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (k === 'escape') {
+    if (e.altKey) return;
+    if (e.key === 'Escape') {
       ctxMenu = null;
       pendingPlace = null;
       if (isMj) tool = 'move';
       return;
     }
-    if (k === '/') {
-      e.preventDefault();
-      focusChat();
-      return;
-    }
-    if (k === '0') {
-      resetView();
-      return;
-    }
-    // L'outil Main sert à TOUT le monde (chaque joueur cadre sa carte) : il est
-    // donc traité avant le garde isMj ci-dessous.
-    if (k === 'h') {
-      toolSelect('hand');
-      return;
-    }
-    if (!isMj) return;
-    switch (k) {
-      case 'v':
-        tool = 'move';
+    const id = hotkeyIdFromEvent(e, { isMj, overlayOpen: paletteOpen || helpOpen });
+    if (!id) return;
+    e.preventDefault();
+    switch (id) {
+      case 'palette.open':
+        paletteOpen = true;
         break;
-      case 'p':
+      case 'help.open':
+        helpOpen = true;
+        break;
+      case 'chat.focus':
+        focusChat();
+        break;
+      case 'panel.journal':
+        togglePanel('journal');
+        break;
+      case 'panel.dice':
+        togglePanel('dice');
+        break;
+      case 'panel.inventory':
+        togglePanel('inventory');
+        break;
+      case 'map.hand':
+        toolSelect('hand');
+        break;
+      case 'map.reset':
+        resetView();
+        break;
+      case 'camera.focus': {
+        const target = activeCharId ?? myCharId;
+        if (target) focusToken(target);
+        break;
+      }
+      case 'undo':
+        doUndo();
+        break;
+      case 'redo':
+        doRedo();
+        break;
+      case 'tool.move':
+        toolSelect('move');
+        break;
+      case 'tool.pnj':
         toolSelect('pnj');
         break;
-      case 'r':
+      case 'tool.marker':
         toolSelect('marker');
         break;
-      case 'b':
+      case 'tool.fog':
         fogToggle();
         break;
-      case '1':
+      case 'dice.d4':
         quickRoll(4);
         break;
-      case '2':
+      case 'dice.d6':
         quickRoll(6);
         break;
-      case '3':
+      case 'dice.d8':
         quickRoll(8);
         break;
-      case '4':
+      case 'dice.d10':
         quickRoll(10);
         break;
-      case '5':
+      case 'dice.d12':
         quickRoll(12);
         break;
-      case '6':
+      case 'dice.d20':
         quickRoll(20);
         break;
     }
@@ -1066,44 +2678,357 @@
   function tokenTitle(c: { name: string; ca: number; pv: number | null; pvMax: number | null }): string {
     return isMj ? `${c.name} — CA ${c.ca} · PV ${c.pv ?? '–'}/${c.pvMax ?? '–'}` : c.name;
   }
+
+  /** Taille du pion en px : `tokenScale` × case si la carte est quadrillée,
+   *  sinon repli sur le réglage de campagne en px (carte sans grille). */
+  function tokenSizePx(c: { tokenScale: number }): number {
+    const scale = c.tokenScale > 0 ? c.tokenScale : 1;
+    const base = activeGridSize ?? store.settings.tokenSize;
+    return Math.round(Math.max(12, base * scale));
+  }
+
+  /** PV en % (0..100) ; null = pas de barre (PV masqués par le serveur). */
+  function hpPercent(c: { pv: number | null; pvMax: number | null }): number | null {
+    if (c.pv === null || c.pvMax === null || c.pvMax <= 0) return null;
+    return Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100));
+  }
+
+  function initiativeScore(charId: string): number | null {
+    const combat = store.state.combat;
+    if (store.state.mode !== 'combat' || !combat || !combat.order) return null;
+    const score = combat.scores[charId];
+    return typeof score === 'number' ? score : null;
+  }
+
+  function scaleLabel(scale: number): string {
+    return scale === 0.5 ? '½ case' : `${scale} case${scale > 1 ? 's' : ''}`;
+  }
+
+  function setTokenScale(charId: string, e: Event) {
+    const scale = Number((e.currentTarget as HTMLSelectElement).value);
+    if (Number.isFinite(scale)) sendWs({ type: 'char.scale', charId, scale });
+  }
 </script>
 
 <div class="table-screen">
+  <!-- Couche carte : le monde est plein écran. -->
+  <div class="layer-map">
+      <main
+        class="map-frame"
+        data-map={activeMap?.name ?? ''}
+        bind:this={frameRef}
+        role="region"
+        aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
+        onpointerdown={onMapPointerDown}
+        onpointermove={onMapPointerMove}
+        onpointerup={onMapPointerUp}
+        onpointercancel={onMapPointerUp}
+        onpointerleave={onMapPointerLeave}
+        onclick={onMapClick}
+        ondblclick={onMapDblClick}
+        oncontextmenu={onFrameContextMenu}
+      >
+        {#if !activeMap}
+          <div class="map-placeholder">
+            {#if isMj}Créez ou sélectionnez une carte via « Cartes ».{:else}Le MJ n'a pas encore choisi de carte.{/if}
+          </div>
+        {:else}
+          <!-- Couche gestes : sœur du contenu, jamais son ancêtre (piège B du
+               spike : un setPointerCapture sur un ancêtre vole les clics des pions). -->
+          <div
+            class="map-bg"
+            role="presentation"
+            class:panning={!!panning}
+            class:cursor-hand={tool === 'hand'}
+            class:cursor-fog={isMj && tool === 'fog'}
+            class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
+            onpointerdown={onFramePointerDown}
+            onpointermove={onFramePointerMove}
+            onpointerup={onFramePointerUp}
+            onpointercancel={onFramePointerUp}
+            oncontextmenu={onFrameContextMenu}
+          ></div>
+
+          <div
+            class="map-zoom"
+            class:tool-hand={tool === 'hand'}
+            style="transform: translate({camera.panX}px, {camera.panY}px) scale({camera.zoom})"
+          >
+            <div
+              bind:this={mapContainer}
+              class="map-surface"
+              class:map-surface--fitted={!!fittedSize}
+              class:map-surface--fill={!fittedSize}
+              style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
+            >
+            {#if activeMap.hasImage}
+              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
+            {/if}
+
+            {#if activeGridSize}
+              <div
+                class="map-grid"
+                class:map-grid--overlay={activeMap.hasImage}
+                class:map-grid--tinted={!!activeGridColor}
+                style="--map-grid-size: {activeGridSize}px; --map-grid-color: {activeGridColor ?? 'var(--map-line)'}"
+              ></div>
+            {/if}
+
+            {#if fogOn}
+              <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
+            {/if}
+
+            {#if isMj && tool === 'fog' && fogOn && fogMode === 'brush' && fogCursor}
+              <div class="fog-brush" style="left: {fogCursor.x}px; top: {fogCursor.y}px;"></div>
+            {/if}
+
+            {#if isMj && tool === 'fog' && fogOn && fogShape}
+              <svg class="fog-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                {#if fogShape.kind === 'rect'}
+                  <rect
+                    x={Math.min(fogShape.start.x, fogShape.end.x)}
+                    y={Math.min(fogShape.start.y, fogShape.end.y)}
+                    width={Math.abs(fogShape.end.x - fogShape.start.x)}
+                    height={Math.abs(fogShape.end.y - fogShape.start.y)}
+                  />
+                {:else}
+                  <polygon points={fogShape.points.map((p) => `${p.x},${p.y}`).join(' ')} />
+                {/if}
+              </svg>
+            {/if}
+
+            {#each displayMarkers as m (m.id)}
+              <div
+                class="marker"
+                style="left: {m.x}%; top: {m.y}%;"
+                onpointerdown={(e) => markerPointerDown(m.id, e)}
+                ondblclick={(e) => {
+                  if (!isMj) return;
+                  e.stopPropagation();
+                  openRenameMarkerPrompt(m.id);
+                }}
+                oncontextmenu={(e) => openMarkerMenu(e, m.id)}
+                role={isMj ? 'button' : undefined}
+                tabindex={isMj ? 0 : undefined}
+              >
+                <span class="marker-flag">⚑ {m.text}</span>
+                {#if isMj}
+                  <span class="marker-remove" onpointerdown={(e) => markerRemove(m.id, e)}>✕</span>
+                {/if}
+              </div>
+            {/each}
+
+            {#each displayLinks as l (l.id)}
+              <button
+                type="button"
+                class="map-link"
+                class:link-hidden={l.hidden}
+                style="left: {l.x}%; top: {l.y}%;"
+                title={l.hidden ? `${l.label} — caché aux joueurs` : l.label}
+                onpointerdown={(e) => linkPointerDown(l, e)}
+                onpointermove={linkPointerMove}
+                onpointerup={linkPointerUp}
+                onpointercancel={linkPointerUp}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onLinkClick(l);
+                }}
+                oncontextmenu={(e) => openLinkMenu(e, l.id)}
+              >
+                <span class="map-link-icon" aria-hidden="true">→</span>
+                <span class="map-link-label">{l.label}</span>
+              </button>
+            {/each}
+
+            {#each displayPins as p (p.id)}
+              <button
+                type="button"
+                class="map-pin"
+                style="left: {p.x}%; top: {p.y}%;"
+                title={p.label}
+                onpointerdown={(e) => pinPointerDown(p.id, e)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onPinClick(p);
+                }}
+                oncontextmenu={(e) => openPinMenu(e, p.id)}
+              >
+                <span class="map-pin-icon" aria-hidden="true">
+                  <ICONS.pin size={18} strokeWidth={2} />
+                </span>
+                <span class="map-pin-label">{p.label}</span>
+              </button>
+            {/each}
+
+            {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
+              {@const c = charById(t.charId)}
+              {#if c}
+                {@const pUrl = portraitUrl(c.portrait)}
+                {@const tokSize = tokenSizePx(c)}
+                {@const hpPct = hpPercent(c)}
+                {@const hpState = hpPct === null ? null : hpPct >= 70 ? 'ok' : hpPct >= 30 ? 'mid' : 'low'}
+                {@const ini = initiativeScore(c.id)}
+                {@const down = c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+                <div
+                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
+                  class:token-dead={hpPct !== null && hpPct <= 0}
+                  class:token-down={down}
+                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
+                  role="button"
+                  tabindex="0"
+                  aria-label={tokenTitle(c)}
+                  title={tokenTitle(c)}
+                  onpointerdown={(e) => tokenPointerDown(tokenId, e)}
+                  onclick={() => tokenClick(c.id)}
+                  onkeydown={(e) => tokenKeydown(c.id, e)}
+                  onpointermove={(e) => onTokenHover(c.id, e)}
+                  onpointerleave={() => {
+                    if (preview) preview = null;
+                  }}
+                  oncontextmenu={(e) => openTokenMenu(e, c.id, c.kind)}
+                >
+                  {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
+                  {#if ini !== null}
+                    <span class="token-ini" class:is-turn={activeCharId === c.id}>{ini}</span>
+                  {/if}
+                  <div class="token-foot">
+                    {#if hpState}
+                      <span class="token-hp hp-{hpState}"><span class="token-hp-fill" style="width: {hpPct}%;"></span></span>
+                    {/if}
+                    <span class="token-label">{c.name}</span>
+                  </div>
+                </div>
+              {/if}
+            {/each}
+
+            {#each store.pings as p (p.id)}
+              <div class="ping" style="left: {p.x}%; top: {p.y}%;"></div>
+            {/each}
+            </div>
+          </div>
+
+          <div
+            class="map-hud"
+            role="toolbar"
+            aria-label="Vue de la carte"
+            tabindex="-1"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => e.stopPropagation()}
+            ondblclick={(e) => e.stopPropagation()}
+          >
+            <Tooltip label="Dézoomer">
+              {#snippet children({ props })}
+                <button {...props} onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
+              {/snippet}
+            </Tooltip>
+            <Tooltip label="Revenir à la carte entière">
+              {#snippet children({ props })}
+                <button
+                  {...props}
+                  class="hud-fit"
+                  class:off={camera.zoom === 1 && camera.panX === 0 && camera.panY === 0}
+                  onclick={resetView}>{Math.round(camera.zoom * 100)} %</button
+                >
+              {/snippet}
+            </Tooltip>
+            <Tooltip label="Zoomer">
+              {#snippet children({ props })}
+                <button {...props} onclick={() => zoomAtCenter(1.3)}>+</button>
+              {/snippet}
+            </Tooltip>
+          </div>
+        {/if}
+      </main>
+    </div>
+    <!-- /couche carte -->
+
+  <!-- Couche chrome : la carte est l'application, l'UI est une surimpression.
+       `pointer-events` est porté par chaque élément, pas par la couche. -->
+  <div class="layer-chrome">
   <!-- Barre de session -->
   <header class="session-bar">
-    <div class="session-title">
-      <span class="campaign-name">{campaignName || '…'}</span>
-      <span class="session-hint">Séance en cours · double-clic sur la carte : ping</span>
-    </div>
     <div class="mode-toggle">
       <button class="mode-btn {store.state.mode === 'exploration' ? 'exp-active' : ''}" onclick={() => setMode('exploration')}>Exploration</button>
       <button class="mode-btn {store.state.mode === 'combat' ? 'combat-active' : ''}" onclick={() => setMode('combat')}>Combat</button>
     </div>
-    <a href="/compendium?campaign={campaignId}" class="compendium-link">Compendium</a>
     <div class="grow"></div>
-    <div class="quick-dice">
-      <span class="qd-label">Lancer</span>
-      {#each diceTypes as d (d)}
-        {#if d === 20}
-          <button class="qd-btn d20" onclick={() => quickRoll(d)}>d20</button>
-        {:else}
-          <button class="qd-btn" onclick={() => quickRoll(d)}>d{d}</button>
-        {/if}
-      {/each}
-    </div>
-    <div class="v-sep"></div>
-    <div class="presence">
-      {#each store.presence as p, i (p.userId + ':' + i)}
-        <span class="presence-chip" style="border-color: {p.color};">{p.name}</span>
-      {/each}
-    </div>
+    <WidgetBar {isMj} />
   </header>
 
-  <!-- Corps: compagnie | carte | panneau -->
-  <div class="table-body">
-    <!-- Compagnie -->
-    <aside class="compagnie">
-      <div class="compagnie-title">La compagnie</div>
+  {#if targetCard}
+    <TargetFrame
+      card={targetCard}
+      canClose={isMj}
+      onClose={() => sendWs({ type: 'target.set', charId: null })}
+    />
+  {/if}
+
+  <TopActions
+    {isMj}
+    onCommands={() => (paletteOpen = true)}
+    onCompendium={() => openCompendium()}
+    onDashboard={() => setPanelOpen('dashboard', !panelsOpen.dashboard)}
+    onHelp={() => (helpOpen = true)}
+  />
+
+  <DiceButton
+    lastResult={diceHistory[0]?.total ?? null}
+    onOpen={() => togglePanel('dice')}
+  />
+
+  {#if groupPj.length > 0 || groupPnj.length > 0}
+    <div class="group-rail" aria-label="Compagnie">
+      {#each groupPj as c (c.id)}
+        <GroupFrame
+          card={c}
+          {isMj}
+          canHeal={isMj || c.ownerId === session?.user.id}
+          presentColor={presentColorFor(c)}
+          isActive={activeCharId === c.id}
+          hasToken={!!store.state.tokens[c.id]}
+          down={c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+          onActivate={() => groupActivate(c)}
+          onFocusOrPlace={() => groupFocusOrPlace(c)}
+          onContextMenu={(e) => openTokenMenu(e, c.id, c.kind)}
+          onHpDelta={(d) => pvDelta(c.id, d)}
+          onRemoveCondition={(cond) => removeCondition(c.id, cond)}
+        />
+      {/each}
+      {#if groupPnj.length > 0}
+        <div class="group-sub">PNJ présents</div>
+        {#each groupPnj as c (c.id)}
+          <GroupFrame
+            card={c}
+            {isMj}
+            canHeal={isMj || c.ownerId === session?.user.id}
+            presentColor={presentColorFor(c)}
+            isActive={activeCharId === c.id}
+            hasToken
+            down={c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
+            onActivate={() => groupActivate(c)}
+            onFocusOrPlace={() => groupFocusOrPlace(c)}
+            onContextMenu={(e) => openTokenMenu(e, c.id, c.kind)}
+            onHpDelta={(d) => pvDelta(c.id, d)}
+            onRemoveCondition={(cond) => removeCondition(c.id, cond)}
+          />
+        {/each}
+      {/if}
+    </div>
+  {/if}
+
+    <!-- Compagnie : panneau flottant, déplaçable et redimensionnable (Lot 5). -->
+    {#if panelsOpen.compagnie}
+    <Panel
+      id="compagnie"
+      title="Compagnie"
+      campaignId={campaignId}
+      icon={ICONS.library}
+      onClose={() => setPanelOpen('compagnie', false)}
+      closeLabel="Fermer la compagnie"
+      initial={{ x: 16, y: 56, w: 288, h: Math.min(640, innerHeight - 200) }}
+      class="compagnie"
+    >
+      <div class="panel-body scroll-area" use:scrollArea>
       {#if pjCards.length === 0}
         <div class="compagnie-empty">Aucun personnage joueur pour l'instant.</div>
       {/if}
@@ -1123,7 +3048,7 @@
           </div>
           <div class="card-row">
             <div class="card-sub">{c.sub}</div>
-            <a href={`/characters/${c.id}`} class="sheet-link">Feuille</a>
+            <button class="sheet-link" onclick={() => openSheet(c.id)}>Feuille</button>
           </div>
           <div class="hp-row">
             <div class="hp-bar-bg"><div class="hp-bar-fill" style="width: {c.pvMax && c.pvMax > 0 ? Math.max(0, Math.min(100, ((c.pv ?? 0) / c.pvMax) * 100)) : 0}%;"></div></div>
@@ -1135,12 +3060,22 @@
           <div class="card-row stats">
             <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
           </div>
+          {#if isMj}
+            <div class="card-row size-row">
+              <span class="size-label">Taille du pion</span>
+              <select class="size-select" value={String(c.tokenScale)} onchange={(e) => setTokenScale(c.id, e)}>
+                {#each TOKEN_SCALES as s (s)}
+                  <option value={String(s)}>{scaleLabel(s)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           {#if isMj && activeMap && !hasToken(c.id)}
             <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)} onOpen={() => openCompendium('etats', slugify(cond))}>
                 <span
                   class="cond-chip"
                   role={isMj ? 'button' : undefined}
@@ -1190,12 +3125,22 @@
               <span>PV {c.pv ?? "–"}/{c.pvMax ?? "–"}</span><span>Init +{c.initiativeBonus}</span>
             </div>
           {/if}
+          {#if isMj}
+            <div class="card-row size-row">
+              <span class="size-label">Taille du pion</span>
+              <select class="size-select" value={String(c.tokenScale)} onchange={(e) => setTokenScale(c.id, e)}>
+                {#each TOKEN_SCALES as s (s)}
+                  <option value={String(s)}>{scaleLabel(s)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           {#if isMj && activeMap && !hasToken(c.id)}
             <button class="place-btn" onclick={() => placeOnMap(c.id)}>Placer sur la carte</button>
           {/if}
           <div class="cond-row">
             {#each c.conditions as cond (cond)}
-              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)}>
+              <CompendiumTooltip campaign={campaignId} category="etats" slug={slugify(cond)} onOpen={() => openCompendium('etats', slugify(cond))}>
                 <span class="cond-chip">{cond}</span>
               </CompendiumTooltip>
             {/each}
@@ -1210,231 +3155,313 @@
           </div>
         </div>
       {/each}
-    </aside>
+      </div>
+    </Panel>
+    {/if}
 
-    <!-- Carte -->
-    <main class="map-area">
-      {#if store.state.mode === 'combat' && store.state.combat}
-        <div class="combat-bandeau">
-          <span class="combat-title">Initiative</span>
-          {#each initChips as e, i (e.id)}
-            <span class="init-chip {activeCharId === e.id ? 'active' : ''}" style="border-radius: {i % 2 ? '3px 12px 3px 10px' : '10px 3px 12px 3px'};">
-              {e.score !== undefined ? `${e.score} · ` : ''}{e.c?.name}
-            </span>
-          {/each}
+      {#if store.state.mode === 'combat' && store.state.combat && panelsOpen.initiative}
+        <Panel
+          id="initiative"
+          title={store.state.combat.phase === 'run'
+            ? `Initiative · round ${store.state.combat.round}`
+            : 'Initiative · à vos d20'}
+          campaignId={campaignId}
+          icon={ICONS.attack}
+          onClose={() => setPanelOpen('initiative', false)}
+          closeLabel="Fermer l'initiative"
+          initial={{
+            x: Math.max(16, innerWidth - 340 - 276),
+            y: 112,
+            w: 264,
+            h: Math.min(560, innerHeight - 236),
+          }}
+          class="initiative-panel"
+        >
           {#if store.state.combat.phase === 'init'}
-            {#each pendingInit as pid (pid)}
-              {@const pc = charById(pid)}
-              {#if pc}
-                <button
-                  class="roll-init-btn {canRollInitiative(pid) ? '' : 'waiting'}"
-                  disabled={!canRollInitiative(pid)}
-                  onclick={() => rollInitiative(pid)}
-                >{canRollInitiative(pid) ? `${pc.name} lance son initiative` : `${pc.name} n'a pas encore lancé…`}</button>
-              {/if}
-            {/each}
+            <div class="init-pending">
+              {#each pendingInit as pid (pid)}
+                {@const pc = charById(pid)}
+                {#if pc}
+                  <button
+                    class="roll-init-btn {canRollInitiative(pid) ? '' : 'waiting'}"
+                    disabled={!canRollInitiative(pid)}
+                    onclick={() => rollInitiative(pid)}
+                  >{canRollInitiative(pid) ? `${pc.name} lance son initiative` : `${pc.name} n'a pas encore lancé…`}</button>
+                {/if}
+              {/each}
+            </div>
           {/if}
-          <div class="spacer"></div>
-          {#if store.state.combat.phase === 'run'}
-            <span class="round-label">round {store.state.combat.round}</span>
-          {:else}
-            <span class="round-label">à vos d20</span>
-          {/if}
-          {#if isMj && store.state.combat.phase === 'run'}
-            <button class="next-turn-btn" onclick={combatNext}>Tour suivant →</button>
-          {/if}
-        </div>
-      {:else}
-        <div class="map-header">
-          <span class="map-name">{activeMap?.name ?? 'Aucune carte sélectionnée'}</span>
-          <span class="explore-label">Mode exploration — déplacez-vous librement</span>
-          <div class="spacer"></div>
-          <span class="scale-label">1 case ≈ 1,50 m</span>
-        </div>
-      {/if}
 
-      {#if isMj}
-        <div class="mj-toolbar">
-          <span class="mj-label">Outils du MJ</span>
-          <MapManager {campaignId} {maps} activeMapId={store.state.mapId} onPick={selectMap} onChanged={refreshMaps} />
-          <NpcLibrary {campaignId} onPlace={(tpl, count) => {
-            tool = 'move';
-            pendingPlace = { templateId: tpl.id, name: tpl.name, count };
-          }} />
-          <div class="tsep"></div>
-          <button
-            class="tool-btn"
-            class:active={tool === 'hand'}
-            title="Raccourci : H —glisser pour déplacer la carte"
-            onclick={() => toolSelect('hand')}>Main</button
-          >
-          <button class="tool-btn {tool === 'move' ? 'active' : ''}" title="Raccourci : V" onclick={() => toolSelect('move')}>Déplacer</button>
-          <button class="tool-btn {tool === 'pnj' ? 'active' : ''}" title="Raccourci : P" onclick={() => toolSelect('pnj')}>+ PNJ</button>
-          {#if tool === 'pnj'}
-            <input class="npc-input" bind:value={npcName} placeholder="nom" />
-            <input class="npc-input narrow" type="number" bind:value={npcPv} title="PV" />
-            <input class="npc-input narrow" type="number" bind:value={npcCa} title="CA" />
-            <input class="npc-input narrow" type="number" bind:value={npcInit} title="Init" />
-            <button
-              class="ghost-btn lib-toggle"
-              class:on={npcSaveAsTemplate}
-              title="Enregistrer aussi dans la bibliothèque de PNJ"
-              onclick={() => (npcSaveAsTemplate = !npcSaveAsTemplate)}
-            >→ bibliothèque</button>
-          {/if}
-          <button class="tool-btn {tool === 'marker' ? 'active' : ''}" title="Raccourci : R" onclick={() => toolSelect('marker')}>Repère</button>
-          {#if tool === 'marker'}
-            <input class="marker-input" bind:value={markerText} placeholder="texte du repère…" />
-          {/if}
-          <button class="ghost-btn danger" onclick={clearMarkers}>Effacer les repères</button>
-          <div class="tsep"></div>
-          <button class="tool-btn {tool === 'fog' ? 'active' : ''}" title="Raccourci : B" onclick={fogToggle}>Brouillard</button>
-          {#if fogOn}
-            <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
-            <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
-          {/if}
-          {#if pendingPlace}
-            <span class="tool-hint">Cliquez sur la carte pour poser {pendingPlace.count > 1 ? `${pendingPlace.count} × ` : ''}{pendingPlace.name} — Échap pour annuler</span>
-          {:else if tool === 'pnj' || tool === 'marker'}
-            <span class="tool-hint">Cliquez sur la carte pour placer</span>
-          {/if}
-          {#if tool === 'fog' && fogOn}
-            <span class="tool-hint">Glissez sur la carte pour dévoiler — invisible pour les joueurs</span>
-          {/if}
-        </div>
-      {/if}
-
-      <div
-        class="map-frame"
-        bind:this={frameRef}
-        role="region"
-        aria-label="Carte de jeu — molette pour zoomer, clic droit ou outil Main pour déplacer la carte"
-        class:panning={!!panning}
-        onpointerdown={onFramePointerDown}
-        onpointermove={onFramePointerMove}
-        onpointerup={onFramePointerUp}
-        onpointercancel={onFramePointerUp}
-        oncontextmenu={onFrameContextMenu}
-      >
-        {#if !activeMap}
-          <div class="map-placeholder">
-            {#if isMj}Créez ou sélectionnez une carte ci-dessus.{:else}Le MJ n'a pas encore choisi de carte.{/if}
-          </div>
-        {:else}
-          <div
-            class="map-zoom"
-            style="transform: translate({viewPanX}px, {viewPanY}px) scale({viewZoom})"
-          >
-            <div
-              bind:this={mapContainer}
-              class="map-surface"
-              class:map-surface--fitted={!!fittedSize}
-              class:map-surface--fill={!fittedSize}
-              class:cursor-hand={tool === 'hand'}
-              style={fittedSize ? `width: ${fittedSize.w}px; height: ${fittedSize.h}px;` : ''}
-              class:cursor-fog={isMj && tool === 'fog'}
-              class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
-              onpointerdown={onMapPointerDown}
-              onpointermove={onMapPointerMove}
-              onpointerup={onMapPointerUp}
-              onpointerleave={onMapPointerUp}
-              onclick={onMapClick}
-              ondblclick={onMapDblClick}
-            >
-            {#if activeMap.hasImage}
-              <img class="map-img" src={api.maps.imageUrl(activeMap.id)} alt="" draggable="false" onload={onMapImageLoad} />
-            {/if}
-
-            {#if activeGridSize}
+          <div class="init-list scroll-area" use:scrollArea>
+            {#each initChips as e, i (e.id)}
+              {@const c = e.c}
+              {@const pct = c && c.pv !== null && c.pvMax !== null && c.pvMax > 0
+                ? Math.max(0, Math.min(100, (c.pv / c.pvMax) * 100))
+                : null}
+              {@const down = pct !== null && pct <= 0}
               <div
-                class="map-grid"
-                class:map-grid--overlay={activeMap.hasImage}
-                class:map-grid--tinted={!!activeGridColor}
-                style="--map-grid-size: {activeGridSize}px; --map-grid-color: {activeGridColor ?? 'var(--map-line)'}"
-              ></div>
-            {/if}
-
-            {#if fogOn}
-              <canvas bind:this={fogCanvas} class="fog-canvas" style="opacity: {isMj ? 0.45 : 1};"></canvas>
-            {/if}
-
-            {#each displayMarkers as m (m.id)}
-              <div
-                class="marker"
-                style="left: {m.x}%; top: {m.y}%;"
-                onpointerdown={(e) => markerPointerDown(m.id, e)}
-                role={isMj ? 'button' : undefined}
-                tabindex={isMj ? 0 : undefined}
+                class="init-row"
+                class:active={activeCharId === e.id}
+                class:defeated={down}
+                role="button"
+                tabindex="0"
+                data-name={c?.name ?? ''}
+                title="Recentrer la carte sur ce pion"
+                onclick={() => focusToken(e.id)}
+                onkeydown={(ev) => {
+                  if (ev.key === 'Enter') focusToken(e.id);
+                }}
               >
-                <span class="marker-flag">⚑ {m.text}</span>
-                {#if isMj}
-                  <span class="marker-remove" onpointerdown={(e) => markerRemove(m.id, e)}>✕</span>
+                {#if c && portraitUrl(c.portrait)}
+                  <img class="init-portrait" src={portraitUrl(c.portrait)} alt="" draggable="false" />
+                {:else}
+                  <span class="init-initial" style="--token-color: {c?.color ?? 'var(--accent)'};">
+                    {(c?.name ?? '?').slice(0, 1).toUpperCase()}
+                  </span>
+                {/if}
+                <span class="init-body">
+                  <span class="init-top">
+                    <span class="init-name">{c?.name}</span>
+                    {#if c && pct !== null}<span class="init-pv">{c.pv} / {c.pvMax}</span>{/if}
+                  </span>
+                  {#if pct !== null}
+                    <span class="init-hp">
+                      <span class="init-hp-fill {pct >= 70 ? 'ok' : pct >= 30 ? 'mid' : 'low'}" style="width: {pct}%;"></span>
+                    </span>
+                  {/if}
+                </span>
+                {#if down}<span class="init-down">vaincu</span>{/if}
+                <span class="init-score">{e.score ?? '—'}</span>
+                {#if isMj && store.state.combat.phase === 'run' && store.state.combat.order}
+                  <span class="init-move">
+                    <Tooltip label="Monter dans l'initiative" side="left">
+                      {#snippet children({ props })}
+                        <button
+                          {...props}
+                          type="button"
+                          aria-label="Monter {c?.name}"
+                          disabled={i === 0}
+                          onclick={(ev) => {
+                            ev.stopPropagation();
+                            reorderCombat(e.id, true);
+                          }}>▲</button
+                        >
+                      {/snippet}
+                    </Tooltip>
+                    <Tooltip label="Descendre dans l'initiative" side="left">
+                      {#snippet children({ props })}
+                        <button
+                          {...props}
+                          type="button"
+                          aria-label="Descendre {c?.name}"
+                          disabled={i === initChips.length - 1}
+                          onclick={(ev) => {
+                            ev.stopPropagation();
+                            reorderCombat(e.id, false);
+                          }}>▼</button
+                        >
+                      {/snippet}
+                    </Tooltip>
+                  </span>
                 {/if}
               </div>
             {/each}
-
-            {#each Object.entries(displayTokens) as [tokenId, t] (tokenId)}
-              {@const c = charById(t.charId)}
-              {#if c}
-                {@const pUrl = portraitUrl(c.portrait)}
-                <div
-                  class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
-                  style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; width: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; height: {store.settings.tokenSize + (pUrl ? 8 : 0)}px; font-size: {Math.round(store.settings.tokenSize * 0.42)}px;"
-                  title={tokenTitle(c)}
-                  onpointerdown={(e) => tokenPointerDown(tokenId, e)}
-                  oncontextmenu={(e) => onTokenContextMenu(e, c.id, c.kind)}
-                >
-                  {#if pUrl}<img class="token-img" src={pUrl} alt="" draggable="false" />{:else}{c.name.slice(0, 1).toUpperCase()}{/if}
-                  <span class="token-label">{c.name}</span>
-                </div>
-              {/if}
-            {/each}
-
-            {#each store.pings as p (p.id)}
-              <div class="ping" style="left: {p.x}%; top: {p.y}%;"></div>
-            {/each}
-            </div>
           </div>
 
-          <div
-            class="map-hud"
-            role="toolbar"
-            aria-label="Vue de la carte"
-            tabindex="-1"
-            onpointerdown={(e) => e.stopPropagation()}
-          >
-            <button
-              class="hud-hand"
-              class:on={tool === 'hand'}
-              title="Déplacer la carte — raccourci H, ou glissez au clic droit"
-              aria-pressed={tool === 'hand'}
-              onclick={() => toolSelect('hand')}>✋</button
-            >
-            <button title="Dézoomer" onclick={() => zoomAtCenter(1 / 1.3)}>−</button>
-            <button
-              class="hud-fit"
-              class:off={viewZoom === 1 && viewPanX === 0 && viewPanY === 0}
-              title="Revenir à la carte entière"
-              onclick={resetView}>{Math.round(viewZoom * 100)}%</button
-            >
-            <button title="Zoomer" onclick={() => zoomAtCenter(1.3)}>+</button>
+          {#if isMj && store.state.combat.phase === 'run'}
+            <button class="next-turn-btn" onclick={combatNext}>Tour suivant →</button>
+          {/if}
+        </Panel>
+      {/if}
+
+      <!-- Barre d'outils ancrée en bas, centrée, sortie par priorité (Lot 2). -->
+      <div class="toolbar-row" use:onToolbarResize>
+        {#if pendingPlace || (isMj && (tool === 'pnj' || tool === 'marker' || (tool === 'fog' && fogOn)))}
+          <div class="tool-hint-chip">
+            {#if pendingPlace}
+              Cliquez sur la carte pour poser {pendingPlace.count > 1 ? `${pendingPlace.count} × ` : ''}{pendingPlace.name} — Échap pour annuler
+            {:else if tool === 'pnj' || tool === 'marker'}
+              Cliquez sur la carte pour placer
+            {:else}
+              Glissez sur la carte pour dévoiler — invisible pour les joueurs
+            {/if}
           </div>
         {/if}
-      </div>
-    </main>
+        <div class="mj-toolbar surface-raised">
+          {#if isMj}
+            <div class="history-group" role="group" aria-label="Historique">
+              <Tooltip label="Annuler" kbd="Ctrl/⌘ Z">
+                {#snippet children({ props })}
+                  <button
+                    {...props}
+                    class="history-btn"
+                    type="button"
+                    disabled={!store.history.canUndo || historyBusy}
+                    aria-label="Annuler"
+                    onclick={doUndo}
+                  >
+                    <ICONS.undo size={18} strokeWidth={2} />
+                  </button>
+                {/snippet}
+              </Tooltip>
+              <Tooltip label="Rétablir" kbd="Ctrl/⌘ ⇧ Z">
+                {#snippet children({ props })}
+                  <button
+                    {...props}
+                    class="history-btn"
+                    type="button"
+                    disabled={!store.history.canRedo || historyBusy}
+                    aria-label="Rétablir"
+                    onclick={doRedo}
+                  >
+                    <ICONS.redo size={18} strokeWidth={2} />
+                  </button>
+                {/snippet}
+              </Tooltip>
+            </div>
+            <span class="tsep"></span>
+          {/if}
+          {#if isMj && toolbarFit.overflow.length > 0}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger class="tool-more" aria-label="Autres outils">⋯</DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content {...surfaceProps('overlay', 'tool-overflow')} side="top" sideOffset={8}>
+                  {#each toolbarFit.overflow as item (item.id)}
+                    <DropdownMenu.Item class="tool-overflow-item" onSelect={() => runToolbarItem(item.id)}>
+                      {TOOL_FACES[item.id as keyof typeof TOOL_FACES]?.label ?? item.id}
+                    </DropdownMenu.Item>
+                  {/each}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          {/if}
 
-    <!-- Panneau à onglets -->
-    <aside class="panel">
-      <div class="tabs">
-        <button class="tab {activeTab === 'journal' ? 'active' : ''}" onclick={() => (activeTab = 'journal')}>Journal</button>
-        <button class="tab {activeTab === 'dice' ? 'active' : ''}" onclick={() => (activeTab = 'dice')}>Dés</button>
-        <button class="tab {activeTab === 'inv' ? 'active' : ''}" onclick={() => (activeTab = 'inv')}>Inventaire</button>
+          {#if visibleToolIds.includes('hand')}
+            <ToolGroup
+              label="Main"
+              icon="hand"
+              hotkeyLabel="H"
+              active={tool === 'hand'}
+              onselect={() => toolSelect('hand')}
+            />
+          {/if}
+          {#if isMj && visibleToolIds.includes('move')}
+            <ToolGroup
+              label="Déplacer"
+              icon="move"
+              hotkeyLabel="V"
+              active={tool === 'move'}
+              onselect={() => toolSelect('move')}
+            />
+          {/if}
+          {#if isMj && visibleToolIds.includes('pnj')}
+            <ToolGroup
+              label="PNJ"
+              icon="npc"
+              hotkeyLabel="P"
+              active={tool === 'pnj' || !!pendingPlace}
+              onselect={() => toolSelect('pnj')}
+            >
+              {#snippet options()}
+                <span class="opt-title">Nouveau PNJ</span>
+                <label>Nom <input class="npc-input" bind:value={npcName} placeholder="nom" /></label>
+                <label>PV <input class="npc-input narrow" type="number" bind:value={npcPv} /></label>
+                <label>CA <input class="npc-input narrow" type="number" bind:value={npcCa} /></label>
+                <label>Init <input class="npc-input narrow" type="number" bind:value={npcInit} /></label>
+                <button
+                  class="ghost-btn lib-toggle"
+                  class:on={npcSaveAsTemplate}
+                  onclick={() => (npcSaveAsTemplate = !npcSaveAsTemplate)}
+                >→ bibliothèque</button>
+                <span class="opt-hint">Cliquez sur la carte pour poser.</span>
+              {/snippet}
+            </ToolGroup>
+          {/if}
+          {#if isMj && visibleToolIds.includes('marker')}
+            <ToolGroup
+              label="Repère"
+              icon="marker"
+              hotkeyLabel="R"
+              active={tool === 'marker'}
+              onselect={() => toolSelect('marker')}
+            />
+          {/if}
+          {#if isMj && visibleToolIds.includes('fog')}
+            <ToolGroup
+              label="Brouillard"
+              icon="fog"
+              hotkeyLabel="B"
+              active={tool === 'fog'}
+              onselect={fogToggle}
+            >
+              {#snippet options()}
+                <span class="opt-title">Brouillard</span>
+                <div class="opt-row">
+                  <button class="ghost-btn" class:on={fogMode === 'brush'} onclick={() => (fogMode = 'brush')}>Brosse</button>
+                  <button class="ghost-btn" class:on={fogMode === 'rect'} onclick={() => (fogMode = 'rect')}>Rectangle</button>
+                  <button class="ghost-btn" class:on={fogMode === 'lasso'} onclick={() => (fogMode = 'lasso')}>Lasso</button>
+                </div>
+                <div class="opt-row">
+                  <button class="ghost-btn" onclick={fogCover}>Tout recouvrir</button>
+                  <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
+                </div>
+                <span class="opt-hint">Glissez sur la carte pour dévoiler — invisible pour les joueurs.</span>
+              {/snippet}
+            </ToolGroup>
+          {/if}
+
+          {#if isMj}
+            <div class="tsep"></div>
+            <Tooltip label="Bibliothèque (cartes, PNJ, personnages)">
+              {#snippet children({ props })}
+                <button
+                  {...props}
+                  class="asset-btn"
+                  type="button"
+                  aria-label="Bibliothèque"
+                  onclick={() => (assetManagerOpen = true)}
+                >
+                  <ICONS.library size={19} strokeWidth={2} aria-hidden="true" />
+                </button>
+              {/snippet}
+            </Tooltip>
+          {/if}
+        </div>
       </div>
 
-      <!-- Onglet Journal -->
-      {#if activeTab === 'journal'}
+  </div>
+  <!-- /couche chrome -->
+
+
+    <!-- Journal (WindowChat) : fenêtre permanente, bas à gauche. -->
+    {#if panelsOpen.journal}
+    <Panel
+      id="journal"
+      title="Journal"
+      campaignId={campaignId}
+      icon={ICONS.library}
+      onClose={() => setPanelOpen('journal', false)}
+      closeLabel="Fermer le journal"
+      initial={{
+        x: 12,
+        y: Math.max(72, innerHeight - Math.min(420, innerHeight - 420) - 24),
+        w: 420,
+        h: Math.min(420, innerHeight - 420),
+      }}
+      minW={300}
+      minH={220}
+      class="journal-panel"
+    >
         <div class="journal-tab">
-          <div class="journal-list" bind:this={journalEl} onscroll={onJournalScroll}>
+          <div
+            class="journal-list scroll-area"
+            role="log"
+            aria-live="polite"
+            aria-label="Journal de la séance"
+            bind:this={journalEl}
+            onscroll={onJournalScroll}
+            use:scrollArea
+          >
             {#if hasMoreOlder}
               <button class="older-btn" disabled={loadingOlder} onclick={loadOlder}>
                 {loadingOlder ? '…' : 'Entrées antérieures'}
@@ -1470,10 +3497,11 @@
                 {:else if entry.kind === 'share'}
                   <span class="journal-system">✦ {entry.who ?? 'Le MJ'} a partagé</span>
                   {#if entry.ref?.type === 'compendium'}
-                    <a
+                    {@const ref = entry.ref}
+                    <button
                       class="share-chip"
-                      href="/compendium?campaign={campaignId}&cat={entry.ref.category}&slug={entry.ref.slug}"
-                    >{entry.ref.title ?? entry.text}</a>
+                      onclick={() => openCompendium(ref.category, ref.slug)}
+                    >{ref.title ?? entry.text}</button>
                   {:else}
                     <span class="journal-text">{entry.text}</span>
                   {/if}
@@ -1487,33 +3515,67 @@
             </button>
           {/if}
           <div class="chat-input-row">
-            <SketchyInput
+            <input
+              class="chat-input"
               bind:value={chatText}
               placeholder="Parler, ou /1d20+5, /caracs…"
               onkeydown={(e) => e.key === 'Enter' && sendChat()}
-              class="chat-input"
             />
-            <Button variant="primary" onclick={sendChat}>➤</Button>
+            <button class="chat-send" type="button" aria-label="Envoyer" onclick={sendChat}>→</button>
           </div>
         </div>
-      {/if}
+    </Panel>
+    {/if}
 
-      <!-- Onglet Dés -->
-      {#if activeTab === 'dice'}
-        <div class="dice-tab">
+    <!-- Dés (DicePad) : ancré au-dessus du DiceButton, bas à droite. -->
+    {#if panelsOpen.dice}
+    <Panel
+      id="dice"
+      title="Dés"
+      campaignId={campaignId}
+      icon={ICONS.dice}
+      onClose={() => setPanelOpen('dice', false)}
+      closeLabel="Fermer les dés"
+      initial={{
+        x: Math.max(16, innerWidth - 344 - 20),
+        y: Math.max(72, innerHeight - 386 - 96),
+        w: 344,
+        h: Math.min(386, innerHeight - 140),
+      }}
+      minW={280}
+      minH={260}
+      class="dice-panel"
+    >
+        <div class="dice-tab scroll-area" use:scrollArea>
           <div class="dice-mod-row">
             <span class="mod-label">Modificateur</span>
-            <input class="mod-input" type="number" bind:value={diceMod} min="-20" max="20" />
+            <div class="mod-stepper">
+              <button
+                type="button"
+                aria-label="Diminuer le modificateur"
+                onclick={() => (diceMod = Math.max(-20, diceMod - 1))}>−</button
+              >
+              <span class="mod-value">{diceMod > 0 ? `+${diceMod}` : diceMod}</span>
+              <button
+                type="button"
+                aria-label="Augmenter le modificateur"
+                onclick={() => (diceMod = Math.min(20, diceMod + 1))}>+</button
+              >
+            </div>
           </div>
           <div class="dice-grid">
             {#each diceTypes as d (d)}
-              {#if d === 20}
-                <button class="dice-btn d20" onclick={() => quickRoll(d)}>d20</button>
-              {:else}
-                <button class="dice-btn" onclick={() => quickRoll(d)}>d{d}</button>
-              {/if}
+              <button
+                class="dice-btn"
+                class:selected={diceSides === d}
+                aria-pressed={diceSides === d}
+                onclick={() => (diceSides = d)}>D{d}</button
+              >
             {/each}
           </div>
+          <button class="dice-launch" onclick={() => quickRoll(diceSides)}>
+            Lancer 1d{diceSides} {diceMod >= 0 ? '+' : '−'} {Math.abs(diceMod)}
+          </button>
           <div class="dice-tip">
             Astuce : /2d6+3 pour un jet composé, /4d6b pour biffer le dé le plus bas, /caracs pour
             les six jets de création
@@ -1524,16 +3586,36 @@
               <div class="history-empty">Aucun jet pour l'instant</div>
             {:else}
               {#each diceHistory as h (h.id)}
-                <div class="history-entry">{h.label}</div>
+                <div class="history-entry">
+                  {h.label}{h.total !== null ? ` → ${h.total}` : ' …'}
+                </div>
               {/each}
             {/if}
           </div>
         </div>
-      {/if}
+    </Panel>
+    {/if}
 
-      <!-- Onglet Inventaire -->
-      {#if activeTab === 'inv'}
-        <div class="inv-tab">
+    <!-- Inventaire (WindowInventory) : au-dessus des dés. -->
+    {#if panelsOpen.inventory}
+    <Panel
+      id="inventory"
+      title={`Sac de ${invOwner?.name ?? '…'}`}
+      campaignId={campaignId}
+      icon={ICONS.library}
+      onClose={() => setPanelOpen('inventory', false)}
+      closeLabel="Fermer l'inventaire"
+      initial={{
+        x: Math.max(16, innerWidth - 344 - 20),
+        y: Math.max(72, innerHeight - 386 - 96 - 318 - 14),
+        w: 344,
+        h: Math.min(318, innerHeight - 140),
+      }}
+      minW={300}
+      minH={220}
+      class="inv-panel"
+    >
+        <div class="inv-tab scroll-area" use:scrollArea>
           {#if invGiveTargets.length === 0}
             <p class="inv-placeholder">Inventaire — aucun personnage visible</p>
           {:else}
@@ -1546,20 +3628,43 @@
                   {/each}
                 </select>
               </div>
-            {:else}
-              <div class="inv-owner">{invOwner?.name ?? '—'}</div>
             {/if}
 
             <div class="inv-purse">
-              <span class="coin po">{inv.money.po}<em>po</em></span>
-              <span class="coin pa">{inv.money.pa}<em>pa</em></span>
-              <span class="coin pc">{inv.money.pc}<em>pc</em></span>
+              {#each [
+                { key: 'po' as const, label: 'po', name: "pièce d'or" },
+                { key: 'pa' as const, label: 'pa', name: "pièce d'argent" },
+                { key: 'pc' as const, label: 'pc', name: 'pièce de cuivre' },
+              ] as coin (coin.key)}
+                <span class="coin {coin.key}">
+                  {#if canEditInv}
+                    <button
+                      type="button"
+                      class="coin-btn"
+                      aria-label="Retirer 1 {coin.name} (Maj : 10)"
+                      title="−1 · Maj : −10"
+                      onclick={(e) => invMoneyDelta(coin.key, -1, e.shiftKey)}>−</button
+                    >
+                  {/if}
+                  <span class="coin-value">{inv.money[coin.key]} {coin.label}</span>
+                  {#if canEditInv}
+                    <button
+                      type="button"
+                      class="coin-btn"
+                      aria-label="Ajouter 1 {coin.name} (Maj : 10)"
+                      title="+1 · Maj : +10"
+                      onclick={(e) => invMoneyDelta(coin.key, 1, e.shiftKey)}>+</button
+                    >
+                  {/if}
+                </span>
+              {/each}
             </div>
 
             <ul class="inv-list">
               {#each inv.items as it (it.name)}
                 <li>
-                  <span class="inv-name">{it.name}{#if it.qty > 1}<span class="inv-qty">×{it.qty}</span>{/if}</span>
+                  <span class="inv-name">{it.name}</span>
+                  {#if it.qty > 1}<span class="inv-qty">×{it.qty}</span>{/if}
                   <span class="inv-actions">
                     {#if invGiveTo}
                       <button title="Donner à {store.characters.find((c) => c.id === invGiveTo)?.name}" onclick={() => invGiveItem(it.name)}>→</button>
@@ -1593,124 +3698,338 @@
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPoDraft} placeholder="po" />
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPaDraft} placeholder="pa" />
                   <input class="inv-input narrow" type="number" min="0" bind:value={invPcDraft} placeholder="pc" />
-                  <button class="ghost-btn" disabled={!invGiveTo} onclick={invGiveMoney}>Donner l'argent</button>
                 </div>
+                <button class="inv-give-btn" disabled={!invGiveTo} onclick={invGiveMoney}>
+                  Donner l'argent
+                </button>
               </div>
             {/if}
           {/if}
         </div>
+    </Panel>
+    {/if}
+
+    {#if isMj && panelsOpen.dashboard}
+    <Panel
+      id="dashboard"
+      title="Tableau de bord"
+      campaignId={campaignId}
+      icon={ICONS.dashboard}
+      onClose={() => setPanelOpen('dashboard', false)}
+      closeLabel="Fermer le tableau de bord"
+      initial={{ x: 340, y: 90, w: 336, h: Math.min(560, innerHeight - 240) }}
+      class="dashboard"
+    >
+      <GmDashboard
+        {campaignId}
+        characters={store.characters}
+        tokenCharIds={Object.keys(store.state.tokens)}
+        activeMap={activeMap}
+        onFocus={focusToken}
+        onOpenSheet={openSheet}
+      />
+    </Panel>
+    {/if}
+
+    {#each openSheets as id (id)}
+    <Panel
+      id={`fiche:${id}`}
+      title={charById(id)?.name ?? 'Feuille de personnage'}
+      campaignId={campaignId}
+      onClose={() => closeSheet(id)}
+      closeLabel="Fermer la fiche"
+      initial={{
+        x: 96,
+        y: 64,
+        w: Math.min(1180, innerWidth - 64),
+        h: Math.min(840, innerHeight - 128),
+      }}
+      minW={720}
+      minH={420}
+    >
+      <SheetPanel charId={id} onPvDelta={(d) => pvDelta(id, d)} />
+    </Panel>
+    {/each}
+
+    {#if openPin}
+    <Panel
+      id={`pin:${openPin.id}`}
+      title={openPin.label}
+      campaignId={campaignId}
+      icon={ICONS.pin}
+      onClose={() => (openPinId = null)}
+      closeLabel="Fermer la note"
+      initial={{ x: 380, y: 110, w: 340, h: 320 }}
+      class="pin-panel"
+    >
+      <div class="pin-body scroll-area" use:scrollArea>
+        {#if isMj && pinEdit}
+          <textarea
+            class="pin-edit"
+            bind:value={pinDraft}
+            placeholder="Note (markdown léger : **gras**, *italique*, listes…)"
+            aria-label="Contenu de la note"
+          ></textarea>
+          <div class="pin-actions">
+            <button class="pin-cancel" type="button" onclick={() => (pinEdit = false)}>Annuler</button
+            >
+            <button class="pin-save" type="button" onclick={savePin}>Enregistrer</button>
+          </div>
+        {:else}
+          {#if openPin.text.trim()}
+            <div class="pin-note">{@html renderedPin}</div>
+          {:else}
+            <p class="pin-empty">
+              Note vide.{#if isMj} Cliquez sur Modifier pour l'écrire.{/if}
+            </p>
+          {/if}
+          {#if isMj}
+            <button class="pin-cancel pin-edit-btn" type="button" onclick={startPinEdit}
+              >Modifier</button
+            >
+          {/if}
+        {/if}
+      </div>
+    </Panel>
+    {/if}
+
+  <!-- Couche popups : éléments flottants non portalés (le reste passe par
+       bits-ui + <BitsConfig>, donc dans le top layer). -->
+  <div class="layer-popups">
+  {#if previewChar && preview}
+    <div
+      class="token-preview surface-overlay"
+      style="left: {Math.min(preview.x + 16, innerWidth - 272)}px; top: {Math.min(preview.y + 16, innerHeight - 240)}px;"
+    >
+      <div class="tp-head">
+        {#if portraitUrl(previewChar.portrait)}
+          <img class="tp-portrait" src={portraitUrl(previewChar.portrait)} alt="" draggable="false" />
+        {:else}
+          <span class="tp-initial" style="--token-color: {previewChar.color};">
+            {previewChar.name.slice(0, 1).toUpperCase()}
+          </span>
+        {/if}
+        <span class="tp-id">
+          <span class="tp-name">{previewChar.name}</span>
+          <span class="tp-sub">
+            {previewChar.kind === 'pj' ? previewChar.sub : 'PNJ'} · CA {previewChar.ca}
+          </span>
+        </span>
+      </div>
+      {#if previewChar.pv !== null && previewChar.pvMax !== null && previewChar.pvMax > 0}
+        {@const pct = Math.max(0, Math.min(100, (previewChar.pv / previewChar.pvMax) * 100))}
+        <div class="tp-hp">
+          <div
+            class="tp-hp-fill {pct >= 70 ? 'ok' : pct >= 30 ? 'mid' : 'low'}"
+            style="width: {pct}%;"
+          ></div>
+        </div>
+        <span class="tp-pv">PV {previewChar.pv} / {previewChar.pvMax}</span>
       {/if}
-    </aside>
+      {#if previewChar.conditions.length > 0}
+        <div class="tp-conds">
+          {#each previewChar.conditions as cond (cond)}<span class="tp-cond">{cond}</span>{/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <ContextMenu
+    open={ctxMenu !== null}
+    x={ctxMenu?.x ?? 0}
+    y={ctxMenu?.y ?? 0}
+    items={ctxItems}
+    onOpenChange={(o) => {
+      if (!o) ctxMenu = null;
+    }}
+  />
   </div>
 
-  {#if toast}
-    <div class="toast" role="status">{toast}</div>
+  {#if isMj}
+    <AssetManager
+      open={assetManagerOpen}
+      onOpenChange={(o) => (assetManagerOpen = o)}
+      {campaignId}
+      {maps}
+      activeMapId={store.state.mapId}
+      characters={store.characters}
+      links={store.state.links}
+      tokenCharIds={Object.keys(store.state.tokens)}
+      {isMj}
+      {templatesRevision}
+      onPickMap={selectMap}
+      onNewMap={() => pickFile(IMAGE_ACCEPT, (f) => void createMapFromFile(f))}
+      onPlaceTemplate={(tpl, count) => armTemplate(tpl.id, tpl.name, count)}
+      onPlaceChar={placeCharFromLibrary}
+      onTravelLink={(id) => {
+        sendWs({ type: 'link.travel', id });
+        assetManagerOpen = false;
+      }}
+      onRemoveLink={(id) => sendWs({ type: 'link.remove', id })}
+      onContextMenu={openAssetMenu}
+    />
+  {/if}
+
+  <CompendiumWindow
+    open={compendiumOpen}
+    onOpenChange={(o) => (compendiumOpen = o)}
+    {campaignId}
+    deep={compendiumDeep}
+  />
+
+  {#if prompt}
+    <PromptDialog
+      open={true}
+      title={prompt.title}
+      label={prompt.label}
+      initial={prompt.initial}
+      confirmLabel={prompt.confirmLabel}
+      onOpenChange={(o) => {
+        if (!o) {
+          prompt = null;
+          pendingMarkerPos = null;
+        }
+      }}
+      onConfirm={(v) => prompt?.onSubmit(v)}
+    />
+  {/if}
+
+  {#if confirmState}
+    <ConfirmDialog
+      open={true}
+      title={confirmState.title}
+      message={confirmState.message}
+      confirmLabel={confirmState.confirmLabel}
+      danger={confirmState.danger}
+      onOpenChange={(o) => {
+        if (!o) confirmState = null;
+      }}
+      onConfirm={() => confirmState?.onConfirm()}
+    />
+  {/if}
+
+  {#if editTemplate}
+    <NpcTemplateDialog
+      open={true}
+      template={editTemplate}
+      onOpenChange={(o) => {
+        if (!o) editTemplate = null;
+      }}
+      onSaved={() => {
+        editTemplate = null;
+        templatesRevision += 1;
+        showToast('Modèle enregistré', 'success');
+      }}
+    />
+  {/if}
+
+  <CommandPalette open={paletteOpen} onOpenChange={(o) => (paletteOpen = o)} commands={paletteCommands} />
+  <HotkeyHelp open={helpOpen} onOpenChange={(o) => (helpOpen = o)} {isMj} />
+
+  {#if isMj}
+    <Tutorial open={tutorialOpen} steps={MJ_TUTORIAL_STEPS} onClose={closeTutorial} />
   {/if}
 
   <!-- Dé animé overlay -->
   <DiceOverlay anim={store.diceAnim} />
-
-  {#if ctxMenu}
-    <div
-      class="ctx-menu"
-      bind:this={ctxEl}
-      role="menu"
-      style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;"
-      onclick={(e) => e.stopPropagation()}
-      onpointerdown={(e) => e.stopPropagation()}
-    >
-      {#if ctxMenu.kind === 'pnj'}
-        <button class="ctx-item" onclick={ctxDuplicate}>Dupliquer le PNJ</button>
-      {/if}
-      <button class="ctx-item" onclick={ctxRemoveToken}>Retirer de la carte</button>
-      {#if ctxMenu.kind === 'pnj'}
-        <button class="ctx-item danger" onclick={ctxDeleteNpc}>Supprimer le PNJ</button>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 <style>
   .table-screen {
+    position: fixed;
+    inset: 0;
     height: 100vh;
-    display: flex;
-    flex-direction: column;
+    height: 100dvh;
     overflow: hidden;
     background: var(--bg);
     color: var(--text);
   }
 
+  /* ── Couches (Lot 1) ── */
+  .layer-map {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-map);
+  }
+  .layer-chrome {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .layer-chrome > * {
+    pointer-events: auto;
+  }
+  .layer-popups {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .layer-popups > * {
+    pointer-events: auto;
+  }
+
   /* ── Barre de session ── */
   .session-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-chrome);
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 10px 18px;
-    border-bottom: 2px solid var(--border);
-    background: var(--bg);
-    min-height: 48px;
-    flex: none;
+    gap: 12px;
+    /* Réserve le coin haut-droit aux TopActions (4 carrés, ~202 px). */
+    padding: 8px 226px 8px 14px;
   }
-  .session-title { display: flex; flex-direction: column; }
-  .campaign-name { font-family: var(--font-title); font-size: 20px; line-height: 1.1; color: var(--heading); }
-  .session-hint { font-size: 13px; font-weight: 500; color: var(--accent-text); }
   .grow { flex: 1; }
-  .v-sep { width: 2px; height: 30px; background: var(--border-soft); }
 
-  .mode-toggle { display: flex; margin-left: 10px; }
+  .mode-toggle {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
+  }
   .mode-btn {
-    font-family: var(--font-body); font-size: 13px; padding: 7px 14px;
-    border: 2px solid var(--border); background: var(--panel); color: var(--text-2); cursor: pointer;
+    font-family: var(--font-ui); font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+    padding: 6px 15px; border: none; border-radius: var(--radius-full);
+    background: transparent; color: var(--text-2); cursor: pointer;
   }
-  .mode-btn:first-child { border-right-width: 1px; border-radius: 225px 0 0 12px / 12px 0 0 255px; }
-  .mode-btn:last-child { border-left-width: 1px; border-radius: 0 12px 225px 0 / 0 255px 12px 0; }
-  .mode-btn.exp-active { background: var(--selected); color: var(--heading); }
-  .mode-btn.combat-active { background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
+  .mode-btn:hover { color: var(--heading); }
+  .mode-btn.exp-active { background: var(--surface-raised); color: var(--heading); }
+  .mode-btn.combat-active { background: var(--accent); color: var(--accent-fg); }
 
-  .compendium-link { font-size: 14px; font-weight: 700; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
-  .compendium-link:hover { color: var(--accent-link-hover); }
 
-  .quick-dice { display: flex; gap: 6px; align-items: center; }
-  .qd-label { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
-  .qd-btn {
-    font-family: var(--font-body); font-size: 12.5px; padding: 6px 9px;
-    background: var(--panel); border: 2px solid var(--border);
-    border-radius: 225px 12px 220px 12px / 12px 200px 12px 255px;
-    color: var(--text); cursor: pointer;
+
+  .asset-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .qd-btn:hover { background: var(--selected); color: var(--heading); }
-  .qd-btn.d20 {
-    font-size: 13px; padding: 7px 12px;
-    background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg);
-    border-radius: var(--sketchy-1);
-  }
-  .qd-btn.d20:hover { background: var(--accent-hover); }
+  .asset-btn:hover { color: var(--heading); background: var(--selected); }
 
-  .presence { display: flex; gap: 5px; }
-  .presence-chip {
-    font-size: 11px; font-weight: 500; padding: 2px 8px;
-    background: var(--panel); border: 1.5px solid var(--border); border-radius: 10px 3px 12px 3px;
-    color: var(--text); white-space: nowrap;
-  }
-
-  .table-body {
+  /* ── Panneaux flottants : le chrome est dans <Panel>, ici le contenu. ── */
+  .panel-body {
     flex: 1;
-    display: grid;
-    grid-template-columns: var(--w-compagnie) 1fr var(--w-panel);
-    overflow: hidden;
-    min-height: 0;
-  }
-
-  /* ── Compagnie ── */
-  .compagnie {
-    border-right: 2px solid var(--border);
-    background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
-    padding: 14px 12px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 10px;
     min-height: 0;
+    padding: 10px 12px;
+  }
+  /* ── Compagnie : la surface est le <Panel>, on ne garde que le papier ligné. ── */
+  .compagnie {
+    background: repeating-linear-gradient(var(--bg) 0, var(--bg) 27px, var(--border-soft) 27px, var(--border-soft) 28px);
   }
   .compagnie-title {
     font-family: var(--font-title); font-size: 16px; color: var(--heading);
@@ -1744,7 +4063,11 @@
   .pnj-name { font-size: 15.5px; }
   .card-ca { font-size: 12px; color: var(--text-2); }
   .card-sub { font-size: 11.5px; color: var(--text-2); font-style: italic; }
-  .sheet-link { font-size: 12px; font-weight: 500; color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+  .sheet-link {
+    font-family: var(--font-body); font-size: 12px; font-weight: 500;
+    color: var(--accent-text); text-decoration: none; white-space: nowrap;
+    background: none; border: none; padding: 0; cursor: pointer;
+  }
   .sheet-link:hover { color: var(--accent-link-hover); }
   .stats { font-size: 11.5px; color: var(--text-2); }
 
@@ -1778,6 +4101,13 @@
     border: 2px dashed var(--border); border-radius: 8px; background: transparent; color: var(--text-2);
     cursor: pointer; max-width: 74px;
   }
+  .size-row { align-items: center; justify-content: space-between; gap: 6px; }
+  .size-label { font-size: 11.5px; color: var(--text-3); }
+  .size-select {
+    font-family: var(--font-body); font-size: 12px; padding: 1px 4px;
+    border: 2px dashed var(--border); border-radius: 8px; background: transparent;
+    color: var(--text-2); cursor: pointer;
+  }
   .del-btn {
     font-family: var(--font-body); font-weight: 700; font-size: 10.5px; width: 18px; height: 18px; padding: 0;
     background: transparent; border: 2px dashed var(--border); border-radius: 6px; color: var(--text-2);
@@ -1799,62 +4129,109 @@
   .model-btn:hover { border-color: var(--accent); border-style: solid; color: var(--accent-text); }
   .lib-toggle { border-radius: 10px 3px 12px 3px; }
   .lib-toggle.on { border-color: var(--accent-border); border-style: solid; color: var(--accent-text); background: var(--panel); }
-  .toast {
-    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
-    background: var(--panel); border: 2px solid var(--accent-border);
-    border-radius: 225px 12px 240px 14px/12px 235px 13px 225px;
-    padding: 8px 22px; z-index: 90; text-align: center;
-    font-size: 13.5px; font-weight: 500; color: var(--text);
-    box-shadow: 3px 4px 0 var(--shadow-1);
-  }
-
-  .ctx-menu {
-    position: fixed;
-    z-index: 80;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 14px 4px 16px 5px;
-    box-shadow: 0 10px 30px var(--shadow-2);
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 170px;
-  }
-  .ctx-item {
-    font-family: var(--font-body); font-size: 13px; text-align: left;
-    padding: 6px 10px; background: transparent; border: none; border-radius: 8px;
-    color: var(--text); cursor: pointer;
-  }
-  .ctx-item:hover { background: var(--selected); color: var(--heading); }
-  .ctx-item.danger:hover { background: var(--accent); color: var(--accent-fg); }
-
   /* ── Carte ── */
-  .map-area {
+  .group-rail {
+    position: fixed;
+    top: 72px;
+    left: 12px;
+    width: 312px;
+    max-height: calc(100dvh - 156px);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    min-width: 0;
-    min-height: 0;
+    gap: 14px;
+    padding-right: 4px;
+    z-index: var(--z-chrome);
+    pointer-events: auto;
   }
-  .map-header {
-    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
-    border-bottom: 2px solid var(--border); background: var(--panel); flex: none;
+  .group-sub {
+    font-family: var(--font-body);
+    font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); margin: 2px 0 -4px 14px;
   }
-  .map-name { font-family: var(--font-title); font-size: 17px; color: var(--heading); }
-  .explore-label { font-size: 13px; font-weight: 500; color: var(--text-2); }
-  .scale-label { font-size: 12px; color: var(--text-3); }
-  .spacer { flex: 1; }
 
-  .combat-bandeau {
-    display: flex; align-items: center; gap: 7px; padding: 8px 14px;
-    border-bottom: 2px solid var(--border); background: var(--panel); flex-wrap: wrap; flex: none;
+  /* ── Initiative (panneau flottant, comme Séance) ──────────────── */
+  .initiative-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
-  .combat-title { font-size: 14.5px; font-weight: 700; color: var(--heading); }
-  .init-chip {
-    font-size: 12px; padding: 4px 10px;
-    background: var(--panel); color: var(--text); border: 2px solid var(--border);
+  .init-pending {
+    display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
+    border-bottom: 1.5px solid var(--border-soft); flex: none;
   }
-  .init-chip.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent-border); }
+  .init-pending .roll-init-btn { width: 100%; }
+  .init-list {
+    flex: 1;
+    min-height: 0;
+    display: flex; flex-direction: column; gap: 3px; padding: 8px; overflow-y: auto;
+  }
+  .init-row {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 46px; padding: 4px 6px;
+    border: 1.5px solid transparent; border-left: 3px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+    cursor: pointer;
+  }
+  .init-row:hover { background: var(--surface-raised-hover); }
+  .init-row.active {
+    border-color: var(--accent-border); border-left: 3px solid var(--accent);
+    background: color-mix(in oklab, var(--panel), var(--accent) 12%);
+  }
+  .init-row.defeated { filter: grayscale(0.7); opacity: 0.55; }
+  .init-portrait {
+    width: 34px; height: 34px; flex: none; object-fit: cover;
+    border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
+  }
+  .init-initial {
+    width: 34px; height: 34px; flex: none;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 16px;
+    color: var(--map-token-fg); background: var(--map-token-bg);
+    border: 2px solid var(--token-color, var(--accent)); border-radius: 50%;
+  }
+  .init-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .init-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+  .init-name {
+    font-family: var(--font-ui); font-size: 14px; color: var(--heading);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .init-pv {
+    flex: none;
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+    color: var(--text-2); white-space: nowrap;
+  }
+  .init-hp {
+    display: block; height: 6px; border-radius: 3px;
+    background: #2b2822; border: 1px solid #3a352d; overflow: hidden;
+  }
+  .init-hp-fill { display: block; height: 100%; background: var(--hp-ok); }
+  .init-hp-fill.mid { background: var(--hp-mid); }
+  .init-hp-fill.low { background: var(--hp-low); }
+  .init-down {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--hp-low);
+  }
+  .init-score {
+    flex: none;
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 15px; color: var(--heading);
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+  }
+  .init-move { display: flex; flex-direction: column; gap: 1px; opacity: 0; transition: opacity 0.12s; }
+  .init-row:hover .init-move, .init-row:focus-within .init-move { opacity: 1; }
+  .init-move button {
+    font-size: 8px; line-height: 1; width: 18px; height: 12px; padding: 0;
+    background: transparent; border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text-2); cursor: pointer;
+  }
+  .init-move button:hover:not(:disabled) { background: var(--selected); color: var(--heading); }
+  .init-move button:disabled { opacity: 0.3; cursor: default; }
   .roll-init-btn {
     font-family: var(--font-body); font-size: 12.5px; padding: 5px 12px;
     background: var(--accent); color: var(--accent-fg); border: 2px solid var(--accent-border);
@@ -1864,19 +4241,88 @@
   .roll-init-btn.waiting {
     background: transparent; border: 2px dashed var(--border); color: var(--text-2); cursor: default;
   }
-  .round-label { font-size: 14px; font-weight: 700; color: var(--accent-text); }
   .next-turn-btn {
-    font-family: var(--font-body); font-size: 13px; padding: 6px 14px;
+    flex: none;
+    margin: 8px 10px 10px;
+    font-family: var(--font-body); font-size: 13px; padding: 7px 14px;
     background: var(--selected); color: var(--heading); border: 2px solid var(--border);
-    border-radius: 15px 230px 15px 225px / 225px 15px 255px 15px; cursor: pointer;
+    border-radius: var(--radius-md); cursor: pointer;
   }
   .next-turn-btn:hover { background: var(--accent); border-color: var(--accent-border); }
 
-  .mj-toolbar {
-    display: flex; align-items: center; gap: 6px; padding: 7px 14px;
-    border-bottom: 1px solid var(--border-soft); background: var(--bg); flex-wrap: wrap; flex: none;
+  /* Barre d'outils : rangée pleine largeur (mesure disponible) + barre centrée. */
+  .toolbar-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
   }
-  .mj-label { font-size: 13px; font-weight: 500; color: var(--accent-text); }
+  .toolbar-row > * {
+    pointer-events: auto;
+  }
+  .mj-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    background: var(--sunken);
+    border: 1.5px solid var(--border-default);
+    border-radius: 34px;
+  }
+  .tool-hint-chip {
+    padding: 4px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--accent-text);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-full);
+  }
+  :global(.tool-more) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-h);
+    height: var(--control-h);
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  :global(.tool-more:hover) {
+    color: var(--heading);
+    background: var(--selected);
+  }
+  :global(.tool-overflow) {
+    min-width: 180px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  :global(.tool-overflow-item) {
+    padding: 6px 10px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    outline: none;
+  }
+  :global(.tool-overflow-item[data-highlighted]) {
+    background: var(--selected);
+    color: var(--heading);
+  }
 
   .ghost-btn {
     font-family: var(--font-body); font-size: 13px; font-weight: 500; padding: 3px 11px;
@@ -1885,39 +4331,50 @@
   }
   .ghost-btn:hover { border-color: var(--text-2); color: var(--text); }
   .ghost-btn.danger:hover { border-color: var(--accent-border); color: var(--accent-text); }
-  .tsep { width: 2px; height: 20px; background: var(--border-soft); margin: 0 4px; }
-  .tool-btn {
-    font-family: var(--font-body); font-size: 12px; padding: 4px 11px;
-    border: 2px solid var(--border); border-radius: 225px 8px 220px 8px / 8px 200px 8px 255px;
-    background: var(--panel); color: var(--text-2); cursor: pointer;
+  .tsep { width: 1.5px; height: 26px; background: var(--border-default); margin: 0 4px; }
+  .history-group { display: flex; align-items: center; gap: 2px; }
+  .history-btn {
+    display: grid; place-items: center;
+    width: 40px; height: 40px;
+    background: transparent; border: none; border-radius: var(--radius-md);
+    color: var(--text-2); cursor: pointer;
   }
-  .tool-btn:hover { background: var(--selected); color: var(--heading); }
-  .tool-btn.active { background: var(--selected); color: var(--heading); }
+  .history-btn:hover:not(:disabled) { background: var(--bg); color: var(--heading); }
+  .history-btn:disabled { opacity: 0.35; cursor: default; }
   .npc-input {
     font-family: var(--font-body); font-size: 13px; padding: 3px 9px;
     border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;
     background: var(--panel); color: var(--text); width: 100px;
   }
   .npc-input.narrow { width: 52px; }
-  .marker-input {
-    font-family: var(--font-body); font-size: 13px; font-weight: 500; padding: 3px 9px;
-    border: 2px solid var(--border); border-radius: 10px 3px 10px 3px;
-    background: var(--panel); color: var(--accent-text); width: 150px;
-  }
-  .tool-hint { font-size: 13px; font-weight: 500; color: var(--accent-text); }
 
   .map-frame {
-    flex: 1;
-    display: grid;
-    place-items: center;
-    margin: 14px;
-    min-height: 0;
-    position: relative;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
     touch-action: none;
   }
-  .map-frame.panning { cursor: grabbing; }
-  .map-placeholder { color: var(--text-2); font-style: italic; }
+  /* Couche gestes : sœur du contenu transformé, jamais son ancêtre. Elle
+     reçoit le panoramique et les clics dans le vide ; les pions et repères la
+     surplombent en `pointer-events: auto`. */
+  .map-bg {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-map);
+    touch-action: none;
+    cursor: default;
+  }
+  .map-bg.panning { cursor: grabbing; }
+  .map-bg.cursor-fog { cursor: crosshair; }
+  .map-bg.cursor-place { cursor: copy; }
+  .map-bg.cursor-hand { cursor: grab; }
+  .map-placeholder {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    color: var(--text-2);
+    font-style: italic;
+  }
 
   /* Couche de transformation : c'est ELLE qui porte le zoom/panoramique. Un
      transform ne change pas la mise en page, donc la surface garde sa taille
@@ -1926,51 +4383,66 @@
   .map-zoom {
     position: absolute;
     inset: 0;
+    z-index: var(--z-grid);
     display: grid;
     place-items: center;
     transform-origin: 0 0;
+    /* Le zoom/pan est un changement de transform à chaque frame : sans cette
+     * promotion, Chrome repeint et re-rastérise TOUT le sous-arbre à chaque
+     * palier (mesuré : 4,3 s de RasterTask sur un zoom, 14 tuiles/frame), ce
+     * qui sature les threads raster (Penpot est fluide car il n'a qu'un
+     * canvas). Avec la promotion, le compositor met le raster existant à
+     * l'échelle pendant le geste et le re-rastérise au repos. */
+    will-change: transform;
+    pointer-events: none;
   }
+  /* Le contenu de la carte ne reçoit pas les gestes — c'est `.map-bg` qui les
+     porte — sauf les objets interactifs : pions et repères. */
+  .token,
+  .marker,
+  .map-link,
+  .map-pin { pointer-events: auto; }
+  /* Outil Main : les pions ne doivent pas intercepter le geste, il part du fond. */
+  .map-zoom.tool-hand .token,
+  .map-zoom.tool-hand .marker,
+  .map-zoom.tool-hand .map-link,
+  .map-zoom.tool-hand .map-pin { pointer-events: none; }
 
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
     position: absolute;
-    right: 10px;
-    bottom: 10px;
-    z-index: 30;
+    right: 100px;
+    bottom: 16px;
+    z-index: var(--z-map-hud);
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 3px;
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 12px 4px 13px 4px;
+    height: 56px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    background: var(--surface-canvas);
+    border: 1.5px solid var(--border-default);
+    border-radius: 28px;
     box-shadow: 0 4px 14px var(--shadow-2);
   }
+
   .map-hud button {
-    font-family: var(--font-body);
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: 16px;
     font-weight: 700;
-    min-width: 26px;
-    height: 24px;
-    padding: 0 5px;
+    min-width: 38px;
+    height: 38px;
+    padding: 0 8px;
     background: transparent;
     border: none;
-    border-radius: 8px 3px 8px 3px;
-    color: var(--text-2);
+    border-radius: var(--radius-full);
+    color: #d8d0bc;
     cursor: pointer;
   }
-  .map-hud button:hover { background: var(--bg); color: var(--text); }
-  .map-hud .hud-fit { color: var(--accent-text); font-size: 11.5px; }
+  .map-hud button:hover { background: var(--surface-raised); color: var(--heading); }
+  .map-hud .hud-fit { color: #d8d0bc; font-size: 16px; }
   .map-hud .hud-fit.off { opacity: 0.55; }
-  /* bouton « Main » : disponible pour tout le monde, contrairement à la barre
-     d'outils MJ. S'allume quand le panoramique au clic gauche est actif. */
-  .map-hud .hud-hand { font-size: 13px; opacity: 0.6; }
-  .map-hud .hud-hand:hover { opacity: 1; }
-  .map-hud .hud-hand.on {
-    opacity: 1;
-    background: var(--accent);
-    color: var(--heading);
-  }
+
 
   .map-surface {
     position: relative;
@@ -1983,11 +4455,12 @@
        z-index layers of tokens/fog from interleaving with the rest of the page). */
     isolation: isolate;
     border: 2px solid var(--border);
-    border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+    border-radius: 0;
     overflow: hidden;
     background: var(--map-bg);
-    cursor: default;
     touch-action: none;
+    /* Les gestes partent de `.map-bg` ; seuls les pions et repères réactivent. */
+    pointer-events: none;
   }
   /* Surface dimensionnée en JS (fit du ratio de l'image) : on la voit
      TOUJOURS en entier — aucun crop haut/bas ni gauche/droite. */
@@ -2002,9 +4475,6 @@
     width: 100%;
     height: 100%;
   }
-  .map-surface.cursor-fog { cursor: crosshair; }
-  .map-surface.cursor-place { cursor: copy; }
-  .map-surface.cursor-hand { cursor: grab; }
   .map-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
   .map-grid {
     position: absolute; inset: 0;
@@ -2022,7 +4492,7 @@
       linear-gradient(90deg, var(--map-grid-line, rgba(255, 255, 255, 0.45)) 1px, transparent 1px);
     mix-blend-mode: difference;
     pointer-events: none;
-    z-index: 1;
+    z-index: var(--z-grid);
   }
   /* Teinte choisie par le MJ : on rend la couleur demandée, SANS le blend —
      « difference » l'inverserait (une teinte rouge ressortirait cyan sur une
@@ -2031,11 +4501,26 @@
     --map-grid-line: color-mix(in srgb, var(--map-grid-color) 60%, transparent);
     mix-blend-mode: normal;
   }
-  .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; }
+  .fog-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: var(--z-fog); }
+  /* Cercle de brosse : suit le pointeur, à l'échelle exacte du trou découpé. */
+  .fog-brush {
+    position: absolute; width: 136px; height: 136px; margin: -68px 0 0 -68px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.85); border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    pointer-events: none; z-index: var(--z-fog);
+  }
+  /* Aperçu rectangle/lasso : viewBox 0 0 100 100 étiré sur la surface. */
+  .fog-preview {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: var(--z-fog);
+    fill: color-mix(in srgb, var(--accent) 22%, transparent);
+    stroke: var(--accent); stroke-width: 1.5px; stroke-dasharray: 5 4;
+  }
+  .fog-preview rect, .fog-preview polygon { vector-effect: non-scaling-stroke; }
 
   .marker {
     position: absolute; transform: translate(-50%, -100%);
-    display: flex; align-items: center; gap: 4px; z-index: 5; cursor: grab;
+    display: flex; align-items: center; gap: 4px; z-index: var(--z-markers); cursor: grab;
   }
   .marker-flag {
     font-size: 14px; font-weight: 700; color: var(--accent-text);
@@ -2049,12 +4534,148 @@
   }
   .marker-remove:hover { color: var(--accent-text); }
 
+  /* ── Liens entre cartes (lot 6) ─────────────────────────────── */
+  .map-link {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 0; background: transparent; border: none;
+    cursor: pointer; z-index: var(--z-links);
+    touch-action: none;
+  }
+  .map-link:hover { transform: translate(-50%, -100%) scale(1.08); }
+  .map-link-icon {
+    display: grid; place-items: center;
+    width: 22px; height: 22px;
+    font-size: 12px; line-height: 1;
+    color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-full);
+    box-shadow: 0 2px 6px var(--shadow-1);
+  }
+  .map-link-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px;
+    color: #f2ede0; background: rgba(27, 25, 23, 0.88);
+    border-radius: var(--radius-full); padding: 1px 7px;
+    white-space: nowrap;
+  }
+  .map-link.link-hidden .map-link-icon {
+    color: var(--text-2); background: var(--panel); border: 2px dashed var(--border-default);
+  }
+  .map-link.link-hidden .map-link-label { opacity: 0.85; }
+  .map-link.link-hidden { opacity: 0.75; }
+
+  /* Aperçu au survol (Cmd/Ctrl) : non cliquable, suit le curseur. */
+  .token-preview {
+    position: fixed;
+    z-index: var(--z-toast);
+    width: 240px; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 7px;
+    pointer-events: none;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay);
+  }
+  .tp-head { display: flex; align-items: center; gap: 9px; }
+  .tp-portrait {
+    width: 40px; height: 40px; flex: none; object-fit: cover;
+    border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
+  }
+  .tp-initial {
+    width: 40px; height: 40px; flex: none;
+    display: grid; place-items: center;
+    font-family: var(--font-title); font-size: 19px;
+    color: var(--map-token-fg); background: var(--map-token-bg);
+    border: 2.5px solid var(--token-color, var(--accent)); border-radius: 50%;
+  }
+  .tp-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tp-name {
+    font-family: var(--font-title); font-size: 15px; color: var(--heading);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tp-sub { font-size: 11.5px; color: var(--text-2); }
+  .tp-hp {
+    height: 6px; border-radius: 3px; overflow: hidden;
+    background: #2b2822; border: 1px solid #3a352d;
+  }
+  .tp-hp-fill { height: 100%; background: var(--hp-ok); }
+  .tp-hp-fill.mid { background: var(--hp-mid); }
+  .tp-hp-fill.low { background: var(--hp-low); }
+  .tp-pv { font-size: 11.5px; color: var(--text-2); }
+  .tp-conds { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tp-cond {
+    font-size: 11px; font-weight: 500; padding: 0 7px;
+    border: 1.5px solid var(--accent-border); border-radius: var(--radius-full);
+    color: var(--accent-text);
+  }
+
+  /* ── Notes épinglées (lot 6.7) ──────────────────────────────── */
+  .map-pin {
+    position: absolute; transform: translate(-50%, -50%);
+    display: flex; align-items: center; justify-content: center;
+    width: 39px; height: 39px; padding: 0;
+    background: var(--panel); color: var(--heading);
+    border: 2px solid var(--border-default); border-radius: var(--radius-md);
+    box-shadow: 0 2px 6px var(--shadow-1);
+    cursor: pointer; z-index: var(--z-links);
+    touch-action: none;
+  }
+  .map-pin:hover { border-color: var(--accent-border); color: var(--accent-text); }
+  .map-pin-icon { display: grid; place-items: center; line-height: 1; }
+  .map-pin-label {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px;
+    font-size: 10.5px; font-weight: 700; color: #f2ede0; background: rgba(27, 25, 23, 0.88);
+    border-radius: var(--radius-full); padding: 1px 7px; white-space: nowrap;
+    opacity: 0; transition: opacity 140ms var(--ease-out); pointer-events: none;
+  }
+  .map-pin:hover .map-pin-label { opacity: 1; }
+
+  .pin-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .pin-note { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+  .pin-note :global(p) { margin: 0 0 8px; }
+  .pin-note :global(p:last-child) { margin-bottom: 0; }
+  .pin-note :global(ul) { margin: 0 0 8px; padding-left: 18px; }
+  .pin-note :global(.pin-h) { font-family: var(--font-title); color: var(--heading); }
+  .pin-empty { margin: 0; font-size: 12.5px; font-style: italic; color: var(--text-3); }
+  .pin-edit {
+    flex: 1; min-height: 140px; resize: none;
+    font-family: var(--font-body); font-size: 13px; line-height: 1.45;
+    padding: 8px 9px; color: var(--text); background: var(--sunken);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); outline: none;
+  }
+  .pin-edit:focus { border-color: var(--accent-border); }
+  .pin-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .pin-save {
+    font-family: var(--font-body); font-size: 12px; font-weight: 600;
+    padding: 4px 12px; color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .pin-save:hover { background: var(--accent-hover); }
+  .pin-cancel {
+    font-family: var(--font-body); font-size: 12px; font-weight: 600;
+    padding: 4px 12px; color: var(--text-2); background: transparent;
+    border: 2px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .pin-cancel:hover { color: var(--heading); border-color: var(--border); }
+  .pin-edit-btn { align-self: flex-start; }
+
+  /* Pion « objet de jeu » (Penpot : Game/Token) : disque plein, anneau à la
+     couleur du personnage, barre de PV dessous, plaque de nom au survol.
+     La taille vient de --tok-size (échelle de cases, voir tokenSizePx). */
   .token {
     position: absolute;
     transform: translate(-50%, -50%);
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-title); cursor: grab; user-select: none; z-index: 10;
+    font-family: var(--font-title); cursor: grab; user-select: none; z-index: var(--z-tokens);
     touch-action: none;
+    box-sizing: border-box;
+    background: var(--map-token-bg);
+    border: max(2px, calc(var(--tok-size) * 0.055)) solid var(--token-color);
+    border-radius: 50%;
+    color: var(--map-token-fg);
+    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
   }
   .token-img {
     position: absolute;
@@ -2065,58 +4686,75 @@
     border-radius: inherit;
     pointer-events: none;
   }
-  .token-pj {
-    background: var(--map-token-bg);
-    border: 2.5px solid var(--token-color);
-    border-radius: 48% 52% 50% 50% / 52% 48% 52% 48%;
-    color: var(--map-token-fg);
-    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
+  /* Tour actif (Penpot : TokenActive) : double anneau, liseré de fond entre les deux. */
+  .token-active {
+    --ring: max(3px, calc(var(--tok-size) * 0.047));
+    box-shadow:
+      0 0 0 var(--ring) var(--map-token-bg),
+      0 0 0 calc(var(--ring) * 2) var(--accent),
+      0 0 0 calc(var(--ring) * 2.6) var(--map-token-bg),
+      0 0 0 calc(var(--ring) * 3.1) var(--accent);
   }
-  .token-pnj {
-    background: var(--accent);
-    border: 2.5px solid var(--accent-border);
-    border-radius: 50% 48% 52% 50% / 48% 52% 48% 52%;
-    color: var(--accent-fg);
-    box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.2);
+  /* 0 PV : grisé et translucide ; état couchant : voile (sans grisé). */
+  .token-dead { filter: grayscale(0.7); opacity: 0.5; }
+  .token-down::after {
+    content: ''; position: absolute; inset: -1px; border-radius: inherit;
+    background: radial-gradient(circle at 50% 18%, rgba(27, 25, 23, 0.5), rgba(27, 25, 23, 0.12) 72%);
+    pointer-events: none;
   }
-  .token-active { box-shadow: 0 0 0 3px var(--map-token-bg), 0 0 0 6px var(--accent); }
+  .token-foot {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    margin-top: max(2px, calc(var(--tok-size) * 0.045));
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    pointer-events: none;
+  }
+  /* Le double anneau du tour actif déborde : la barre passe en dessous. */
+  .token-active .token-foot { margin-top: max(6px, calc(var(--tok-size) * 0.2)); }
+  .token-hp {
+    display: block; box-sizing: border-box;
+    width: max(24px, calc(var(--tok-size) * 0.84));
+    height: clamp(4px, calc(var(--tok-size) * 0.125), 8px);
+    background: #2b2822; border: 1px solid #3a352d;
+    border-radius: 4px; overflow: hidden;
+  }
+  .token-hp-fill {
+    display: block; height: 100%; border-radius: 2px;
+    background: var(--hp-ok);
+    transition: width 200ms var(--ease-out);
+  }
+  .token-hp.hp-mid .token-hp-fill { background: var(--hp-mid); }
+  .token-hp.hp-low .token-hp-fill { background: var(--hp-low); }
+  .token-ini {
+    position: absolute; top: 0; right: 0; transform: translate(35%, -35%);
+    min-width: max(16px, calc(var(--tok-size) * 0.32));
+    height: max(16px, calc(var(--tok-size) * 0.32));
+    padding: 0 4px; box-sizing: border-box;
+    display: grid; place-items: center;
+    font-family: var(--font-body); font-weight: 700;
+    font-size: clamp(9px, calc(var(--tok-size) * 0.19), 13px);
+    color: var(--heading); background: #1b1917;
+    border: 1.5px solid var(--token-color); border-radius: var(--radius-full);
+    pointer-events: none;
+  }
+  .token-ini.is-turn { background: var(--accent); border-color: var(--accent-border); color: var(--accent-fg); }
   .token-label {
-    position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px;
-    font-size: 12px; color: #2b2822;
-    background: var(--map-label-bg); border-radius: 8px; padding: 0 6px;
+    font-family: var(--font-ui); font-size: 12px; line-height: 1.4;
+    color: #f2ede0; background: #1b1917;
+    border-radius: var(--radius-full); padding: 0 8px;
     white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity 140ms var(--ease-out);
   }
+  .token:hover .token-label { opacity: 1; }
 
   .ping {
     position: absolute; width: 70px; height: 70px;
-    border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; z-index: 20;
+    border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; z-index: var(--z-ping);
     animation: hdPing 1.8s ease-out forwards;
   }
   @keyframes hdPing {
     0% { transform: translate(-50%, -50%) scale(0.25); opacity: 0.95; }
     100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
   }
-
-  /* ── Panneau ── */
-  .panel {
-    border-left: 2px solid var(--border);
-    background: var(--panel);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-height: 0;
-  }
-  .tabs {
-    display: flex;
-    border-bottom: 2px solid var(--border);
-    flex: none;
-  }
-  .tab {
-    flex: 1; font-family: var(--font-body); font-size: 14px; font-weight: 700;
-    padding: 8px 2px; border: none; cursor: pointer;
-    background: var(--panel); color: var(--text-2);
-  }
-  .tab.active { background: var(--selected); color: var(--heading); }
 
   .journal-tab {
     position: relative;
@@ -2155,131 +4793,221 @@
     color: var(--text-2); cursor: pointer;
   }
   .older-btn:hover { border-color: var(--text-2); color: var(--text); }
-  .journal-time { font-weight: 700; font-size: 10.5px; color: var(--text-3); }
-  .journal-who { font-weight: 600; }
-  .journal-text { color: var(--text); }
-  .journal-entry.entry-system .journal-system { font-style: italic; color: var(--text-2); }
+  .journal-time { font-size: 13px; color: var(--text-3); }
+  .journal-who { font-family: var(--font-ui); font-size: 15px; font-weight: 700; }
+  .journal-text { font-size: 15px; color: var(--text); }
+  .journal-entry.entry-system .journal-system {
+    font-style: italic; font-size: 14px; color: var(--text-2);
+  }
   .share-chip {
-    font-size: 12px; font-weight: 700; text-decoration: none;
+    font-family: var(--font-body); font-size: 12px; font-weight: 700; text-decoration: none;
     color: var(--accent-text); border: 1.5px solid var(--accent-border);
     border-radius: var(--sketchy-badge); padding: 1px 8px;
+    background: none; cursor: pointer;
   }
   .share-chip:hover { background: var(--bg); }
   .roll-card {
     flex-basis: 100%;
-    border: 2px solid var(--border); border-radius: 225px 12px 240px 14px / 12px 235px 13px 225px;
-    padding: 6px 11px; background: var(--bg); margin-top: 4px;
+    background: #221f1a;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 4px;
   }
-  .roll-head { display: flex; justify-content: space-between; font-size: 12px; }
-  .roll-expr { color: var(--text-2); }
-  .roll-result { font-family: var(--font-title); font-size: 20px; color: var(--accent-text); line-height: 1.1; }
+  .roll-head { display: flex; justify-content: space-between; font-size: 13px; }
+  .roll-expr { font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-2); }
+  .roll-result { font-family: var(--font-title); font-size: 30px; color: var(--accent-text); line-height: 1.05; }
   .roll-result.fumble { color: var(--text-2); }
-  .roll-detail { font-family: var(--font-body); font-size: 11.5px; color: var(--text-2); }
+  .roll-detail { font-family: var(--font-body); font-size: 13px; color: var(--text-2); }
 
-  .chat-input-row { display: flex; gap: 7px; padding: 10px 12px; border-top: 2px solid var(--border); flex: none; }
-  :global(.chat-input) { flex: 1; min-width: 0; }
+  .chat-input-row { display: flex; gap: 8px; padding: 10px 12px; flex: none; }
+  .chat-input {
+    flex: 1; min-width: 0; height: 36px; padding: 0 12px;
+    font-family: var(--font-body); font-size: 14px; color: var(--text);
+    background: #221f1a; border: 1.5px solid var(--border-default);
+    border-radius: 9px; outline: none;
+  }
+  .chat-input:focus { border-color: var(--accent-border); }
+  .chat-input::placeholder { color: #7c7362; }
+  .chat-send {
+    flex: none; width: 36px; height: 36px;
+    display: grid; place-items: center;
+    font-family: var(--font-body); font-size: 18px; font-weight: 700;
+    color: var(--accent-fg); background: var(--accent);
+    border: none; border-radius: 9px; cursor: pointer;
+  }
+  .chat-send:hover { background: var(--accent-hover); }
 
-  .dice-tab { padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; min-height: 0; }
-  .dice-mod-row { display: flex; align-items: center; gap: 8px; }
-  .mod-label { font-size: 14px; font-weight: 700; color: var(--heading); }
-  .mod-input {
-    width: 52px; font-family: var(--font-body); font-size: 14px; padding: 6px 8px; text-align: center;
-    border: 2px solid var(--border); border-radius: 12px 220px 12px 225px / 225px 12px 255px 12px;
-    background: var(--bg); color: var(--text); outline: none;
+  .dice-tab { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+  .dice-mod-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .mod-label {
+    font-family: var(--font-ui); font-size: 14px; font-weight: 700;
+    color: var(--text-2);
+  }
+  .mod-stepper { display: flex; align-items: center; gap: 6px; }
+  .mod-stepper button {
+    font-family: var(--font-body); font-size: 17px; font-weight: 700;
+    width: 34px; height: 34px; padding: 0; line-height: 1;
+    color: var(--text); background: var(--surface-canvas);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .mod-stepper button:hover { color: var(--accent-text); border-color: var(--accent-border); }
+  .mod-value {
+    min-width: 40px; text-align: center;
+    font-family: var(--font-ui); font-size: 22px; font-weight: 700; color: var(--heading);
   }
   .dice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
   .dice-btn {
-    font-family: var(--font-body); font-size: 16px; padding: 16px 0;
-    border: 2px solid var(--border);
-    border-radius: 225px 12px 220px 12px / 12px 200px 12px 255px;
-    background: var(--panel); color: var(--text); cursor: pointer;
+    height: 64px;
+    font-family: var(--font-ui); font-size: 30px; font-weight: 700;
+    color: var(--text); background: var(--sunken);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-md);
+    cursor: pointer;
   }
-  .dice-btn:hover { background: var(--selected); color: var(--heading); }
-  .dice-btn.d20 {
-    background: var(--accent); color: var(--accent-fg); border-color: var(--accent-border);
-    border-radius: var(--sketchy-1);
+  .dice-btn:hover { background: var(--surface-raised); border-color: var(--border-strong-2); }
+  .dice-btn.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-border);
   }
-  .dice-btn.d20:hover { background: var(--accent-hover); }
+  .dice-launch {
+    width: 100%; height: 60px;
+    font-family: var(--font-ui); font-size: 24px; font-weight: 700;
+    color: var(--accent-fg); background: var(--accent);
+    border: 2px solid var(--accent-border); border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .dice-launch:hover { background: var(--accent-hover); }
   .dice-tip { font-size: 13px; font-weight: 500; color: var(--text-2); }
 
   .dice-history { border-top: 1px solid var(--border-soft); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; }
   .history-title { font-weight: 700; font-size: 14px; color: var(--heading); margin-bottom: 4px; }
   .history-empty { font-size: 12.5px; color: var(--text-3); }
   .history-entry {
-    font-size: 12.5px; padding-bottom: 4px; margin-bottom: 4px;
-    border-bottom: 1px dashed var(--border-soft); color: var(--text-2);
+    font-size: 14px; padding-bottom: 4px; margin-bottom: 4px;
+    color: #8a8172;
   }
+  .history-entry:first-child { color: #c9bfaa; }
 
-  .inv-tab { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .inv-tab { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
   .inv-placeholder { color: var(--text-2); font-style: italic; font-size: 13px; }
-  .inv-selector { display: flex; align-items: center; gap: 6px; }
-  .inv-selector label { font-size: 12px; color: var(--text-2); }
-  .inv-owner { font-family: var(--font-title); font-size: 14px; color: var(--heading); }
+  .inv-selector { display: flex; align-items: center; gap: 8px; }
+  .inv-selector label {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
+  }
   .inv-select,
   .inv-selector select {
     font-family: var(--font-body);
-    font-size: 12.5px;
-    padding: 4px 7px;
-    border: 2px solid var(--border);
-    border-radius: 8px 3px 8px 3px;
-    background: var(--bg);
+    font-size: 13px;
+    padding: 5px 8px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
     color: var(--text);
     outline: none;
     max-width: 100%;
+    flex: 1;
   }
-  .inv-purse { display: flex; gap: 6px; }
+  .inv-purse { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .coin {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 32px;
+    font-family: var(--font-ui);
+    font-size: 14px;
     font-weight: 700;
-    font-size: 13px;
-    padding: 3px 9px;
-    border: 2px solid var(--border);
-    border-radius: 10px 4px 10px 4px;
-    background: var(--bg);
+    background: #221f1a;
+    border: 1.5px solid var(--border-subtle);
+    border-radius: 16px;
   }
-  .coin em { font-style: normal; font-size: 10.5px; color: var(--text-2); }
-  .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .coin.po { color: #d4a73c; }
+  .coin.pa { color: var(--text-2); }
+  .coin.pc { color: #b07d54; }
+  .coin-value { flex: 1; text-align: center; white-space: nowrap; }
+  .coin-btn {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    color: inherit;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .coin-btn:hover { background: var(--selected); color: var(--heading); }
+  .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .inv-list li {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12.5px;
-    padding: 4px 6px;
-    border-bottom: 1px dashed var(--border-soft);
+    gap: 8px;
+    min-height: 40px;
+    padding: 4px 2px;
+    border-bottom: 1px solid var(--surface-raised);
   }
-  .inv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .inv-qty { color: var(--accent-text); font-weight: 700; margin-left: 4px; }
+  .inv-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 15px; color: var(--text);
+  }
+  .inv-qty {
+    flex: none;
+    font-family: var(--font-ui); font-size: 14px; font-weight: 700;
+    color: var(--accent-text);
+  }
   .inv-empty { color: var(--text-3); font-style: italic; justify-content: center; }
   .inv-actions { display: flex; gap: 2px; flex: none; }
   .inv-actions button {
     font-size: 12px;
-    width: 22px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 6px;
-    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-3);
     cursor: pointer;
   }
-  .inv-actions button:hover { background: var(--bg); color: var(--text); }
+  .inv-actions button:hover { background: var(--selected); color: var(--heading); }
   .inv-add { display: flex; gap: 4px; align-items: center; }
   .inv-input {
     font-family: var(--font-body);
-    font-size: 12.5px;
-    padding: 4px 7px;
-    border: 2px solid var(--border);
-    border-radius: 8px 3px 8px 3px;
-    background: var(--bg);
+    font-size: 13px;
+    padding: 6px 9px;
+    border: 1.5px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
     color: var(--text);
     outline: none;
     min-width: 0;
     flex: 1;
   }
-  .inv-input.narrow { flex: none; width: 52px; }
-  .inv-give { border-top: 1px dashed var(--border-soft); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-  .inv-give-head { font-size: 11.5px; color: var(--text-2); font-weight: 700; letter-spacing: 0.4px; }
+  .inv-input.narrow { flex: none; width: 54px; }
+  .inv-give {
+    border-top: 1px solid var(--surface-raised);
+    padding-top: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .inv-give-head {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700; color: var(--text-3);
+  }
   .inv-money { display: flex; gap: 4px; align-items: center; }
+  .inv-give-btn {
+    height: 42px;
+    font-family: var(--font-ui); font-size: 15px; font-weight: 700;
+    color: #d8d0bc;
+    background: var(--panel);
+    border: 1.5px solid var(--border-strong-2);
+    border-radius: 21px;
+    cursor: pointer;
+  }
+  .inv-give-btn:hover:not(:disabled) { border-color: var(--accent-border); color: var(--heading); }
+  .inv-give-btn:disabled { opacity: 0.5; cursor: default; }
 </style>

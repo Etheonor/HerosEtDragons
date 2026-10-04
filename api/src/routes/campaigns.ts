@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type {
-  CampaignSummary,
+  CampaignListItem,
   InvitationResult,
   JoinResult,
   JournalPage,
   TableSettings,
 } from "@rollwith/shared/dto";
+import type { HistoryState } from "@rollwith/shared/protocol";
 import { createDb, schema, DEFAULT_SETTINGS, type CampaignSettings } from "../db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { requireAuth, requireMemberOf, requireMj, type AuthVariables } from "../middleware";
@@ -68,7 +69,25 @@ app.get("/", requireAuth, async (c) => {
     .innerJoin(schema.campaigns, eq(schema.members.campaignId, schema.campaigns.id))
     .where(eq(schema.members.userId, userId));
 
-  return c.json<{ campaigns: CampaignSummary[] }>({
+  const campaignIds = myMemberships.map((m) => m.campaignId);
+  const myCharacters = campaignIds.length
+    ? await db
+        .select({
+          id: schema.characters.id,
+          campaignId: schema.characters.campaignId,
+          name: schema.characters.name,
+        })
+        .from(schema.characters)
+        .where(
+          and(
+            inArray(schema.characters.campaignId, campaignIds),
+            eq(schema.characters.ownerId, userId),
+            eq(schema.characters.kind, "pj"),
+          ),
+        )
+    : [];
+
+  return c.json<{ campaigns: CampaignListItem[] }>({
     campaigns: myMemberships.map((m) => ({
       id: m.campaignId,
       name: m.name,
@@ -76,6 +95,9 @@ app.get("/", requireAuth, async (c) => {
       isOwner: m.ownerId === userId,
       settings: m.settings,
       createdAt: m.createdAt.toISOString(),
+      myCharacters: myCharacters
+        .filter((ch) => ch.campaignId === m.campaignId)
+        .map((ch) => ({ id: ch.id, name: ch.name })),
     })),
   });
 });
@@ -197,6 +219,40 @@ app.patch(
     }
 
     return c.json<{ settings: TableSettings }>({ settings: newSettings });
+  },
+);
+
+// ── Undo / redo (MJ, lot 4) ────────────────────────────────────
+// L'annulation vit dans le DO (source de vérité) : la route ne fait que
+// sérialiser l'appel, le DO applique la mutation inverse et la diffuse à tous.
+
+app.post(
+  "/:campaignId/undo",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    try {
+      return c.json<HistoryState>(await tableStub(c, campaignId).undo());
+    } catch {
+      return c.json({ error: "Table indisponible" }, 503);
+    }
+  },
+);
+
+app.post(
+  "/:campaignId/redo",
+  requireAuth,
+  requireMemberOf((c) => c.req.param("campaignId")),
+  requireMj,
+  async (c) => {
+    const campaignId = c.get("membership")!.campaignId;
+    try {
+      return c.json<HistoryState>(await tableStub(c, campaignId).redo());
+    } catch {
+      return c.json({ error: "Table indisponible" }, 503);
+    }
   },
 );
 

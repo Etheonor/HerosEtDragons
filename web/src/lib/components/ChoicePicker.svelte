@@ -53,7 +53,7 @@
 
   {#if open}
     <div class="overlay" role="presentation" onclick={() => (open = false)}>
-      <div class="picker" role="dialog" aria-modal="true" onclick={(e) => e.stopPropagation()}>
+      <div class="picker surface-overlay surface-lg" role="dialog" aria-modal="true" onclick={(e) => e.stopPropagation()}>
         <div class="picker-head">
           <span class="picker-title">{placeholder.replace('— choisir —', 'Choisir')}</span>
           <button class="picker-close" onclick={() => (open = false)}>✕</button>
@@ -142,13 +142,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 60;
+    z-index: var(--z-overlay);
     padding: 24px;
   }
   .picker {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     width: min(620px, 100%);
     max-height: min(80vh, 760px);
     overflow-y: auto;

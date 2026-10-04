@@ -5,6 +5,7 @@
   import type { CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
   import { api } from '$lib/api';
+  import { showToast } from '$lib/toast.svelte';
 
   let {
     sheet,
@@ -46,7 +47,7 @@
       const res = await api.characters.toggleInspiration(charId);
       sheet.inspiration = res.inspiration;
     } catch {
-      /* ignore */
+      showToast("Inspiration impossible à modifier", 'error');
     }
   }
 </script>

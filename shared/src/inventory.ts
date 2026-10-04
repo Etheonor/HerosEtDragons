@@ -69,6 +69,16 @@ export function canAfford(source: Money, amount: Money): boolean {
   return source.po >= amount.po && source.pa >= amount.pa && source.pc >= amount.pc;
 }
 
+/** Ajuste une bourse par deltas signés (chaque pièce bornée à 0..999 999). */
+export function adjustMoney(source: Money, delta: Money): Money {
+  const clamp = (v: number) => Math.max(0, Math.min(999999, v));
+  return {
+    po: clamp(source.po + delta.po),
+    pa: clamp(source.pa + delta.pa),
+    pc: clamp(source.pc + delta.pc),
+  };
+}
+
 export function transferMoney(from: Money, to: Money, amount: Money): [Money, Money] {
   if (!canAfford(from, amount)) {
     throw new Error("Fonds insuffisants (pas de conversion entre monnaies)");

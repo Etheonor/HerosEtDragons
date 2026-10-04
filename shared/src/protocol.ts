@@ -39,6 +39,38 @@ export interface FogState {
   reveals: { x: number; y: number }[];
 }
 
+/** Lien entre deux cartes (porte, escalier, portail…) — « le HTML des maps ». */
+export type MapLinkKind = "door" | "stairs" | "region" | "portal";
+
+/** Note épinglée sur une carte (préparation MJ affichée dans le monde). */
+export interface MapPin {
+  id: string;
+  mapId: string;
+  x: number;
+  y: number;
+  label: string;
+  /** Contenu markdown-lite rendu dans le panneau non-modal. */
+  text: string;
+}
+
+export interface MapLink {
+  id: string;
+  /** Carte qui porte le lien. */
+  mapId: string;
+  /** Position du pin, en % de la surface. */
+  x: number;
+  y: number;
+  targetMapId: string;
+  /** Point d'arrivée dans la carte cible (%, défaut : centre). */
+  targetX?: number;
+  targetY?: number;
+  label: string;
+  kind: MapLinkKind;
+  oneWay: boolean;
+  /** Passage secret : jamais diffusé aux joueurs (filtre serveur). */
+  hidden: boolean;
+}
+
 export interface CombatState {
   phase: "init" | "run";
   participants: string[];
@@ -54,8 +86,26 @@ export interface TableLiveState {
   mapId: string | null;
   tokens: Record<string, TokenState>;
   markers: Marker[];
+  /** Liens de la carte active (le DO les stocke par carte, comme les pions). */
+  links: MapLink[];
+  /** Notes épinglées de la carte active. */
+  pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
+  target: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur), partagés MJ + joueurs. */
+  widgets: TableWidgets;
+}
+
+export interface TableWidgets {
+  /** Compteur 0-99. */
+  counter: number;
+  /** Horloge de progression : secteurs remplis, 0-12. */
+  clock: number;
+  /** Minuteur : `endsAt` (epoch ms) fait foi tant que `running` ; `initial`
+   *  est la durée de référence du bouton ↺. */
+  timer: { running: boolean; endsAt: number | null; remaining: number; initial: number };
 }
 
 export interface JournalEntry {
@@ -102,6 +152,8 @@ export interface CharacterCard {
   pvMax: number | null;
   pvTemp: number;
   conditions: string[];
+  /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
+  tokenScale: number;
 }
 
 export interface TableSettings {
@@ -110,6 +162,15 @@ export interface TableSettings {
   diceDuration: number;
   tokenSize: number;
 }
+
+/**
+ * Keepalive WebSocket (audit P4) — chaînes BRUTES, échangées telles quelles :
+ * la réponse automatique de hibernation du DO (`setWebSocketAutoResponse`)
+ * exige une correspondance exacte, hors JSON.parse et hors Zod. Le handler
+ * `webSocketMessage` court-circuite aussi la requête quand le DO est éveillé.
+ */
+export const WS_HEARTBEAT_REQUEST = '{"type":"hb"}';
+export const WS_HEARTBEAT_RESPONSE = '{"type":"hb.ack"}';
 
 /** Valeurs par défaut — source unique (serveur et client pré-snapshot). */
 export const DEFAULT_SETTINGS: TableSettings = {
@@ -128,6 +189,14 @@ export interface TableSnapshot {
   presence: PresenceUser[];
   /** Sacs visibles par CE socket : tous pour le MJ, le sien pour un joueur. */
   inventories: Record<string, Inventory>;
+  /** État des piles undo/redo du DO (boutons MJ). */
+  history: HistoryState;
+}
+
+/** Disponibilité de l'undo/redo — booléens seuls, jamais la pile elle-même. */
+export interface HistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 // ── Client → Serveur ──────────────────────────────────────────
@@ -137,6 +206,8 @@ export interface TokenMoveMsg {
   tokenId: string;
   x: number;
   y: number;
+  /** Premier message d'un drag : ouvre UN pas d'undo pour tout le geste. */
+  begin?: boolean;
 }
 
 /** Le MJ pose un personnage (PJ ou PNJ) sur la carte active s'il n'y est pas. */
@@ -188,6 +259,13 @@ export interface CharConditionMsg {
   on: boolean;
 }
 
+export interface CharScaleMsg {
+  type: "char.scale";
+  charId: string;
+  /** Multiplicateur de case du pion (0,25 à 4 ; presets ½/1/2/3/4). */
+  scale: number;
+}
+
 export interface NpcAddMsg {
   type: "npc.add";
   name: string;
@@ -226,6 +304,8 @@ export interface MarkerMoveMsg {
   id: string;
   x: number;
   y: number;
+  /** Premier message d'un drag : ouvre UN pas d'undo pour tout le geste. */
+  begin?: boolean;
 }
 
 export interface MarkerRemoveMsg {
@@ -237,6 +317,81 @@ export interface MarkerClearMsg {
   type: "marker.clear";
 }
 
+export interface LinkSetMsg {
+  type: "link.set";
+  id?: string;
+  x: number;
+  y: number;
+  targetMapId: string;
+  targetX?: number;
+  targetY?: number;
+  label?: string;
+  kind?: MapLinkKind;
+  oneWay?: boolean;
+  hidden?: boolean;
+}
+
+export interface LinkRemoveMsg {
+  type: "link.remove";
+  id: string;
+}
+
+export interface LinkMoveMsg {
+  type: "link.move";
+  id: string;
+  x: number;
+  y: number;
+}
+
+/** Voyage par un lien : autorisé à tout membre (la carte active est partagée). */
+export interface LinkTravelMsg {
+  type: "link.travel";
+  id: string;
+}
+
+export interface PinSetMsg {
+  type: "pin.set";
+  id?: string;
+  x: number;
+  y: number;
+  label?: string;
+  text?: string;
+}
+
+export interface PinMoveMsg {
+  type: "pin.move";
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface PinRemoveMsg {
+  type: "pin.remove";
+  id: string;
+}
+
+export interface TargetSetMsg {
+  type: "target.set";
+  charId: string | null;
+}
+
+export interface WidgetCounterMsg {
+  type: "widget.counter";
+  value: number;
+}
+
+export interface WidgetClockMsg {
+  type: "widget.clock";
+  value: number;
+}
+
+export interface WidgetTimerMsg {
+  type: "widget.timer";
+  action: "start" | "pause" | "reset";
+  /** Durée en secondes (start/reset). */
+  seconds?: number;
+}
+
 export interface FogEnableMsg {
   type: "fog.enable";
 }
@@ -245,6 +400,14 @@ export interface FogRevealMsg {
   type: "fog.reveal";
   x: number;
   y: number;
+  begin?: boolean;
+}
+
+export interface FogRevealAreaMsg {
+  type: "fog.revealArea";
+  /** Points d'une forme (rectangle/lasso) révélés en un seul geste. */
+  points: { x: number; y: number }[];
+  begin?: boolean;
 }
 
 export interface FogCoverMsg {
@@ -273,6 +436,13 @@ export interface InitiativeRollMsg {
 
 export interface CombatNextMsg {
   type: "combat.next";
+}
+
+export interface CombatReorderMsg {
+  type: "combat.reorder";
+  charId: string;
+  /** true = monte d'une position dans l'ordre d'initiative, false = descend. */
+  up: boolean;
 }
 
 export interface ChatSayMsg {
@@ -317,6 +487,13 @@ export interface InvDropMsg {
   item: string;
 }
 
+export interface InvMoneyMsg {
+  type: "inv.money";
+  charId: string;
+  /** Deltas signés : le serveur borne chaque pièce entre 0 et 999 999. */
+  delta: { po: number; pa: number; pc: number };
+}
+
 export type ClientMessage =
   | TokenMoveMsg
   | TokenPutMsg
@@ -326,6 +503,7 @@ export type ClientMessage =
   | NpcSaveAsTemplateMsg
   | CharHpMsg
   | CharConditionMsg
+  | CharScaleMsg
   | NpcAddMsg
   | NpcAddFromMonsterMsg
   | NpcRemoveMsg
@@ -334,20 +512,34 @@ export type ClientMessage =
   | MarkerMoveMsg
   | MarkerRemoveMsg
   | MarkerClearMsg
+  | LinkSetMsg
+  | LinkRemoveMsg
+  | LinkMoveMsg
+  | LinkTravelMsg
+  | PinSetMsg
+  | PinMoveMsg
+  | PinRemoveMsg
+  | TargetSetMsg
+  | WidgetCounterMsg
+  | WidgetClockMsg
+  | WidgetTimerMsg
   | FogEnableMsg
   | FogRevealMsg
+  | FogRevealAreaMsg
   | FogCoverMsg
   | FogDisableMsg
   | PingMsg
   | ModeSetMsg
   | InitiativeRollMsg
   | CombatNextMsg
+  | CombatReorderMsg
   | ChatSayMsg
   | DiceRollMsg
   | InvGiveMoneyMsg
   | InvGiveItemMsg
   | InvAddMsg
-  | InvDropMsg;
+  | InvDropMsg
+  | InvMoneyMsg;
 
 // ── Serveur → Client ──────────────────────────────────────────
 
@@ -355,11 +547,23 @@ export interface TableDeltaPatch {
   mode?: TableLiveState["mode"];
   mapId?: string | null;
   combat?: TableLiveState["combat"];
+  /** Cible partagée (TargetFrame) — filtrée B5 côté joueurs. */
+  target?: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur). */
+  widgets?: TableWidgets;
   markers?: Marker[];
+  links?: MapLink[];
+  pins?: MapPin[];
+  /** Point d'arrivée du dernier voyage (le client recentre sa caméra). */
+  arrival?: { x: number; y: number } | null;
   tokens?: Record<string, TokenState | null>;
   fog?: Record<string, FogState>;
   characters?: Record<string, Partial<CharacterCard> | null>;
   settings?: TableSettings;
+  /** Lot 4 : disponibilité de l'undo/redo (diffusée après chaque pas). */
+  history?: HistoryState;
+  /** Lot 2 : la liste des cartes (REST) a changé — les clients la relisent. */
+  mapsUpdated?: boolean;
 }
 
 export interface DeltaMsg {
@@ -459,6 +663,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "npc.saveAsTemplate",
     "char.hp",
     "char.condition",
+    "char.scale",
     "npc.add",
     "npc.addFromMonster",
     "npc.remove",
@@ -467,19 +672,33 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "marker.move",
     "marker.remove",
     "marker.clear",
+    "link.set",
+    "link.remove",
+    "link.move",
+    "link.travel",
+    "pin.set",
+    "pin.move",
+    "pin.remove",
+    "target.set",
+    "widget.counter",
+    "widget.clock",
+    "widget.timer",
     "fog.enable",
     "fog.reveal",
+    "fog.revealArea",
     "fog.cover",
     "fog.disable",
     "ping",
     "mode.set",
     "initiative.roll",
     "combat.next",
+    "combat.reorder",
     "chat.say",
     "dice.roll",
     "inv.give",
     "inv.add",
     "inv.drop",
+    "inv.money",
   ];
   return validTypes.includes(type as ClientMessage["type"]);
 }

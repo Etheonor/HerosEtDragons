@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter api dev",
+    "dev": "node scripts/dev-clean.mjs && pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
-    "dev:all": "pnpm --filter web build && pnpm --filter web dev & pnpm --filter api dev",
+    "dev:all": "node scripts/dev-clean.mjs && pnpm --filter web build && (pnpm --filter web dev & pnpm --filter api dev)",
+    "dev:clean": "node scripts/dev-clean.mjs",
     "build": "pnpm --filter shared build && pnpm --filter web build && pnpm --filter api build",
     "build:cloudflare": "pnpm build && pnpm db:migrate:remote",
     "deploy": "pnpm build:cloudflare && wrangler deploy",
@@ -23,8 +24,10 @@
     "db:migrate:remote": "pnpm --filter api db:migrate:remote",
     "ingest": "pnpm --filter ingest ingest",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:rebuild": "node scripts/e2e.mjs --rebuild",
     "e2e:ui": "node scripts/e2e.mjs --ui",
     "e2e:headed": "node scripts/e2e.mjs --headed",
+    "web:build": "node scripts/web-build.mjs",
     "dev:seed": "curl -s -X POST -H 'Content-Type: application/json' -d '{\"reset\":true}' http://localhost:8787/api/dev/seed"
   },
   "devDependencies": {

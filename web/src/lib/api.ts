@@ -2,7 +2,7 @@
 // Les types viennent de @rollwith/shared/dto (source unique avec l'API).
 import type {
   CampaignDetail,
-  CampaignSummary,
+  CampaignListItem,
   CharacterDetail,
   CharacterSummary,
   CompendiumEntryDto,
@@ -15,7 +15,7 @@ import type {
   NpcTemplate,
 } from "@rollwith/shared/dto";
 import type { CharacterSheet } from "@rollwith/shared/sheet";
-import type { TableSettings } from "@rollwith/shared/protocol";
+import type { HistoryState, TableSettings } from "@rollwith/shared/protocol";
 import type { NpcTemplateInput } from "@rollwith/shared/sheet";
 
 export { ARMOR_KINDS, ARMOR_KIND_LABELS } from "@rollwith/shared/armor";
@@ -27,6 +27,7 @@ export type { CharacterSheet };
 /** Ré-exports des DTO partagés (composants) — source : shared/dto. */
 export type {
   CampaignSummary,
+  CampaignListItem,
   CampaignDetail,
   CharacterSummary,
   CharacterDetail,
@@ -65,7 +66,7 @@ async function fetchForm<T>(url: string, form: FormData, method = "POST"): Promi
 
 export const api = {
   campaigns: {
-    list: () => fetchJson<{ campaigns: CampaignSummary[] }>("/api/campaigns"),
+    list: () => fetchJson<{ campaigns: CampaignListItem[] }>("/api/campaigns"),
     create: (name: string) =>
       fetchJson<{ id: string; name: string; role: string }>("/api/campaigns", {
         method: "POST",
@@ -84,6 +85,8 @@ export const api = {
       }),
     join: (token: string) =>
       fetchJson<JoinResult>(`/api/campaigns/join/${token}`, { method: "POST" }),
+    undo: (id: string) => fetchJson<HistoryState>(`/api/campaigns/${id}/undo`, { method: "POST" }),
+    redo: (id: string) => fetchJson<HistoryState>(`/api/campaigns/${id}/redo`, { method: "POST" }),
     journalPage: (campaignId: string, before?: number, limit = 50) => {
       const qs = new URLSearchParams({ limit: String(limit) });
       if (before !== undefined) qs.set("before", String(before));
@@ -119,6 +122,11 @@ export const api = {
         body: JSON.stringify(sheet),
         headers: ifMatch ? { "If-Match": ifMatch } : undefined,
       }),
+    updatePortrait: (id: string, file: File) => {
+      const form = new FormData();
+      form.set("image", file);
+      return fetchForm<{ portrait: string }>(`/api/characters/${id}/portrait`, form, "PUT");
+    },
   },
   compendium: {
     categories: (campaignId: string) =>

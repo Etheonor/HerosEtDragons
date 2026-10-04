@@ -4,21 +4,37 @@ import { createSheet } from "@rollwith/shared/sheet";
 import { applyDamage } from "@rollwith/shared/damage";
 import {
   addItem,
+  adjustMoney,
   removeItem,
   transferItem,
   transferMoney,
   type Inventory,
   type Money,
 } from "@rollwith/shared/inventory";
-import type {
-  JournalEntry,
-  Marker,
-  FogState,
-  CombatState,
-  CharacterCard,
-  TableSettings,
-  TableLiveState,
+import {
+  WS_HEARTBEAT_REQUEST,
+  WS_HEARTBEAT_RESPONSE,
+  type JournalEntry,
+  type Marker,
+  type MapLink,
+  type MapLinkKind,
+  type MapPin,
+  type FogState,
+  type CombatState,
+  type CharacterCard,
+  type TableSettings,
+  type TableLiveState,
+  type TableWidgets,
+  type HistoryState,
 } from "@rollwith/shared/protocol";
+import {
+  undoLabel,
+  type UndoCharacter,
+  type UndoOp,
+  type UndoPos,
+  type UndoStacks,
+  type UndoToken,
+} from "@rollwith/shared/undo";
 import {
   parseDiceCommand,
   isScoresCommand,
@@ -56,8 +72,16 @@ interface LiveState {
    *  changer de carte ne doit pas emporter le placement d'une autre. */
   tokensByMap: Record<string, Record<string, TokenState>>;
   markersByMap: Record<string, Marker[]>;
+  /** Liens entre cartes (portes, escaliers…), stockés par carte. */
+  linksByMap: Record<string, MapLink[]>;
+  /** Notes épinglées sur la carte, stockées par carte. */
+  pinsByMap: Record<string, MapPin[]>;
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. MJ seul la pose. */
+  target: string | null;
+  /** Widgets de séance (horloge, compteur, minuteur). */
+  widgets: TableWidgets;
 }
 
 const MAX_CHAT_LENGTH = 2000;
@@ -114,10 +138,17 @@ const TOKEN_PERSIST_DEBOUNCE_MS = 500;
 // fenêtre glissante en attendant une politique d'archivage R2 dédiée.
 const JOURNAL_RETENTION_MAX = 5000;
 
+// Lot 4 (undo) : profondeur de l'historique, persistance débouncée, et fenêtre
+// pendant laquelle deux messages de drag/trait appartiennent au même pas.
+const HISTORY_LIMIT = 50;
+const HISTORY_PERSIST_DEBOUNCE_MS = 500;
+const MOVE_OP_IDLE_MS = 2000;
+
 /** Messages validés (ws-validation) — chaque handler reçoit son payload typé. */
 type DiceRollMsg = Extract<ClientMessageInput, { type: "dice.roll" }>;
 type CharHpMsg = Extract<ClientMessageInput, { type: "char.hp" }>;
 type CharConditionMsg = Extract<ClientMessageInput, { type: "char.condition" }>;
+type CharScaleMsg = Extract<ClientMessageInput, { type: "char.scale" }>;
 type TokenMoveMsg = Extract<ClientMessageInput, { type: "token.move" }>;
 type TokenPutMsg = Extract<ClientMessageInput, { type: "token.put" }>;
 type TokenRemoveMsg = Extract<ClientMessageInput, { type: "token.remove" }>;
@@ -130,13 +161,35 @@ type MapSelectMsg = Extract<ClientMessageInput, { type: "map.select" }>;
 type MarkerSetMsg = Extract<ClientMessageInput, { type: "marker.set" }>;
 type MarkerMoveMsg = Extract<ClientMessageInput, { type: "marker.move" }>;
 type MarkerRemoveMsg = Extract<ClientMessageInput, { type: "marker.remove" }>;
+type LinkSetMsg = Extract<ClientMessageInput, { type: "link.set" }>;
+type LinkRemoveMsg = Extract<ClientMessageInput, { type: "link.remove" }>;
+type LinkMoveMsg = Extract<ClientMessageInput, { type: "link.move" }>;
+type LinkTravelMsg = Extract<ClientMessageInput, { type: "link.travel" }>;
+type PinSetMsg = Extract<ClientMessageInput, { type: "pin.set" }>;
+type PinMoveMsg = Extract<ClientMessageInput, { type: "pin.move" }>;
+type PinRemoveMsg = Extract<ClientMessageInput, { type: "pin.remove" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
+type FogRevealAreaMsg = Extract<ClientMessageInput, { type: "fog.revealArea" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
 type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
 type InvGiveMsg = Extract<ClientMessageInput, { type: "inv.give" }>;
+type InvMoneyMsg = Extract<ClientMessageInput, { type: "inv.money" }>;
 type ModeSetMsg = Extract<ClientMessageInput, { type: "mode.set" }>;
 type InitiativeRollMsg = Extract<ClientMessageInput, { type: "initiative.roll" }>;
+type CombatReorderMsg = Extract<ClientMessageInput, { type: "combat.reorder" }>;
+type TargetSetMsg = Extract<ClientMessageInput, { type: "target.set" }>;
+type WidgetCounterMsg = Extract<ClientMessageInput, { type: "widget.counter" }>;
+type WidgetClockMsg = Extract<ClientMessageInput, { type: "widget.clock" }>;
+type WidgetTimerMsg = Extract<ClientMessageInput, { type: "widget.timer" }>;
+
+function defaultWidgets(): TableWidgets {
+  return {
+    counter: 0,
+    clock: 0,
+    timer: { running: false, endsAt: null, remaining: 0, initial: 0 },
+  };
+}
 
 function defaultLiveState(): LiveState {
   return {
@@ -144,8 +197,12 @@ function defaultLiveState(): LiveState {
     mapId: null,
     tokensByMap: {},
     markersByMap: {},
+    linksByMap: {},
+    pinsByMap: {},
     fog: {},
     combat: null,
+    target: null,
+    widgets: defaultWidgets(),
   };
 }
 
@@ -166,6 +223,18 @@ export class GameTableDO extends DurableObject<Env> {
    *  messages normaux (sinon un simple drag bloque le chat). */
   private rateLimitHits: Map<string, number[]> = new Map();
   private rateLimitMoveHits: Map<string, number[]> = new Map();
+  /** Lot 4 : piles undo/redo, persistées (jamais diffusées — seuls les
+   *  booléens le sont). Les opérations « ouvertes » regroupent un drag
+   *  (pion/repère) ou un trait de brouillard en UN seul pas. */
+  private history: UndoStacks | null = null;
+  private historyDirty = false;
+  private historyTimer: ReturnType<typeof setTimeout> | null = null;
+  private openTokenMove: Extract<UndoOp, { kind: "token.move" }> | null = null;
+  private openTokenMoveAt = 0;
+  private openMarkerMove: Extract<UndoOp, { kind: "marker.move" }> | null = null;
+  private openMarkerMoveAt = 0;
+  private openFogPaint: Extract<UndoOp, { kind: "fog.paint" }> | null = null;
+  private openFogPaintAt = 0;
 
   private getDb(): ReturnType<typeof createDb> {
     if (!this.db) {
@@ -190,15 +259,48 @@ export class GameTableDO extends DurableObject<Env> {
   private migrateLiveState(stored: LiveState | undefined): LiveState {
     if (!stored) return defaultLiveState();
     const legacy = stored as unknown as Record<string, unknown>;
-    if (legacy.tokensByMap && legacy.markersByMap) return stored;
+    if (legacy.tokensByMap && legacy.markersByMap) {
+      // v2 → v3 (liens) → v4 (notes épinglées) → v5 (cible) → v6 (widgets) :
+      // champs apparus après coup.
+      if (
+        !legacy.linksByMap ||
+        !legacy.pinsByMap ||
+        legacy.target === undefined ||
+        !legacy.widgets
+      ) {
+        const widgets = legacy.widgets as Partial<TableWidgets> | undefined;
+        const timer = widgets?.timer as Partial<TableWidgets["timer"]> | undefined;
+        return {
+          ...stored,
+          linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
+          pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
+          target: (legacy.target as string | null) ?? null,
+          widgets: {
+            counter: Number(widgets?.counter) || 0,
+            clock: Number(widgets?.clock) || 0,
+            timer: {
+              running: timer?.running === true,
+              endsAt: typeof timer?.endsAt === "number" ? timer.endsAt : null,
+              remaining: Number(timer?.remaining) || 0,
+              initial: Number(timer?.initial) || Number(timer?.remaining) || 0,
+            },
+          },
+        };
+      }
+      return stored;
+    }
     const key = ((legacy.mapId as string | null) ?? "") as string;
     return {
       mode: (legacy.mode as "exploration" | "combat") ?? "exploration",
       mapId: (legacy.mapId as string | null) ?? null,
       tokensByMap: { [key]: (legacy.tokens as Record<string, TokenState>) ?? {} },
       markersByMap: { [key]: (legacy.markers as Marker[]) ?? [] },
+      linksByMap: {},
+      pinsByMap: {},
       fog: (legacy.fog as Record<string, FogState>) ?? {},
       combat: (legacy.combat as CombatState | null) ?? null,
+      target: null,
+      widgets: defaultWidgets(),
     };
   }
 
@@ -223,6 +325,22 @@ export class GameTableDO extends DurableObject<Env> {
 
   private patchMarkers(state: LiveState, markers: Marker[]): Partial<LiveState> {
     return { markersByMap: { ...state.markersByMap, [this.mapKey(state.mapId)]: markers } };
+  }
+
+  private linksOf(state: LiveState, mapId: string | null = state.mapId): MapLink[] {
+    return state.linksByMap?.[this.mapKey(mapId)] ?? [];
+  }
+
+  private patchLinks(state: LiveState, links: MapLink[]): Partial<LiveState> {
+    return { linksByMap: { ...state.linksByMap, [this.mapKey(state.mapId)]: links } };
+  }
+
+  private pinsOf(state: LiveState, mapId: string | null = state.mapId): MapPin[] {
+    return state.pinsByMap?.[this.mapKey(mapId)] ?? [];
+  }
+
+  private patchPins(state: LiveState, pins: MapPin[]): Partial<LiveState> {
+    return { pinsByMap: { ...state.pinsByMap, [this.mapKey(state.mapId)]: pins } };
   }
 
   private async ensureCampaignId(): Promise<void> {
@@ -254,6 +372,14 @@ export class GameTableDO extends DurableObject<Env> {
     await this.ensureCampaignId();
     const settings = await this.ensureSettings();
     this.broadcastAll({ type: "delta", patch: { settings: settings ?? DEFAULT_SETTINGS } });
+  }
+
+  /**
+   * RPC appelé par les routes /api/maps (Lot 2) : les cartes ne vivent pas dans
+   * le snapshot, on prévient donc les clients pour qu'ils relisent la liste.
+   */
+  async notifyMapsUpdated(): Promise<void> {
+    this.broadcastAll({ type: "delta", patch: { mapsUpdated: true } });
   }
 
   /** Les PV des PNJ ne quittent JAMAIS le serveur quand pnjPvVisible=false (§5.3). */
@@ -351,6 +477,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        tokenScale: ch.tokenScale,
       };
     }
     return out;
@@ -419,6 +546,451 @@ export class GameTableDO extends DurableObject<Env> {
     await this.ctx.storage.put("liveState", this.liveState);
   }
 
+  // ── Historique : undo/redo (lot 4) ─────────────────────────────
+  // Le DO est la source de vérité ; la pile n'est jamais diffusée, seuls les
+  // booléens canUndo/canRedo partent aux clients (boutons MJ). Un geste = un
+  // pas : `begin` ouvre un pas, les messages suivants du même drag le
+  // complètent. Appliquer une opération est une mutation normale (journal +
+  // broadcast), filtrée B5 par broadcastRoleAware.
+
+  private async ensureHistory(): Promise<UndoStacks> {
+    if (!this.history) {
+      const stored = await this.ctx.storage.get<UndoStacks>("history");
+      this.history =
+        stored && Array.isArray(stored.undo) && Array.isArray(stored.redo)
+          ? stored
+          : { undo: [], redo: [] };
+    }
+    return this.history;
+  }
+
+  private historyState(): HistoryState {
+    const h = this.history;
+    return { canUndo: !!h && h.undo.length > 0, canRedo: !!h && h.redo.length > 0 };
+  }
+
+  private scheduleHistoryPersist(): void {
+    this.historyDirty = true;
+    if (this.historyTimer) return;
+    this.historyTimer = setTimeout(() => {
+      this.historyTimer = null;
+      void this.flushHistoryPersist();
+    }, HISTORY_PERSIST_DEBOUNCE_MS);
+  }
+
+  private async flushHistoryPersist(): Promise<void> {
+    if (this.historyTimer) {
+      clearTimeout(this.historyTimer);
+      this.historyTimer = null;
+    }
+    if (!this.historyDirty || !this.history) return;
+    this.historyDirty = false;
+    await this.ctx.storage.put("history", this.history);
+  }
+
+  /** Empile un ou plusieurs pas appliqués : la branche redo est perdue. */
+  private async pushOps(ops: UndoOp[]): Promise<void> {
+    if (ops.length === 0) return;
+    const h = await this.ensureHistory();
+    for (const op of ops) h.undo.push(op);
+    while (h.undo.length > HISTORY_LIMIT) h.undo.shift();
+    h.redo = [];
+    this.scheduleHistoryPersist();
+    this.broadcastHistory();
+  }
+
+  private broadcastHistory(): void {
+    this.broadcastAll({ type: "delta", patch: { history: this.historyState() } });
+  }
+
+  /** Un drag de pion = un pas : `begin` ouvre, les messages suivants complètent. */
+  private async recordTokenMove(
+    mapId: string,
+    charId: string,
+    before: UndoPos,
+    after: UndoPos,
+    begin: boolean,
+  ): Promise<void> {
+    const now = Date.now();
+    const open = this.openTokenMove;
+    if (
+      !begin &&
+      open &&
+      open.charId === charId &&
+      open.mapId === mapId &&
+      now - this.openTokenMoveAt < MOVE_OP_IDLE_MS
+    ) {
+      open.after = after;
+      this.openTokenMoveAt = now;
+      this.scheduleHistoryPersist();
+      return;
+    }
+    const op: Extract<UndoOp, { kind: "token.move" }> = {
+      kind: "token.move",
+      mapId,
+      charId,
+      before,
+      after,
+    };
+    this.openTokenMove = op;
+    this.openTokenMoveAt = now;
+    await this.pushOps([op]);
+  }
+
+  /** Un drag de repère = un pas (même contrat que les pions). */
+  private async recordMarkerMove(
+    mapId: string,
+    id: string,
+    before: UndoPos,
+    after: UndoPos,
+    begin: boolean,
+  ): Promise<void> {
+    const now = Date.now();
+    const open = this.openMarkerMove;
+    if (
+      !begin &&
+      open &&
+      open.id === id &&
+      open.mapId === mapId &&
+      now - this.openMarkerMoveAt < MOVE_OP_IDLE_MS
+    ) {
+      open.after = after;
+      this.openMarkerMoveAt = now;
+      this.scheduleHistoryPersist();
+      return;
+    }
+    const op: Extract<UndoOp, { kind: "marker.move" }> = {
+      kind: "marker.move",
+      mapId,
+      id,
+      before,
+      after,
+    };
+    this.openMarkerMove = op;
+    this.openMarkerMoveAt = now;
+    await this.pushOps([op]);
+  }
+
+  /** Un trait de brouillard = un pas ; `index` est celui du premier point accepté. */
+  private async recordFogPaint(
+    mapId: string,
+    index: number,
+    point: UndoPos,
+    begin: boolean,
+  ): Promise<void> {
+    const now = Date.now();
+    const open = this.openFogPaint;
+    if (!begin && open && open.mapId === mapId && now - this.openFogPaintAt < MOVE_OP_IDLE_MS) {
+      open.points.push(point);
+      this.openFogPaintAt = now;
+      this.scheduleHistoryPersist();
+      return;
+    }
+    const op: Extract<UndoOp, { kind: "fog.paint" }> = {
+      kind: "fog.paint",
+      mapId,
+      index,
+      points: [point],
+    };
+    this.openFogPaint = op;
+    this.openFogPaintAt = now;
+    await this.pushOps([op]);
+  }
+
+  /** RPC POST /api/campaigns/:id/undo — annule le dernier pas. */
+  async undo(): Promise<HistoryState> {
+    return this.enqueueMutation(() => this.applyHistoryStep("undo"));
+  }
+
+  /** RPC POST /api/campaigns/:id/redo — rejoue le dernier pas annulé. */
+  async redo(): Promise<HistoryState> {
+    return this.enqueueMutation(() => this.applyHistoryStep("redo"));
+  }
+
+  /** Sérialise un RPC avec les mutations WebSocket (audit A1 : lost updates). */
+  private enqueueMutation<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutationChain.then(fn);
+    this.mutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async applyHistoryStep(dir: "undo" | "redo"): Promise<HistoryState> {
+    await this.ensureCampaignId();
+    await this.ensureNpcIds();
+    const h = await this.ensureHistory();
+    const op = (dir === "undo" ? h.undo : h.redo).pop();
+    if (!op) return this.historyState();
+
+    await this.applyOp(op, dir);
+    (dir === "undo" ? h.redo : h.undo).push(op);
+    this.scheduleHistoryPersist();
+
+    // L'annulation est une mutation normale : journal + broadcast (B5 respecté).
+    const entry = this.makeJournalEntry(
+      "system",
+      null,
+      null,
+      `✦ ${dir === "undo" ? "Annulation" : "Rétablissement"} : ${undoLabel(op)}.`,
+    );
+    await this.appendJournal(entry);
+    this.broadcastJournal(entry);
+    this.broadcastHistory();
+    return this.historyState();
+  }
+
+  /** Applique (ou annule) une opération — aucune autre mutation n'est empilée. */
+  private async applyOp(op: UndoOp, dir: "undo" | "redo"): Promise<void> {
+    switch (op.kind) {
+      case "batch": {
+        const ops = dir === "undo" ? [...op.ops].reverse() : op.ops;
+        for (const inner of ops) await this.applyOp(inner, dir);
+        return;
+      }
+      case "combat.set": {
+        const combat = dir === "undo" ? op.before : op.after;
+        await this.patchState({ combat });
+        this.broadcastRoleAware({ combat });
+        return;
+      }
+      case "token.move": {
+        const state = await this.getState();
+        const tokens = this.tokensOf(state, op.mapId);
+        const t = tokens[op.charId];
+        if (!t) return;
+        const pos = dir === "undo" ? op.before : op.after;
+        const next = { ...tokens, [op.charId]: { ...t, x: pos.x, y: pos.y } };
+        const wasVisible = this.isCharVisibleToPlayers(op.charId, state);
+        const after = await this.patchState(this.patchTokensFor(state, op.mapId, next));
+        this.broadcastTokensFor(op.mapId, { [op.charId]: next[op.charId]! });
+        if (
+          this.npcIds.has(op.charId) &&
+          this.isCharVisibleToPlayers(op.charId, after) !== wasVisible
+        ) {
+          await this.broadcastPnjVisibility([op.charId]);
+        }
+        return;
+      }
+      case "token.place":
+      case "token.remove": {
+        const present = (op.kind === "token.place") === (dir === "redo");
+        await this.applyTokenPresence(op.mapId, op.charId, op.pos, present);
+        return;
+      }
+      case "npc.create":
+      case "npc.delete": {
+        const present = (op.kind === "npc.create") === (dir === "redo");
+        await this.applyCharacterPresence(op.char, op.tokens, present);
+        return;
+      }
+      case "marker.add":
+        if (dir === "undo") await this.applyMarkerRemove(op.mapId, op.marker.id);
+        else await this.applyMarkerAdd(op.mapId, op.marker);
+        return;
+      case "marker.remove":
+        if (dir === "undo") await this.applyMarkerAdd(op.mapId, op.marker);
+        else await this.applyMarkerRemove(op.mapId, op.marker.id);
+        return;
+      case "marker.move": {
+        const pos = dir === "undo" ? op.before : op.after;
+        await this.applyMarkerMove(op.mapId, op.id, pos);
+        return;
+      }
+      case "marker.clear": {
+        const state = await this.getState();
+        const markers = dir === "undo" ? op.markers : [];
+        await this.patchState(this.patchMarkersFor(state, op.mapId, markers));
+        this.broadcastMarkersFor(op.mapId, markers);
+        return;
+      }
+      case "fog.paint": {
+        const state = await this.getState();
+        const current = state.fog[op.mapId];
+        if (!current) return;
+        const reveals =
+          dir === "undo"
+            ? current.reveals.filter((_p, i) => i < op.index || i >= op.index + op.points.length)
+            : [
+                ...current.reveals.slice(0, op.index),
+                ...op.points,
+                ...current.reveals.slice(op.index),
+              ];
+        await this.applyFog(op.mapId, { ...current, reveals });
+        return;
+      }
+      case "fog.set": {
+        const target = dir === "undo" ? op.before : op.after;
+        await this.applyFog(op.mapId, target);
+        return;
+      }
+    }
+  }
+
+  private patchTokensFor(
+    state: LiveState,
+    mapId: string,
+    tokens: Record<string, TokenState>,
+  ): Partial<LiveState> {
+    return { tokensByMap: { ...state.tokensByMap, [mapId]: tokens } };
+  }
+
+  private patchMarkersFor(state: LiveState, mapId: string, markers: Marker[]): Partial<LiveState> {
+    return { markersByMap: { ...state.markersByMap, [mapId]: markers } };
+  }
+
+  /** Ne diffuse un patch de carte que si c'est bien la carte active. */
+  private broadcastTokensFor(mapId: string, patch: Record<string, TokenState | null>): void {
+    if (mapId !== this.mapKey(this.liveState?.mapId ?? null)) return;
+    this.broadcastRoleAware({ tokens: patch });
+  }
+
+  private broadcastMarkersFor(mapId: string, markers: Marker[]): void {
+    if (mapId !== this.mapKey(this.liveState?.mapId ?? null)) return;
+    this.broadcastAll({ type: "delta", patch: { markers } });
+  }
+
+  private async applyTokenPresence(
+    mapId: string,
+    charId: string,
+    pos: UndoPos,
+    present: boolean,
+  ): Promise<void> {
+    const state = await this.getState();
+    const tokens = this.tokensOf(state, mapId);
+    const next: Record<string, TokenState> = { ...tokens };
+    if (present) next[charId] = { charId, x: pos.x, y: pos.y };
+    else delete next[charId];
+    await this.patchState(this.patchTokensFor(state, mapId, next));
+    this.broadcastTokensFor(mapId, { [charId]: present ? (next[charId] ?? null) : null });
+    if (this.npcIds.has(charId)) await this.broadcastPnjVisibility([charId]);
+  }
+
+  /** Recrée (present) ou supprime une fiche + ses pions sur toutes les cartes. */
+  private async applyCharacterPresence(
+    char: UndoCharacter,
+    tokens: UndoToken[],
+    present: boolean,
+  ): Promise<void> {
+    const db = this.getDb();
+    if (present) {
+      await db
+        .insert(schema.characters)
+        .values({
+          id: char.id,
+          campaignId: this.campaignId,
+          ownerId: char.ownerId,
+          kind: char.kind,
+          name: char.name,
+          color: char.color,
+          active: char.active,
+          sheet: char.sheet,
+          pv: char.pv,
+          pvMax: char.pvMax,
+          pvTemp: char.pvTemp,
+          conditions: [...char.conditions],
+          tokenScale: char.tokenScale,
+          inventory: char.inventory,
+        })
+        .onConflictDoNothing();
+      this.npcIds.add(char.id);
+    } else {
+      await db
+        .delete(schema.characters)
+        .where(
+          and(eq(schema.characters.id, char.id), eq(schema.characters.campaignId, this.campaignId)),
+        );
+      this.npcIds.delete(char.id);
+    }
+
+    const state = await this.getState();
+    let tokensByMap = state.tokensByMap;
+    const activeKey = this.mapKey(state.mapId);
+    const activePatch: Record<string, TokenState | null> = {};
+    for (const { mapId, pos } of tokens) {
+      const current = tokensByMap[mapId] ?? {};
+      const next: Record<string, TokenState> = { ...current };
+      if (present) next[char.id] = { charId: char.id, x: pos.x, y: pos.y };
+      else delete next[char.id];
+      tokensByMap = { ...tokensByMap, [mapId]: next };
+      if (mapId === activeKey) activePatch[char.id] = present ? (next[char.id] ?? null) : null;
+    }
+    await this.patchState({ tokensByMap });
+
+    this.broadcastRoleAware({
+      characters: { [char.id]: present ? this.cardFromUndo(char) : null },
+      ...(Object.keys(activePatch).length > 0 ? { tokens: activePatch } : {}),
+    });
+    if (present) {
+      await this.broadcastPnjVisibility([char.id]);
+      await this.broadcastInventories();
+    }
+  }
+
+  private cardFromUndo(char: UndoCharacter): CharacterCard {
+    return {
+      id: char.id,
+      kind: char.kind,
+      ownerId: char.ownerId,
+      name: char.name,
+      color: char.color,
+      active: char.active,
+      portrait: char.sheet.portrait ?? null,
+      ca: char.sheet.ca,
+      sub:
+        char.kind === "pj"
+          ? `${char.sheet.identite.race} ${char.sheet.identite.classe} niv. ${char.sheet.identite.niveau}`
+          : "",
+      initiativeBonus: char.sheet.initiativeBonus,
+      pv: char.pv,
+      pvMax: char.pvMax,
+      pvTemp: char.pvTemp,
+      conditions: char.conditions,
+      tokenScale: char.tokenScale,
+    };
+  }
+
+  private async applyMarkerAdd(mapId: string, marker: Marker): Promise<void> {
+    const state = await this.getState();
+    const current = this.markersOf(state, mapId);
+    if (current.some((m) => m.id === marker.id)) return;
+    const markers = [...current, marker];
+    await this.patchState(this.patchMarkersFor(state, mapId, markers));
+    this.broadcastMarkersFor(mapId, markers);
+  }
+
+  private async applyMarkerRemove(mapId: string, id: string): Promise<void> {
+    const state = await this.getState();
+    const current = this.markersOf(state, mapId);
+    const markers = current.filter((m) => m.id !== id);
+    if (markers.length === current.length) return;
+    await this.patchState(this.patchMarkersFor(state, mapId, markers));
+    this.broadcastMarkersFor(mapId, markers);
+  }
+
+  private async applyMarkerMove(mapId: string, id: string, pos: UndoPos): Promise<void> {
+    const state = await this.getState();
+    const markers = this.markersOf(state, mapId).map((m) =>
+      m.id === id ? { ...m, x: pos.x, y: pos.y } : m,
+    );
+    await this.patchState(this.patchMarkersFor(state, mapId, markers));
+    this.broadcastMarkersFor(mapId, markers);
+  }
+
+  private async applyFog(mapId: string, target: FogState | null): Promise<void> {
+    const state = await this.getState();
+    const fog = { ...state.fog };
+    if (target) fog[mapId] = target;
+    else delete fog[mapId];
+    await this.patchState({ fog });
+    if (mapId === this.mapKey(state.mapId)) {
+      // Un fog absent se représente comme « éteint » côté client.
+      this.broadcastRoleAware({ fog: { [mapId]: target ?? { on: false, reveals: [] } } });
+    }
+    await this.broadcastPnjVisibility();
+  }
+
   /** Compteur à fenêtre glissante par utilisateur (audit S1). `isMove` selects
    *  le budget déplacement, plus large mais toujours borné. */
   private isRateLimited(userId: string, isMove = false): boolean {
@@ -472,6 +1044,11 @@ export class GameTableDO extends DurableObject<Env> {
     const server = pair[1] as WebSocket;
 
     this.ctx.acceptWebSocket(server);
+    // Keepalive (audit P4) : répond au battement sans réveiller le DO endormi
+    // (et sans handler ni facturation de durée dans ce cas).
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(WS_HEARTBEAT_REQUEST, WS_HEARTBEAT_RESPONSE),
+    );
 
     const attachment: WsAttachment = { userId, name, role, charId, color };
     server.serializeAttachment(attachment);
@@ -503,6 +1080,17 @@ export class GameTableDO extends DurableObject<Env> {
   private mutationChain: Promise<void> = Promise.resolve();
 
   override webSocketMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    // Keepalive : réponse immédiate quand le DO est éveillé (endormi, c'est
+    // `setWebSocketAutoResponse` qui répond, sans passer ici). Le message
+    // n'entre ni dans la file de mutations, ni dans la validation Zod.
+    if (message === WS_HEARTBEAT_REQUEST) {
+      try {
+        ws.send(WS_HEARTBEAT_RESPONSE);
+      } catch {
+        /* socket fermée */
+      }
+      return Promise.resolve();
+    }
     this.mutationChain = this.mutationChain
       .then(() => this.handleWsMessage(ws, message))
       .catch(() => {
@@ -559,7 +1147,11 @@ export class GameTableDO extends DurableObject<Env> {
     // (drag de pion) a son propre budget, sinon un usage normal le fait tomber.
     const rawType = msg.type;
     const isMoveMsg =
-      rawType === "token.move" || rawType === "marker.move" || rawType === "fog.reveal";
+      rawType === "token.move" ||
+      rawType === "marker.move" ||
+      rawType === "link.move" ||
+      rawType === "pin.move" ||
+      rawType === "fog.reveal";
     if (this.isRateLimited(attachment.userId, isMoveMsg)) {
       ws.send(
         JSON.stringify({ type: "error", code: "RATE_LIMITED", msg: "Trop de messages, ralentis" }),
@@ -581,6 +1173,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "char.condition":
           await this.handleCharCondition(ws, attachment, m);
+          break;
+        case "char.scale":
+          await this.handleCharScale(attachment, m);
           break;
         case "token.move":
           await this.handleTokenMove(ws, attachment, m);
@@ -621,11 +1216,47 @@ export class GameTableDO extends DurableObject<Env> {
         case "marker.clear":
           await this.handleMarkerClear(ws, attachment);
           break;
+        case "link.set":
+          await this.handleLinkSet(attachment, m);
+          break;
+        case "link.remove":
+          await this.handleLinkRemove(attachment, m);
+          break;
+        case "link.move":
+          await this.handleLinkMove(attachment, m);
+          break;
+        case "link.travel":
+          await this.handleLinkTravel(attachment, m);
+          break;
+        case "pin.set":
+          await this.handlePinSet(attachment, m);
+          break;
+        case "pin.move":
+          await this.handlePinMove(attachment, m);
+          break;
+        case "pin.remove":
+          await this.handlePinRemove(attachment, m);
+          break;
+        case "target.set":
+          await this.handleTargetSet(attachment, m);
+          break;
+        case "widget.counter":
+          await this.handleWidgetCounter(attachment, m);
+          break;
+        case "widget.clock":
+          await this.handleWidgetClock(attachment, m);
+          break;
+        case "widget.timer":
+          await this.handleWidgetTimer(attachment, m);
+          break;
         case "fog.enable":
           await this.handleFogEnable(ws, attachment);
           break;
         case "fog.reveal":
           await this.handleFogReveal(ws, attachment, m);
+          break;
+        case "fog.revealArea":
+          await this.handleFogRevealArea(ws, attachment, m);
           break;
         case "fog.cover":
           await this.handleFogCover(ws, attachment);
@@ -638,6 +1269,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "inv.drop":
           await this.handleInvDrop(ws, attachment, m);
+          break;
+        case "inv.money":
+          await this.handleInvMoney(ws, attachment, m);
           break;
         case "inv.give":
           await this.handleInvGive(ws, attachment, m);
@@ -653,6 +1287,9 @@ export class GameTableDO extends DurableObject<Env> {
           break;
         case "combat.next":
           await this.handleCombatNext(ws, attachment);
+          break;
+        case "combat.reorder":
+          await this.handleCombatReorder(attachment, m);
           break;
         default:
           // inv.* (phase 7) : validés mais non câblés — même réponse qu'avant.
@@ -772,6 +1409,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: ch.pvMax,
       pvTemp: ch.pvTemp,
       conditions: ch.conditions,
+      tokenScale: ch.tokenScale,
     };
     this.broadcastRoleAware({ characters: { [charId]: card } });
     // Le sac a pu changer en REST (fiche, etc.) : on le repousse filtré.
@@ -991,6 +1629,33 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ characters: { [charId]: { conditions } } });
   }
 
+  /** Taille du pion (multiplicateur de case) : réglage de confort, réservé MJ,
+   *  sans journal — mais diffusé à tous car l'échelle fait partie du rendu. */
+  private async handleCharScale(att: WsAttachment, msg: CharScaleMsg) {
+    if (att.role !== "mj") return;
+    const { charId } = msg;
+    const scale = Math.round(Math.min(4, Math.max(0.25, msg.scale)) * 100) / 100;
+
+    const db = this.getDb();
+    const [char] = await db
+      .select({ id: schema.characters.id })
+      .from(schema.characters)
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      )
+      .limit(1);
+    if (!char) return;
+
+    await db
+      .update(schema.characters)
+      .set({ tokenScale: scale, updatedAt: new Date() })
+      .where(
+        and(eq(schema.characters.id, charId), eq(schema.characters.campaignId, this.campaignId)),
+      );
+
+    this.broadcastRoleAware({ characters: { [charId]: { tokenScale: scale } } });
+  }
+
   private async handleNpcAdd(ws: WebSocket, att: WsAttachment, msg: NpcAddMsg) {
     if (att.role !== "mj") return;
     const name = (msg.name.trim() || "PNJ").slice(0, 80);
@@ -1050,17 +1715,19 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: pv,
       pvTemp: 0,
       conditions: [],
+      tokenScale: 1,
     };
 
     const patch: Record<string, unknown> = { characters: { [id]: card } };
+    const state = await this.getState();
+    const combatBefore = state.combat;
+    let placed: UndoToken | null = null;
     if (x !== null && y !== null) {
-      const state = await this.getState();
-      const tokens = {
-        ...this.tokensOf(state),
-        [id]: { charId: id, x: this.clamp(x), y: this.clamp(y) },
-      };
+      const pos: UndoPos = { x: this.clamp(x), y: this.clamp(y) };
+      const tokens = { ...this.tokensOf(state), [id]: { charId: id, x: pos.x, y: pos.y } };
       const next = await this.patchState(this.patchTokens(state, tokens));
       patch.tokens = { [id]: tokens[id] };
+      placed = { mapId: this.mapKey(state.mapId), pos };
 
       // Cas limite R8/6.4 : PNJ ajouté en cours de combat → rejoint l'initiative.
       if (next.mode === "combat" && next.combat && pv > 0) {
@@ -1079,6 +1746,32 @@ export class GameTableDO extends DurableObject<Env> {
     this.appendJournal(entry, visibility);
     this.broadcastJournal(entry, visibility);
     this.broadcastRoleAware(patch);
+
+    const combatAfter = this.liveState?.combat ?? null;
+    const ops: UndoOp[] = [];
+    if (JSON.stringify(combatBefore) !== JSON.stringify(combatAfter)) {
+      ops.push({ kind: "combat.set", before: combatBefore, after: combatAfter });
+    }
+    ops.push({
+      kind: "npc.create",
+      char: {
+        id,
+        ownerId: null,
+        kind: "pnj",
+        name,
+        color: "#C0392B",
+        active: true,
+        sheet,
+        pv,
+        pvMax: pv,
+        pvTemp: 0,
+        conditions: [],
+        tokenScale: 1,
+        inventory: { items: [], money: { po: 0, pa: 0, pc: 0 } },
+      },
+      tokens: placed ? [placed] : [],
+    });
+    await this.pushOps(ops);
   }
 
   /** Pose n instances d'un modèle de la bibliothèque MJ sur la carte active. */
@@ -1110,6 +1803,8 @@ export class GameTableDO extends DurableObject<Env> {
     const tokens = { ...this.tokensOf(state) };
     const charactersPatch: Record<string, CharacterCard> = {};
     const ids: string[] = [];
+    const created: Extract<UndoOp, { kind: "npc.create" }>[] = [];
+    const combatBefore = state.combat;
 
     for (let i = 0; i < count; i++) {
       const name = count > 1 ? `${tpl.name} ${String.fromCharCode(65 + i)}` : tpl.name;
@@ -1134,6 +1829,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: tpl.pvMax,
         pvTemp: 0,
         conditions: [...tpl.conditions],
+        tokenScale: tpl.tokenScale,
       });
       this.npcIds.add(id);
       ids.push(id);
@@ -1153,7 +1849,32 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: tpl.pvMax,
         pvTemp: 0,
         conditions: [...tpl.conditions],
+        tokenScale: tpl.tokenScale,
       };
+      created.push({
+        kind: "npc.create",
+        char: {
+          id,
+          ownerId: null,
+          kind: "pnj",
+          name,
+          color: tpl.color,
+          active: true,
+          sheet,
+          pv: tpl.pvMax,
+          pvMax: tpl.pvMax,
+          pvTemp: 0,
+          conditions: [...tpl.conditions],
+          tokenScale: tpl.tokenScale,
+          inventory: { items: [], money: { po: 0, pa: 0, pc: 0 } },
+        },
+        tokens: [
+          {
+            mapId: this.mapKey(state.mapId),
+            pos: { x: this.clamp(x + i * 4), y: this.clamp(y + i * 3) },
+          },
+        ],
+      });
     }
 
     await this.patchState(this.patchTokens(state, tokens));
@@ -1176,6 +1897,21 @@ export class GameTableDO extends DurableObject<Env> {
         await this.addLateParticipant(id, tpl.initBonus);
       }
     }
+
+    // Toute la pose est UN pas d'undo (batch) : jouer 6 gobelins se défait d'un coup.
+    const combatAfter = this.liveState?.combat ?? null;
+    const batchOps: UndoOp[] = [];
+    if (JSON.stringify(combatBefore) !== JSON.stringify(combatAfter)) {
+      batchOps.push({ kind: "combat.set", before: combatBefore, after: combatAfter });
+    }
+    batchOps.push(...created);
+    await this.pushOps([
+      {
+        kind: "batch",
+        label: count > 1 ? `une pose de ${count} PNJ` : "une pose de PNJ",
+        ops: batchOps,
+      },
+    ]);
   }
 
   /** Enregistre un PNJ posé (état courant : PV, états…) comme modèle. */
@@ -1232,6 +1968,7 @@ export class GameTableDO extends DurableObject<Env> {
       initBonus: char.sheet.initiativeBonus,
       color: char.color,
       conditions: [...char.conditions],
+      tokenScale: char.tokenScale,
       notes: "",
       source: null,
       createdAt: now,
@@ -1330,11 +2067,15 @@ export class GameTableDO extends DurableObject<Env> {
     this.npcIds.delete(charId);
 
     const state = await this.getState();
+    const combatBefore = state.combat;
     let touched = false;
     const tokensByMap: LiveState["tokensByMap"] = {};
+    const undoTokens: UndoToken[] = [];
     for (const [key, toks] of Object.entries(state.tokensByMap)) {
-      if (toks[charId]) {
+      const t = toks[charId];
+      if (t) {
         touched = true;
+        undoTokens.push({ mapId: key, pos: { x: t.x, y: t.y } });
         const { [charId]: _drop, ...rest } = toks;
         tokensByMap[key] = rest;
       } else {
@@ -1362,6 +2103,32 @@ export class GameTableDO extends DurableObject<Env> {
       tokens: { [charId]: null },
       ...(combatPatch !== undefined ? { combat: combatPatch } : {}),
     });
+
+    const combatAfter = combatPatch !== undefined ? combatPatch : combatBefore;
+    const ops: UndoOp[] = [];
+    if (JSON.stringify(combatBefore) !== JSON.stringify(combatAfter)) {
+      ops.push({ kind: "combat.set", before: combatBefore, after: combatAfter });
+    }
+    ops.push({
+      kind: "npc.delete",
+      char: {
+        id: char.id,
+        ownerId: char.ownerId,
+        kind: char.kind,
+        name: char.name,
+        color: char.color,
+        active: char.active,
+        sheet: char.sheet,
+        pv: char.pv,
+        pvMax: char.pvMax,
+        pvTemp: char.pvTemp,
+        conditions: [...char.conditions],
+        tokenScale: char.tokenScale,
+        inventory: normalizeInventory(char.inventory),
+      },
+      tokens: undoTokens,
+    });
+    await this.pushOps(ops);
   }
 
   // ── Handlers : carte, pions ─────────────────────────────────────
@@ -1380,7 +2147,9 @@ export class GameTableDO extends DurableObject<Env> {
 
     const state = await this.getState();
     const current = this.tokensOf(state);
-    if (!current[tokenId]) return;
+    const previous = current[tokenId];
+    if (!previous) return;
+    if (previous.x === cx && previous.y === cy) return;
     // B5/perf : la carte d'un PNJ n'est ré-poussée que si sa VISIBILITÉ change
     // réellement. Bouger un pion dans le même état de brouillard ne change rien
     // pour les joueurs — et surtout, cela évitait un SELECT D1 par message
@@ -1394,6 +2163,13 @@ export class GameTableDO extends DurableObject<Env> {
     if (this.npcIds.has(tokenId) && this.isCharVisibleToPlayers(tokenId, after) !== wasVisible) {
       await this.broadcastPnjVisibility([tokenId]);
     }
+    await this.recordTokenMove(
+      this.mapKey(state.mapId),
+      tokenId,
+      { x: previous.x, y: previous.y },
+      { x: cx, y: cy },
+      msg.begin === true,
+    );
   }
 
   /** Le MJ place un personnage (PJ ou PNJ) sur la carte active. */
@@ -1415,13 +2191,15 @@ export class GameTableDO extends DurableObject<Env> {
       .limit(1);
     if (!char) return;
 
+    const pos: UndoPos = { x: this.clamp(x), y: this.clamp(y) };
     const tokens = {
       ...this.tokensOf(state),
-      [charId]: { charId, x: this.clamp(x), y: this.clamp(y) },
+      [charId]: { charId, x: pos.x, y: pos.y },
     };
     await this.patchState(this.patchTokens(state, tokens));
     this.broadcastRoleAware({ tokens: { [charId]: tokens[charId]! } });
     if (this.npcIds.has(charId)) await this.broadcastPnjVisibility([charId]);
+    await this.pushOps([{ kind: "token.place", mapId: this.mapKey(state.mapId), charId, pos }]);
   }
 
   /** Retire le pion de la carte active sans supprimer le personnage. */
@@ -1431,12 +2209,21 @@ export class GameTableDO extends DurableObject<Env> {
 
     const state = await this.getState();
     const current = this.tokensOf(state);
-    if (!current[charId]) return;
+    const pos = current[charId];
+    if (!pos) return;
 
     const { [charId]: _drop, ...rest } = current;
     await this.patchState(this.patchTokens(state, rest));
     this.broadcastRoleAware({ tokens: { [charId]: null } });
     if (this.npcIds.has(charId)) await this.broadcastPnjVisibility([charId]);
+    await this.pushOps([
+      {
+        kind: "token.remove",
+        mapId: this.mapKey(state.mapId),
+        charId,
+        pos: { x: pos.x, y: pos.y },
+      },
+    ]);
   }
 
   /** Nom de la copie suivante : Gobelin → Gobelin B → Gobelin C… */
@@ -1486,6 +2273,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: src.pvMax,
       pvTemp: src.pvTemp,
       conditions: [...src.conditions],
+      tokenScale: src.tokenScale,
     });
     this.npcIds.add(id);
 
@@ -1504,16 +2292,18 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: src.pvMax,
       pvTemp: src.pvTemp,
       conditions: [...src.conditions],
+      tokenScale: src.tokenScale,
     };
 
     const patch: Record<string, unknown> = { characters: { [id]: card } };
+    const combatBefore = state.combat;
+    let placed: UndoToken | null = null;
     if (source && state.mapId) {
-      const tokens = {
-        ...this.tokensOf(state),
-        [id]: { charId: id, x: this.clamp(source.x + 5), y: this.clamp(source.y + 5) },
-      };
+      const pos: UndoPos = { x: this.clamp(source.x + 5), y: this.clamp(source.y + 5) };
+      const tokens = { ...this.tokensOf(state), [id]: { charId: id, x: pos.x, y: pos.y } };
       await this.patchState(this.patchTokens(state, tokens));
       patch.tokens = { [id]: tokens[id] };
+      placed = { mapId: this.mapKey(state.mapId), pos };
 
       if (state.mode === "combat" && state.combat && src.pv > 0) {
         await this.addLateParticipant(id, src.sheet.initiativeBonus);
@@ -1531,6 +2321,32 @@ export class GameTableDO extends DurableObject<Env> {
     this.appendJournal(entry, visibility);
     this.broadcastJournal(entry, visibility);
     this.broadcastRoleAware(patch);
+
+    const combatAfter = this.liveState?.combat ?? null;
+    const ops: UndoOp[] = [];
+    if (JSON.stringify(combatBefore) !== JSON.stringify(combatAfter)) {
+      ops.push({ kind: "combat.set", before: combatBefore, after: combatAfter });
+    }
+    ops.push({
+      kind: "npc.create",
+      char: {
+        id,
+        ownerId: null,
+        kind: "pnj",
+        name: newName,
+        color: src.color,
+        active: true,
+        sheet,
+        pv: src.pv,
+        pvMax: src.pvMax,
+        pvTemp: src.pvTemp,
+        conditions: [...src.conditions],
+        tokenScale: src.tokenScale,
+        inventory: normalizeInventory(src.inventory),
+      },
+      tokens: placed ? [placed] : [],
+    });
+    await this.pushOps(ops);
   }
 
   private async handleMapSelect(ws: WebSocket, att: WsAttachment, msg: MapSelectMsg) {
@@ -1552,12 +2368,16 @@ export class GameTableDO extends DurableObject<Env> {
     await this.patchState({ mapId });
     const view = { ...state, mapId };
     // mapId présent dans le patch ⇒ le client REMPLACE tokens/markers (vue de
-    // la nouvelle carte) au lieu de fusionner (voir ws.ts).
+    // la nouvelle carte) au lieu de fusionner (voir ws.ts) ; les liens suivent
+    // dans un patch filtré par rôle.
     this.broadcastRoleAware({
       mapId,
       tokens: this.tokensOf(view),
       markers: this.markersOf(view),
+      pins: this.pinsOf(view),
+      arrival: null,
     });
+    this.broadcastLinks(this.linksOf(view));
     // B5 : changer de carte change tout le jeu de PNJ visibles/masqués.
     await this.broadcastPnjVisibility();
   }
@@ -1568,11 +2388,17 @@ export class GameTableDO extends DurableObject<Env> {
     const text = (msg.text.trim() || "repère").slice(0, 200);
 
     const state = await this.getState();
-    const id = msg.id || crypto.randomUUID();
+    const existing = msg.id ? this.markersOf(state).find((m) => m.id === msg.id) : undefined;
+    const id = existing?.id ?? msg.id ?? crypto.randomUUID();
     const marker: Marker = { id, x: this.clamp(x), y: this.clamp(y), text };
-    const markers = [...this.markersOf(state), marker];
+    const markers = existing
+      ? this.markersOf(state).map((m) => (m.id === id ? marker : m))
+      : [...this.markersOf(state), marker];
     await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
+    if (!existing) {
+      await this.pushOps([{ kind: "marker.add", mapId: this.mapKey(state.mapId), marker }]);
+    }
   }
 
   private async handleMarkerMove(ws: WebSocket, att: WsAttachment, msg: MarkerMoveMsg) {
@@ -1580,13 +2406,23 @@ export class GameTableDO extends DurableObject<Env> {
     const { id, x, y } = msg;
 
     const state = await this.getState();
-    const markers = this.markersOf(state).map((m) =>
-      m.id === id ? { ...m, x: this.clamp(x), y: this.clamp(y) } : m,
-    );
+    const previous = this.markersOf(state).find((m) => m.id === id);
+    if (!previous) return;
+    const cx = this.clamp(x);
+    const cy = this.clamp(y);
+    if (previous.x === cx && previous.y === cy) return;
+    const markers = this.markersOf(state).map((m) => (m.id === id ? { ...m, x: cx, y: cy } : m));
     // Comme les pions : persistance débouncée (c'était un storage.put complet
     // par message de drag), diffusion immédiate.
     this.patchStateInMemory(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
+    await this.recordMarkerMove(
+      this.mapKey(state.mapId),
+      id,
+      { x: previous.x, y: previous.y },
+      { x: cx, y: cy },
+      msg.begin === true,
+    );
   }
 
   private async handleMarkerRemove(ws: WebSocket, att: WsAttachment, msg: MarkerRemoveMsg) {
@@ -1594,14 +2430,25 @@ export class GameTableDO extends DurableObject<Env> {
     const id = msg.id;
 
     const state = await this.getState();
+    const marker = this.markersOf(state).find((m) => m.id === id);
+    if (!marker) return;
     const markers = this.markersOf(state).filter((m) => m.id !== id);
     await this.patchState(this.patchMarkers(state, markers));
     this.broadcastAll({ type: "delta", patch: { markers } });
+    await this.pushOps([
+      {
+        kind: "marker.remove",
+        mapId: this.mapKey(state.mapId),
+        marker: { ...marker },
+      },
+    ]);
   }
 
   private async handleMarkerClear(ws: WebSocket, att: WsAttachment) {
     if (att.role !== "mj") return;
     const state = await this.getState();
+    const previous = this.markersOf(state);
+    if (previous.length === 0) return;
     await this.patchState(this.patchMarkers(state, []));
     const entry = this.makeJournalEntry(
       "system",
@@ -1612,6 +2459,237 @@ export class GameTableDO extends DurableObject<Env> {
     await this.appendJournal(entry);
     this.broadcastAll({ type: "journal", entry });
     this.broadcastAll({ type: "delta", patch: { markers: [] } });
+    await this.pushOps([
+      {
+        kind: "marker.clear",
+        mapId: this.mapKey(state.mapId),
+        markers: previous.map((m) => ({ ...m })),
+      },
+    ]);
+  }
+
+  // ── Handlers : liens entre cartes ──────────────────────────────
+  // Créés/édités par le MJ ; empruntés par TOUT membre (« link.travel »), la
+  // carte active étant partagée. Aucun filtre B5 : les noms de cartes sont déjà
+  // lisibles par les membres (GET /api/maps), un lien ne révèle rien de plus.
+
+  private async handleLinkSet(att: WsAttachment, msg: LinkSetMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId || msg.targetMapId === mapId) return;
+
+    const db = this.getDb();
+    const [target] = await db
+      .select({ id: schema.maps.id })
+      .from(schema.maps)
+      .where(and(eq(schema.maps.id, msg.targetMapId), eq(schema.maps.campaignId, this.campaignId)))
+      .limit(1);
+    if (!target) return;
+
+    const links = this.linksOf(state);
+    const existing = msg.id ? links.find((l) => l.id === msg.id) : undefined;
+    const link: MapLink = {
+      id: existing?.id ?? msg.id ?? crypto.randomUUID(),
+      mapId,
+      x: this.clamp(msg.x),
+      y: this.clamp(msg.y),
+      targetMapId: msg.targetMapId,
+      ...(msg.targetX !== undefined ? { targetX: this.clamp(msg.targetX) } : {}),
+      ...(msg.targetY !== undefined ? { targetY: this.clamp(msg.targetY) } : {}),
+      label: (msg.label?.trim() || "passage").slice(0, 80),
+      kind: (msg.kind ?? "door") as MapLinkKind,
+      oneWay: existing?.oneWay ?? msg.oneWay ?? false,
+      hidden: msg.hidden ?? existing?.hidden ?? false,
+    };
+    const next = existing ? links.map((l) => (l.id === link.id ? link : l)) : [...links, link];
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastLinks(next);
+  }
+
+  /** Diffuse les liens de la carte active : un joueur ne voit jamais un lien
+   *  `hidden` (passage secret) — filtre serveur, comme la visibilité PNJ. */
+  private broadcastLinks(links: MapLink[]): void {
+    const visible = links.filter((l) => !l.hidden);
+    const dataMj = JSON.stringify({ type: "delta", patch: { links } });
+    const dataPlayer = JSON.stringify({ type: "delta", patch: { links: visible } });
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | null;
+      try {
+        ws.send(att?.role === "mj" ? dataMj : dataPlayer);
+      } catch {
+        /* socket fermée */
+      }
+    }
+  }
+
+  private async handleLinkRemove(att: WsAttachment, msg: LinkRemoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const links = this.linksOf(state);
+    const next = links.filter((l) => l.id !== msg.id);
+    if (next.length === links.length) return;
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastLinks(next);
+  }
+
+  private async handleLinkMove(att: WsAttachment, msg: LinkMoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const links = this.linksOf(state);
+    const next = links.map((l) =>
+      l.id === msg.id ? { ...l, x: this.clamp(msg.x), y: this.clamp(msg.y) } : l,
+    );
+    await this.patchState(this.patchLinks(state, next));
+    this.broadcastLinks(next);
+  }
+
+  private async handleLinkTravel(att: WsAttachment, msg: LinkTravelMsg) {
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId) return;
+
+    const link = this.linksOf(state).find((l) => l.id === msg.id);
+    if (!link) return;
+    // Un passage secret ne s'emprunte pas côté joueur (même avec l'id en cache).
+    if (link.hidden && att.role !== "mj") return;
+
+    const db = this.getDb();
+    const [target] = await db
+      .select({ id: schema.maps.id })
+      .from(schema.maps)
+      .where(and(eq(schema.maps.id, link.targetMapId), eq(schema.maps.campaignId, this.campaignId)))
+      .limit(1);
+    if (!target) return;
+
+    const arrival = { x: link.targetX ?? 50, y: link.targetY ?? 50 };
+    await this.patchState({ mapId: link.targetMapId });
+    const view = { ...state, mapId: link.targetMapId };
+    // mapId dans le patch ⇒ le client REMPLACE tokens/markers (vue de la cible).
+    this.broadcastRoleAware({
+      mapId: link.targetMapId,
+      tokens: this.tokensOf(view),
+      markers: this.markersOf(view),
+      pins: this.pinsOf(view),
+      arrival,
+    });
+    this.broadcastLinks(this.linksOf(view));
+    await this.broadcastPnjVisibility(); // B5 : changer de carte change les PNJ visibles
+
+    // Un passage secret ne se raconte qu'au MJ.
+    const visibility = link.hidden ? "mj" : "all";
+    const entry = this.makeJournalEntry(
+      "system",
+      null,
+      null,
+      `✦ Le groupe emprunte ${link.label}.`,
+    );
+    this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
+  }
+
+  // ── Handlers : notes épinglées ─────────────────────────────────
+  // MJ seul les crée/édite ; visibles par tous (notes de lieu, pas de
+  // préparation privée — ça, c'est le dashboard / les notes de carte REST).
+
+  private async handlePinSet(att: WsAttachment, msg: PinSetMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const mapId = state.mapId;
+    if (!mapId) return;
+
+    const pins = this.pinsOf(state);
+    const existing = msg.id ? pins.find((p) => p.id === msg.id) : undefined;
+    const pin: MapPin = {
+      id: existing?.id ?? msg.id ?? crypto.randomUUID(),
+      mapId,
+      x: this.clamp(msg.x),
+      y: this.clamp(msg.y),
+      label: (msg.label?.trim() || existing?.label || "note").slice(0, 80),
+      text: (msg.text ?? existing?.text ?? "").slice(0, 4000),
+    };
+    const next = existing ? pins.map((p) => (p.id === pin.id ? pin : p)) : [...pins, pin];
+    await this.patchState(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
+  }
+
+  private async handlePinMove(att: WsAttachment, msg: PinMoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const pins = this.pinsOf(state);
+    const next = pins.map((p) =>
+      p.id === msg.id ? { ...p, x: this.clamp(msg.x), y: this.clamp(msg.y) } : p,
+    );
+    // Comme les pions/repères : diffusion immédiate, persistance débouncée.
+    this.patchStateInMemory(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
+  }
+
+  private async handlePinRemove(att: WsAttachment, msg: PinRemoveMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const pins = this.pinsOf(state);
+    const next = pins.filter((p) => p.id !== msg.id);
+    if (next.length === pins.length) return;
+    await this.patchState(this.patchPins(state, next));
+    this.broadcastAll({ type: "delta", patch: { pins: next } });
+  }
+
+  private async handleTargetSet(att: WsAttachment, msg: TargetSetMsg) {
+    if (att.role !== "mj") return;
+    const target = msg.charId;
+    if (target) {
+      const cards = await this.loadCharacterCards([target]);
+      if (!cards[target]) return;
+    }
+    await this.patchState({ target });
+    this.broadcastRoleAware({ target });
+  }
+
+  private async handleWidgetCounter(att: WsAttachment, msg: WidgetCounterMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), counter: msg.value };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
+  }
+
+  private async handleWidgetClock(att: WsAttachment, msg: WidgetClockMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), clock: msg.value };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
+  }
+
+  private async handleWidgetTimer(att: WsAttachment, msg: WidgetTimerMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const current = (state.widgets ?? defaultWidgets()).timer;
+    const now = Date.now();
+    let timer = current;
+    if (msg.action === "reset") {
+      const initial = msg.seconds ?? current.initial;
+      timer = { running: false, endsAt: null, remaining: initial, initial };
+    } else if (msg.action === "start") {
+      const remaining = msg.seconds ?? current.remaining;
+      if (remaining <= 0) return;
+      timer = {
+        running: true,
+        endsAt: now + remaining * 1000,
+        remaining,
+        initial: msg.seconds ?? current.initial,
+      };
+    } else {
+      const remaining =
+        current.running && current.endsAt
+          ? Math.max(0, Math.round((current.endsAt - now) / 1000))
+          : current.remaining;
+      timer = { running: false, endsAt: null, remaining, initial: current.initial };
+    }
+    const widgets: TableWidgets = { ...(state.widgets ?? defaultWidgets()), timer };
+    await this.patchState({ widgets });
+    this.broadcastAll({ type: "delta", patch: { widgets } });
   }
 
   // ── Handlers : brouillard ───────────────────────────────────────
@@ -1620,10 +2698,13 @@ export class GameTableDO extends DurableObject<Env> {
     if (att.role !== "mj") return;
     const state = await this.getState();
     if (!state.mapId) return;
-    const fog = { ...state.fog, [state.mapId]: { on: true, reveals: [] } };
+    const before = state.fog[state.mapId] ?? null;
+    const after: FogState = { on: true, reveals: [] };
+    const fog = { ...state.fog, [state.mapId]: after };
     await this.patchState({ fog });
     this.broadcastRoleAware({ fog });
     await this.broadcastPnjVisibility(); // B5 : (re)masque les PNJ de la carte active
+    await this.pushOps([{ kind: "fog.set", mapId: state.mapId, before, after }]);
   }
 
   private async handleFogReveal(ws: WebSocket, att: WsAttachment, msg: FogRevealMsg) {
@@ -1634,6 +2715,10 @@ export class GameTableDO extends DurableObject<Env> {
     if (!current || !current.on) return;
     const x = this.clamp(msg.x);
     const y = this.clamp(msg.y);
+
+    // Un nouveau trait ferme le pas précédent MÊME si son premier point est
+    // rejeté (trop proche) : sinon il rejoindrait le pas du trait d'avant.
+    if (msg.begin) this.openFogPaint = null;
 
     // Skip points too close to an existing reveal: keeps the array bounded
     // (a map can only hold so many non-overlapping circles) instead of growing
@@ -1646,6 +2731,7 @@ export class GameTableDO extends DurableObject<Env> {
     });
     if (tooClose || current.reveals.length >= FOG_MAX_REVEALS) return;
 
+    const index = current.reveals.length;
     const fog = {
       ...state.fog,
       [state.mapId]: { on: true, reveals: [...current.reveals, { x, y }] },
@@ -1653,13 +2739,55 @@ export class GameTableDO extends DurableObject<Env> {
     await this.patchState({ fog });
     this.broadcastRoleAware({ fog });
     await this.broadcastPnjVisibility(); // B5 : ce point a pu révéler un PNJ
+    await this.recordFogPaint(state.mapId, index, { x, y }, msg.begin === true);
+  }
+
+  /** Forme (rectangle/lasso) : tous les points en UN patch, UN pas d'undo. */
+  private async handleFogRevealArea(ws: WebSocket, att: WsAttachment, msg: FogRevealAreaMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    if (!state.mapId) return;
+    const current = state.fog[state.mapId];
+    if (!current || !current.on) return;
+
+    if (msg.begin) this.openFogPaint = null;
+
+    const added: { x: number; y: number }[] = [];
+    for (const p of msg.points) {
+      if (current.reveals.length + added.length >= FOG_MAX_REVEALS) break;
+      const x = this.clamp(p.x);
+      const y = this.clamp(p.y);
+      const tooClose = [...current.reveals, ...added].some((r) => {
+        const dx = r.x - x;
+        const dy = r.y - y;
+        return Math.sqrt(dx * dx + dy * dy) < FOG_REVEAL_MIN_SPACING_PCT;
+      });
+      if (!tooClose) added.push({ x, y });
+    }
+    if (added.length === 0) return;
+
+    const base = current.reveals.length;
+    const fog = {
+      ...state.fog,
+      [state.mapId]: { on: true, reveals: [...current.reveals, ...added] },
+    };
+    await this.patchState({ fog });
+    this.broadcastRoleAware({ fog });
+    await this.broadcastPnjVisibility(); // B5 : ces points ont pu révéler un PNJ
+    let i = 0;
+    for (const point of added) {
+      await this.recordFogPaint(state.mapId, base + i, point, msg.begin === true && i === 0);
+      i += 1;
+    }
   }
 
   private async handleFogCover(ws: WebSocket, att: WsAttachment) {
     if (att.role !== "mj") return;
     const state = await this.getState();
     if (!state.mapId) return;
-    const fog = { ...state.fog, [state.mapId]: { on: true, reveals: [] } };
+    const before = state.fog[state.mapId] ?? null;
+    const after: FogState = { on: true, reveals: [] };
+    const fog = { ...state.fog, [state.mapId]: after };
     await this.patchState({ fog });
     const entry = this.makeJournalEntry(
       "system",
@@ -1671,13 +2799,16 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "journal", entry });
     this.broadcastRoleAware({ fog });
     await this.broadcastPnjVisibility(); // B5 : recouvrir masque tous les PNJ de la carte
+    await this.pushOps([{ kind: "fog.set", mapId: state.mapId, before, after }]);
   }
 
   private async handleFogDisable(ws: WebSocket, att: WsAttachment) {
     if (att.role !== "mj") return;
     const state = await this.getState();
     if (!state.mapId) return;
-    const fog = { ...state.fog, [state.mapId]: { on: false, reveals: [] } };
+    const before = state.fog[state.mapId] ?? null;
+    const after: FogState = { on: false, reveals: [] };
+    const fog = { ...state.fog, [state.mapId]: after };
     await this.patchState({ fog });
     const entry = this.makeJournalEntry(
       "system",
@@ -1689,6 +2820,7 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "journal", entry });
     this.broadcastRoleAware({ fog });
     await this.broadcastPnjVisibility(); // B5 : plus de brouillard = tous les PNJ visibles
+    await this.pushOps([{ kind: "fog.set", mapId: state.mapId, before, after }]);
   }
 
   // ── Inventaire & échanges (R9) ───────────────────────────────
@@ -1779,6 +2911,18 @@ export class GameTableDO extends DurableObject<Env> {
       `✦ Le MJ ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${msg.item.trim()} à ${target.name}.`,
       att,
     );
+    await this.broadcastInventories();
+  }
+
+  /** MJ, ou propriétaire du sac : ajuste la bourse par deltas signés. Pas de
+   *  journal : c'est une correction de fiche, pas une action de séance (les
+   *  dons, eux, restent tracés). */
+  private async handleInvMoney(ws: WebSocket, att: WsAttachment, msg: InvMoneyMsg) {
+    if (att.role !== "mj" && msg.charId !== att.charId) return;
+    const target = await this.loadInv(msg.charId);
+    if (!target) return;
+    const inv: Inventory = { ...target.inv, money: adjustMoney(target.inv.money, msg.delta) };
+    await this.saveInv(msg.charId, inv);
     await this.broadcastInventories();
   }
 
@@ -2075,6 +3219,28 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastRoleAware({ combat: newCombat });
   }
 
+  /** Déplace un combattant d'un cran dans l'ordre d'initiative (MJ). Le tour
+   *  actif suit le combattant déplacé : on reprojette `turn` sur le nouveau rang. */
+  private async handleCombatReorder(att: WsAttachment, msg: CombatReorderMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const combat = state.combat;
+    if (state.mode !== "combat" || !combat || combat.phase !== "run" || !combat.order) return;
+
+    const order = [...combat.order];
+    const from = order.indexOf(msg.charId);
+    if (from < 0) return;
+    const to = msg.up ? from - 1 : from + 1;
+    if (to < 0 || to >= order.length) return;
+    [order[from], order[to]] = [order[to]!, order[from]!];
+
+    const activeId = combat.order[combat.turn];
+    const turn = activeId ? Math.max(0, order.indexOf(activeId)) : combat.turn;
+    const newCombat: CombatState = { ...combat, order, turn };
+    await this.patchState({ combat: newCombat });
+    this.broadcastRoleAware({ combat: newCombat });
+  }
+
   // ── Helpers ───────────────────────────────────────────────────
 
   private journalSeq = 0;
@@ -2148,6 +3314,15 @@ export class GameTableDO extends DurableObject<Env> {
       hasCombat && this.liveState
         ? this.filterCombatForPlayers(patch.combat as CombatState | null, this.liveState)
         : undefined;
+    // B5 : une cible non révélée (ou un clear) part à null chez les joueurs.
+    const hasTarget = patch.target !== undefined;
+    const playerTarget =
+      hasTarget &&
+      patch.target !== null &&
+      this.liveState &&
+      this.isCharVisibleToPlayers(patch.target as string, this.liveState)
+        ? patch.target
+        : null;
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as WsAttachment | null;
       const isMj = att?.role === "mj";
@@ -2158,6 +3333,7 @@ export class GameTableDO extends DurableObject<Env> {
           ...(playerTokens ? { tokens: playerTokens } : {}),
           ...(playerCharacters ? { characters: playerCharacters } : {}),
           ...(hasCombat ? { combat: playerCombat ?? null } : {}),
+          ...(hasTarget ? { target: playerTarget } : {}),
         };
       }
       try {
@@ -2202,9 +3378,11 @@ export class GameTableDO extends DurableObject<Env> {
       color: string;
     }[];
     inventories: Record<string, Inventory>;
+    history: HistoryState;
   }> {
     const db = this.getDb();
     const state = await this.getState();
+    await this.ensureHistory();
 
     const [campaign] = await db
       .select()
@@ -2246,12 +3424,18 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        tokenScale: ch.tokenScale,
       }));
 
     const rawTokens = this.tokensOf(state);
     const tokens =
       role === "mj" ? rawTokens : (this.filterTokensForPlayers(rawTokens) as typeof rawTokens);
     const combat = role === "mj" ? state.combat : this.filterCombatForPlayers(state.combat, state);
+    // B5 : une cible non révélée pour les joueurs est invisible (comme le combat).
+    const target =
+      role === "mj" || (state.target && this.isCharVisibleToPlayers(state.target, state))
+        ? state.target
+        : null;
 
     await this.ensureLegacyJournalImport();
     const journalTail = await this.getJournalTail(50, role);
@@ -2270,14 +3454,19 @@ export class GameTableDO extends DurableObject<Env> {
         mapId: state.mapId,
         tokens,
         markers: this.markersOf(state),
+        links: role === "mj" ? this.linksOf(state) : this.linksOf(state).filter((l) => !l.hidden),
+        pins: this.pinsOf(state),
         fog: state.fog,
         combat,
+        target,
+        widgets: state.widgets ?? defaultWidgets(),
       },
       characters,
       settings: campaign?.settings ?? DEFAULT_SETTINGS,
       journalTail,
       presence,
       inventories,
+      history: this.historyState(),
     };
   }
 
@@ -2430,6 +3619,22 @@ export class GameTableDO extends DurableObject<Env> {
     this.cachedSettings = null;
     this.journalReady = false;
     this.journalImported = false;
+    // L'historique vit aussi en mémoire : sans ce reset, la pile d'une
+    // campagne purgée restait annulable et rejouait sur un monde vide.
+    this.history = null;
+    this.historyDirty = false;
+    if (this.historyTimer) {
+      clearTimeout(this.historyTimer);
+      this.historyTimer = null;
+    }
+    this.tokenPersistDirty = false;
+    if (this.tokenPersistTimer) {
+      clearTimeout(this.tokenPersistTimer);
+      this.tokenPersistTimer = null;
+    }
+    this.openTokenMove = null;
+    this.openMarkerMove = null;
+    this.openFogPaint = null;
     for (const ws of this.ctx.getWebSockets()) {
       try {
         ws.close(1000, "Campagne supprimée");

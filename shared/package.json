@@ -75,6 +75,11 @@
       "types": "./dist/damage.d.ts",
       "require": "./dist/damage.js",
       "import": "./dist/damage.js"
+    },
+    "./undo": {
+      "types": "./dist/undo.d.ts",
+      "require": "./dist/undo.js",
+      "import": "./dist/undo.js"
     }
   },
   "scripts": {

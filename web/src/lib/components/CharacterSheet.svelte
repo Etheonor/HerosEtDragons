@@ -3,7 +3,9 @@
   import { getNextXpThreshold, type CaracKey } from '$lib/char-utils';
   import type { CharacterDetail, CharacterSheet } from '$lib/api';
   import Editable from '$lib/ds/Editable.svelte';
+  import { focusTrap } from '$lib/ds/focus-trap';
   import { api } from '$lib/api';
+  import { showToast } from '$lib/toast.svelte';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
   import {
     findRace,
@@ -32,10 +34,12 @@
     char,
     onRoll,
     onPvDelta,
+    embedded = false,
   }: {
     char: CharacterDetail;
     onRoll?: (mod: number, label: string) => void;
     onPvDelta?: (delta: number) => void;
+    embedded?: boolean;
   } = $props();
 
   const caracs: CaracKey[] = ['for', 'dex', 'con', 'int', 'sag', 'cha'];
@@ -335,7 +339,7 @@
         touch();
       }
     } catch {
-      /* compendium indisponible : la montée reste complète (PV/DV/slots) */
+      showToast('Aptitudes du niveau indisponibles (compendium)', 'error');
     }
   }
 
@@ -344,10 +348,12 @@
   );
 </script>
 
-<div class="sheet">
+<div class="sheet" class:embedded>
   <!-- Barre haute -->
   <header class="sheet-header">
-    <a href="/campaigns/{char.campaignId}/table" class="back-btn">← retour à la table</a>
+    {#if !embedded}
+      <a href="/campaigns/{char.campaignId}/table" class="back-btn">← retour à la table</a>
+    {/if}
     <div class="header-title">Feuille de personnage</div>
     <div class="header-hint">
       {#if readonly}
@@ -492,10 +498,11 @@
   {#if pickerOpen}
     <div class="overlay" role="presentation" onclick={() => (pickerOpen = false)}>
       <div
-        class="picker"
+        class="picker surface-overlay surface-lg"
         role="dialog"
         aria-modal="true"
         aria-label="Choisir un portrait"
+        use:focusTrap
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (pickerOpen = false)}
       >
@@ -609,17 +616,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: var(--z-overlay);
   }
   .picker {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     width: min(620px, calc(100vw - 48px));
     max-height: min(76vh, 720px);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 16px 50px var(--shadow-2);
   }
   .picker-head {
     display: flex;
@@ -700,6 +703,26 @@
     color: var(--text);
     font-family: var(--font-body);
     padding-bottom: 60px;
+  }
+  .sheet.embedded {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+  .sheet.embedded .sheet-header {
+    padding: 8px 14px;
+    gap: 12px;
+  }
+  .sheet.embedded .char-header-wrap {
+    max-width: none;
+    margin-top: 12px;
+    padding: 0 14px;
+  }
+  .sheet.embedded .sheet-body {
+    max-width: none;
+    padding: 0 14px;
+    grid-template-columns: 168px 226px minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .sheet-header {

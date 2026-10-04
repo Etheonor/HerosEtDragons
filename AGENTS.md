@@ -47,6 +47,9 @@ pnpm check          # LA commande de validation : lint + format + typecheck + te
 pnpm dev            # wrangler dev seul (API + build statique sur :8787)
 pnpm dev:web        # vite dev seul (:5173, HMR) — proxy /api vers :8787
 pnpm dev:all        # build web + vite (:5173) + wrangler (:8787)
+pnpm dev:clean      # arrête TOUTES les instances wrangler/workerd du dépôt
+                    # (`pnpm dev`/`dev:all` le font déjà avant de démarrer, et
+                    # `pnpm e2e` s'en sert pour purger les orphelins)
 
 pnpm --filter api typecheck        # tsc --noEmit
 pnpm --filter api test             # tests d'intégration DO (workerd + D1 + WS réels)
@@ -83,7 +86,7 @@ Sans `DEV_AUTH`, **toutes** les routes `/api/dev/*` renvoient 404 et le cookie
 ne vaut rien. Ne jamais définir `DEV_AUTH` en production.
 
 ```bash
-pnpm e2e              # 12 tests navigateur (Playwright) — démarre 8787 si besoin
+pnpm e2e              # 27 tests navigateur (Playwright) — démarre 8787 si besoin
 pnpm e2e:ui           # mode interactif
 pnpm e2e:headed       # navigateur visible
 pnpm dev:seed         # réinitialise la fixture (campagne dev-camp)
@@ -100,17 +103,19 @@ utilisent l'hôte `localhost`.
 
 ## 5. Documentation existante (`docs/`)
 
-| Document                                      | Contenu                                           | État                               |
-| --------------------------------------------- | ------------------------------------------------- | ---------------------------------- |
-| `requirements.md`                             | Spec fonctionnelle R1–R14                         | référence                          |
-| `design.md`                                   | Architecture §1–§10 (schéma D1, protocole WS, DS) | référence                          |
-| `tasks.md`                                    | Plan d'implémentation phases 0–10                 | **périmé** (juil. 2026) — voir §6  |
-| `HANDOFF-2026-09-05.md`                       | État complet au 05/09, pièges, reste à faire      | historique                         |
-| `audit-2026-08-30.md` / `audit-2026-09-05.md` | Audits successifs                                 | historiques                        |
-| `audit-herosetdragons-2026-09-06-v2.md`       | **Audit de référence** (celui traité en sept.)    | §6 non mis à jour après correctifs |
-| `compendium-mapping.md`                       | Mapping DRS → catégories                          | référence                          |
+| Document                                      | Contenu                                              | État                               |
+| --------------------------------------------- | ---------------------------------------------------- | ---------------------------------- |
+| `requirements.md`                             | Spec fonctionnelle R1–R14                            | référence                          |
+| `design.md`                                   | Architecture §1–§10 (schéma D1, protocole WS, DS)    | référence                          |
+| `tasks.md`                                    | Plan d'implémentation phases 0–10                    | **périmé** (juil. 2026) — voir §6  |
+| `HANDOFF-2026-09-05.md`                       | État complet au 05/09, pièges, reste à faire         | historique                         |
+| `audit-2026-08-30.md` / `audit-2026-09-05.md` | Audits successifs                                    | historiques                        |
+| `audit-herosetdragons-2026-09-06-v2.md`       | **Audit de référence** (celui traité en sept.)       | §6 non mis à jour après correctifs |
+| `compendium-mapping.md`                       | Mapping DRS → catégories                             | référence                          |
+| `atlas-benchmark/`                            | **Benchmark Atlas + plan de refonte UX/UI** (9 lots) | chantier à faire — voir §10        |
+| `brouillard-optimisation.md`                  | Ticket d'optimisation du brouillard, **indépendant** | à faire sur `main`                 |
 
-## 6. ÉcartsKnown entre `tasks.md` et la réalité
+## 6. Écarts connus entre `tasks.md` et la réalité
 
 `tasks.md` date de juillet 2026 et **n'a pas été mis à jour** : il présente des
 phases comme non faites qui le sont en réalité. Ne pas s'y fier pour l'état
@@ -135,16 +140,15 @@ Phases réellement **non commencées** :
 
 ## 7. Reste à faire de l'audit du 06/09 (`audit-herosetdragons-2026-09-06-v2.md`)
 
-Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
+Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2, P3 côté client (plafond
+mémoire du journal) et P4 (cache `createAuth`, jokers `LIKE`, keepalive WS,
+plafond de reconnexion). Il reste :
 
-- **P3 (partiel)** — plafond glissant côté client sur `tableStore.journal` et
-  `olderEntries` (le Set d'ids est fait, le plafond mémoire non). Pas
-  d'archivage R2 ni de politique de rétention décidée (la rétention DO est un
-  `trimJournal` à 5 000 lignes).
-- **P4** — cache de `createAuth()`, échappement des jokers `LIKE`, keepalive WS
-  (`setWebSocketAutoResponse`), plafond de reconnexion.
-- **Tests manquants** — REST sur `requireMemberOf` / `consumeInvitation`,
-  visibilité compendium (le fix B4 n'a pas de test), session à deux navigateurs.
+- **P3 (partiel)** — politique de rétention/archivage R2 du journal non décidée
+  (la rétention DO est un `trimJournal` à 5 000 lignes).
+- **Tests manquants** — visibilité compendium (le fix B4 n'a pas de test).
+  `requireMemberOf` / `consumeInvitation` et la session à deux navigateurs sont
+  désormais couverts (REST + e2e).
 
 ## 8. Conventions de code
 
@@ -172,3 +176,71 @@ Faits : B1–B6, N1–N4, S1, S2, S3, S5, S6, P1, P2 (client). Il reste :
   respecter ce filtre, sinon on réintroduit la fuite de noms.
 - **CSP (S3)** volontairement permissive (`'unsafe-inline'`) pour ne pas casser
   le bootstrap SvelteKit ; c'est un garde-fou, pas une politique dure.
+- **Commentaires de doc d'un `.svelte`** : tout texte placé **avant**
+  `<script>` est du contenu rendu par Svelte (un `/** … */` en tête de fichier
+  s'affiche sur la carte !). Les commentaires de composant vont **dans** le
+  `<script lang="ts">`. Test e2e garde-fou dans « un joueur arrive sur la
+  table ».
+- **Instances `wrangler dev` orphelines** : deux workers sur le même SQLite de
+  DO échouent en `SQLITE_BUSY`, et les lignes de commande réelles
+  (`wrangler.js dev`, `wrangler-dist/cli.js dev`) ne matchent pas un
+  `pkill -f "wrangler dev"`. Utiliser `pnpm dev:clean` (détection par ports
+  `lsof` + arbres de processus, `--check` pour tester sans tuer) ; `pnpm dev`,
+  `pnpm dev:all` et `pnpm e2e` l'appellent d'eux-mêmes.
+
+## 10. Chantier d'UX/UI v2 — branche `feat/uiv2`
+
+Un benchmark complet d'**Atlas VTT** (VTT pour Obsidian, AGPL) a été fait pour
+refaire l'UX/UI de la table : carte centrale, panneaux flottants, interface « de
+jeu » plutôt que « web ». **Lots 0 à 6 livrés.** **Lot 7 quasi complet** : feuilles de
+PNJ réservées au MJ (API + tests), compendium en **grande fenêtre par-dessus la
+table**, **fiche en panneau flottant** et **accueil** avec sélecteur de
+personnage (les routes `/compendium` et `/characters/:id` restent pour les liens
+directs) ; reste la surbrillance des modifications de feuille, reportée.
+**Lot peaux Penpot livré** : TargetFrame partagé (cible MJ filtrée B5),
+GroupFrame (remplace la Compagnie), TopActions/Zoom, en-tête de fenêtre avec
+réduire, DicePad enrichi, toolbar en pilule d'icônes, header épuré, DiceButton
+flottant et resserrement de l'initiative. **Lot 8 en cours** : toast global
+(`$lib/toast.svelte` + `<Toaster>`), squelettes, tooltips génériques, widgets
+de séance partagés (compteur/horloge/minuteur via le DO) et bibliothèque unique
+(édition des modèles PNJ incluse). Référence :
+`docs/atlas-benchmark/10-lot-peaux-penpot.md` et `07-parcours-implémentation.md`.
+
+| Document                                             | Contenu                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `docs/atlas-benchmark/README.md`                     | **Point d'entrée.** §0 = décisions et validations, §1 = verdict                                             |
+| `docs/atlas-benchmark/07-parcours-implémentation.md` | Les 9 lots, dépendances, risques, recette                                                                   |
+| `docs/atlas-benchmark/05-architecture-svelte.md`     | Décisions techniques, dont DOM vs WebGL                                                                     |
+| `docs/atlas-benchmark/06-design-system.md`           | Le système de surfaces (`<Surface>`, rayons, z-index)                                                       |
+| `docs/brouillard-optimisation.md`                    | Ticket **indépendant**, à faire sur `main`                                                                  |
+| `docs/bibliotheque-avatars.md`                       | Feature dédiée : upload + cadrage carré + bibliothèque d'avatars de campagne                                |
+| `docs/atlas-benchmark/10-lot-peaux-penpot.md`        | Lot ajouté (après 0-5) : peaux Penpot du chrome (GroupFrame, TargetFrame partagé, TopActions, fenêtres/dés) |
+
+Règles du chantier :
+
+1. **`main` reste intacte.** Tout le chantier d'UX vit sur `feat/uiv2`.
+2. **Un lot = une branche.** Le plan le demande explicitement.
+3. **Cible : PC de bureau, grand écran, clavier-souris.** Aucun travail
+   responsive, aucun travail tactile.
+4. **`pnpm check` et `pnpm e2e` verts à chaque commit.**
+
+Déjà en place sur `feat/uiv2` : les lots 0 à 4, `bits-ui@2.19.3` et
+`@lucide/svelte` dans `web/package.json`, le design system Penpot comme source
+(`web/src/lib/ds/`), la caméra dans `web/src/lib/table/camera.svelte.ts`,
+l'undo/redo dans le DO (`shared/src/undo.ts`, RPC `undo()`/`redo()` +
+`POST /api/campaigns/:id/undo|redo`) et deux spikes validés (overlays 54/54 sur
+Chromium/Firefox/Safari ; Lot 1 sur la vraie table).
+
+⚠️ **La règle de visibilité PNJ (AGENTS §9) couvre les PV des pions** : le DO
+envoie `pv/pvMax = null` à un joueur quand `pnjPvVisible=false` et filtre les
+pions non révélés (B5). Le client ne doit jamais déduire ou afficher une barre
+sans ces valeurs. Test e2e : « Pions vivants (Lot 3) ».
+
+Le harnais de spike `/dev/overlays` et ses scripts de diagnostic ont été
+supprimés avant le passage en prod (le chunk était embarqué dans le bundle).
+
+Trois pièges de développement, à respecter dès la première ligne (détaillés dans
+`docs/atlas-benchmark/README.md` §0) : le CSS scopé Svelte ne s'applique pas au
+contenu portalé ni aux éléments rendus par un composant de bibliothèque ; un
+`setPointerCapture` sur un ancêtre capture tout le document ; `onOpenChange(true)`
+précède l'insertion du DOM portalé.

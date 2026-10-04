@@ -236,6 +236,7 @@ export const npcTemplateSchema = z.object({
   color: strField(20, "couleur"),
   conditions: strArray(10, 40, "états", "état"),
   notes: strField(4000, "notes"),
+  tokenScale: z.number({ error: "échelle attendue" }).min(0.25).max(4).optional(),
 });
 export type NpcTemplateInput = z.infer<typeof npcTemplateSchema>;
 

@@ -91,6 +91,22 @@ async function seedWorld() {
       conditions: [],
     })
     .onConflictDoNothing();
+  await d
+    .insert(schema.characters)
+    .values({
+      id: "rest-pj",
+      campaignId: CAMPAIGN,
+      ownerId: OTHER,
+      kind: "pj",
+      name: "Héros",
+      color: "#111",
+      sheet: createSheet({ identite: { nom: "Héros" } }),
+      pv: 10,
+      pvMax: 10,
+      pvTemp: 0,
+      conditions: [],
+    })
+    .onConflictDoNothing();
   return d;
 }
 
@@ -125,9 +141,22 @@ describe("REST — autorisation (requireAuth / requireMemberOf / requireMj)", ()
     expect(outsider.campaigns).toEqual([]);
   });
 
-  it("un joueur reçoit 403 sur une route MJ (invitations, création de carte)", async () => {
+  it("la liste des campagnes porte les PJ de l'utilisateur courant", async () => {
+    type Row = { id: string; myCharacters: { id: string; name: string }[] };
+    const asPlayer = (await (await get("/api/campaigns", OTHER)).json()) as { campaigns: Row[] };
+    const playerRow = asPlayer.campaigns.find((c) => c.id === CAMPAIGN);
+    expect(playerRow?.myCharacters).toEqual([{ id: "rest-pj", name: "Héros" }]);
+
+    const asMj = (await (await get("/api/campaigns", MISTRESS)).json()) as { campaigns: Row[] };
+    expect(asMj.campaigns.find((c) => c.id === CAMPAIGN)?.myCharacters).toEqual([]);
+  });
+
+  it("un joueur reçoit 403 sur une route MJ (invitations, création de carte, undo)", async () => {
     const inv = await post(`/api/campaigns/${CAMPAIGN}/invitations`, {}, OTHER);
     expect(inv.status).toBe(403);
+
+    const undo = await post(`/api/campaigns/${CAMPAIGN}/undo`, {}, OTHER);
+    expect(undo.status).toBe(403);
 
     const formJ = new FormData();
     formJ.set("name", "Interdite");
@@ -151,6 +180,11 @@ describe("REST — autorisation (requireAuth / requireMemberOf / requireMj)", ()
 
     const inv = await post(`/api/campaigns/${CAMPAIGN}/invitations`, {}, MISTRESS);
     expect(inv.status).toBeLessThan(300);
+
+    // Undo sur une pile vide : la route répond l'état d'historique, pas une erreur.
+    const undo = await post(`/api/campaigns/${CAMPAIGN}/undo`, {}, MISTRESS);
+    expect(undo.status).toBe(200);
+    expect(await undo.json()).toEqual({ canUndo: false, canRedo: false });
   });
 
   it("une ressource inexistante renvoie 400 (campaignId manquant), pas 500", async () => {
@@ -264,6 +298,34 @@ describe("REST — en-têtes de sécurité et garde-fou JSON (S3/N3)", () => {
   });
 });
 
+describe("REST — feuilles de PNJ réservées au MJ (B5 étendu)", () => {
+  beforeEach(async () => {
+    await seedWorld();
+  });
+
+  it("un joueur reçoit 403 sur le détail d'un PNJ, le MJ le lit", async () => {
+    expect((await get("/api/characters/rest-pnj", OTHER)).status).toBe(403);
+    expect((await get("/api/characters/rest-pnj", MISTRESS)).status).toBe(200);
+  });
+
+  it("un joueur lit toujours la fiche d'un PJ (la sienne ou celle d'un autre)", async () => {
+    expect((await get("/api/characters/rest-pj", OTHER)).status).toBe(200);
+    expect((await get("/api/characters/rest-pj", MISTRESS)).status).toBe(200);
+  });
+
+  it("la liste d'une campagne masque les PNJ aux joueurs, pas au MJ", async () => {
+    const asPlayer = (await (await get(`/api/characters/campaigns/${CAMPAIGN}`, OTHER)).json()) as {
+      characters: { id: string }[];
+    };
+    expect(asPlayer.characters.map((c) => c.id)).toEqual(["rest-pj"]);
+
+    const asMj = (await (await get(`/api/characters/campaigns/${CAMPAIGN}`, MISTRESS)).json()) as {
+      characters: { id: string }[];
+    };
+    expect(asMj.characters.map((c) => c.id).sort()).toEqual(["rest-pj", "rest-pnj"]);
+  });
+});
+
 describe("REST — inv.give de l'inventaire est bien inaccessible hors WS", () => {
   beforeEach(async () => {
     await seedWorld();
@@ -275,5 +337,67 @@ describe("REST — inv.give de l'inventaire est bien inaccessible hors WS", () =
     // La fiche contient bien des données, mais aucun sac d'inventaire.
     expect(body).toContain("Loup");
     expect(body).not.toContain("inventory");
+  });
+});
+
+describe("REST — recherche compendium : les jokers LIKE sont échappés (audit P4)", () => {
+  beforeEach(async () => {
+    await seedWorld();
+    const d = await db();
+    await d
+      .insert(schema.compendiumEntries)
+      .values({
+        key: "bestiaire/gobelin",
+        category: "bestiaire",
+        slug: "gobelin",
+        title: "Gobelin",
+        searchText: "gobelin creature monstrueuse",
+        sortKey: "gobelin",
+        hash: "test",
+      })
+      .onConflictDoNothing();
+  });
+
+  it("une recherche « % » ne matche plus tout, « _ » n'est plus un joker", async () => {
+    const pct = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=%25`, OTHER)
+    ).json()) as { total: number };
+    expect(pct.total).toBe(0);
+
+    const underscore = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=gob_lin`, OTHER)
+    ).json()) as { total: number };
+    expect(underscore.total).toBe(0);
+  });
+
+  it("la recherche normale (casse et accents pliés) matche toujours", async () => {
+    const hit = (await (
+      await get(`/api/compendium/entries?campaign=${CAMPAIGN}&q=Gob%C3%A9lin`, OTHER)
+    ).json()) as { total: number };
+    expect(hit.total).toBe(1);
+  });
+});
+
+describe("REST — createAuth mémoïsé (audit P4)", () => {
+  it("même origine + même cookie : même instance ; cookie d'invitation : instance distincte", async () => {
+    const { createAuth } = await import("../src/auth");
+    const a = createAuth(env, new Request("https://localhost/api/campaigns"));
+    const b = createAuth(env, new Request("https://localhost/api/campaigns"));
+    expect(a).toBe(b);
+
+    const c = createAuth(
+      env,
+      new Request("https://localhost/api/campaigns", {
+        headers: { cookie: "hd-invite=abcdefgh12345678" },
+      }),
+    );
+    expect(c).not.toBe(a);
+    const d = createAuth(
+      env,
+      new Request("https://localhost/api/campaigns", {
+        headers: { cookie: "hd-invite=abcdefgh12345678" },
+      }),
+    );
+    expect(d).toBe(c);
   });
 });

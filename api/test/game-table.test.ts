@@ -202,6 +202,21 @@ function pnjCards(snapshot: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/** Position d'un pion dans un patch delta, si présente. */
+function tokenAt(m: Record<string, unknown>, id: string): { x: number; y: number } | undefined {
+  const tokens = (m.patch as { tokens?: Record<string, { x: number; y: number }> } | undefined)
+    ?.tokens;
+  return tokens?.[id];
+}
+
+/** Révélations de brouillard du premier patch fog, si présent. */
+function fogReveals(m: Record<string, unknown>): { x: number; y: number }[] | undefined {
+  const fog = (m.patch as { fog?: Record<string, { reveals: { x: number; y: number }[] }> })?.fog;
+  if (!fog) return undefined;
+  const key = Object.keys(fog)[0];
+  return key ? fog[key]?.reveals : undefined;
+}
+
 describe("GameTableDO — intégration", () => {
   it("snapshot initial : le MJ voit tous les personnages, un joueur ne reçoit pas les PNJ non révélés (B5)", async () => {
     await setupWorld();
@@ -315,6 +330,43 @@ describe("GameTableDO — intégration", () => {
     }
   });
 
+  it("char.scale : le MJ change la taille du pion (diffusé et persisté), borné, refusé aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect({ ...PLAYER, charId: "pj-1" });
+    await player.ready();
+
+    // Réservé au MJ : un joueur qui tente n'obtient aucun delta.
+    player.send({ type: "char.scale", charId: "pj-1", scale: 2 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(player.messages.some((m) => m.type === "delta")).toBe(false);
+
+    // Le MJ passe le PJ à 2 cases : le MJ et le joueur reçoivent la carte.
+    mj.send({ type: "char.scale", charId: "pj-1", scale: 2 });
+    const mjCard = (
+      (await mj.next("delta")).patch as { characters: Record<string, { tokenScale: number }> }
+    ).characters["pj-1"]!;
+    expect(mjCard.tokenScale).toBe(2);
+    const plCard = (
+      (await player.next("delta")).patch as { characters: Record<string, { tokenScale: number }> }
+    ).characters["pj-1"]!;
+    expect(plCard.tokenScale).toBe(2);
+
+    // Persisté en D1 (le snapshot d'un rechargement doit le retrouver).
+    const [row] = await d()
+      .select({ tokenScale: schema.characters.tokenScale })
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pj-1"))
+      .limit(1);
+    expect(row?.tokenScale).toBe(2);
+
+    // Hors bornes : refusé par la validation partagée.
+    mj.send({ type: "char.scale", charId: "pj-1", scale: 10 });
+    const err = await mj.next("error");
+    expect((err as { code: string }).code).toBe("INVALID");
+  });
+
   it("combat : lancement avec initiative PNJ automatique, jet du PJ, tours qui avancent", async () => {
     await setupWorld();
     const mj = await connect(MJ);
@@ -368,6 +420,20 @@ describe("GameTableDO — intégration", () => {
       (m) => (m.patch as { combat?: { turn: number } } | undefined)?.combat?.turn === 1,
     );
     expect((next.patch as { combat: { turn: number } }).combat.turn).toBe(1);
+
+    // Réordonnancement (lot 5) : monter le dernier échange sa place avec le 2e,
+    // et le tour actif suit le combattant qui l'occupait.
+    const beforeOrder = finalCombat.order;
+    const moved = beforeOrder[2]!;
+    const activeBefore = beforeOrder[1]!;
+    mj.send({ type: "combat.reorder", charId: moved, up: true });
+    const reordered = await mj.nextWhere(
+      (m) =>
+        (m.patch as { combat?: { order?: string[] } } | undefined)?.combat?.order?.[1] === moved,
+    );
+    const rc = (reordered.patch as { combat: { order: string[]; turn: number } }).combat;
+    expect(rc.order).toEqual([beforeOrder[0], moved, activeBefore]);
+    expect(rc.order[rc.turn]).toBe(activeBefore);
   });
 
   it("brouillard : les pions PNJ non révélés sont filtrés pour les joueurs, visibles pour le MJ", async () => {
@@ -435,6 +501,33 @@ describe("GameTableDO — intégration", () => {
     await new Promise((r) => setTimeout(r, 300));
     const errors = mj.messages.filter((m) => m.type === "error");
     expect(errors).toEqual([]);
+  });
+
+  it("link.move : un drag de pin ne déclenche PAS le rate limit (budget déplacement)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "link.set", x: 30, y: 30, targetMapId: "map-2", label: "Porte" });
+    const delta = await mj.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const linkId = (delta.patch as { links: { id: string }[] }).links[0]!.id;
+
+    // Un drag de ~2 s à 60 messages/s : 120 messages, même budget que les pions.
+    for (let i = 0; i < 120; i++) {
+      mj.send({ type: "link.move", id: linkId, x: 30 + (i % 10) * 0.1, y: 30 });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mj.messages.filter((m) => m.type === "error")).toEqual([]);
   });
 
   it("un Abuse de chat reste plafonné (le budget général n'a pas été relâché)", async () => {
@@ -506,10 +599,92 @@ describe("GameTableDO — intégration", () => {
 
     const id = Object.keys((delta.patch as { characters: Record<string, unknown> }).characters)[0]!;
     mj.send({ type: "npc.remove", charId: id });
-    const removeDelta = await mj.next("delta");
+    // waitFor : le DO émet aussi un delta d'historique (lot 4) après la carte.
+    const removeDelta = await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, unknown> } | undefined)?.characters !== undefined,
+    );
     expect(
       (removeDelta.patch as { characters: Record<string, unknown> }).characters[id],
     ).toBeNull();
+  });
+
+  it("widgets : le MJ pilote compteur/horloge/minuteur, un joueur ne peut pas", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    mj.send({ type: "widget.counter", value: 3 });
+    await player.nextWhere(
+      (m) => (m.patch as { widgets?: { counter: number } })?.widgets?.counter === 3,
+    );
+    mj.send({ type: "widget.clock", value: 7 });
+    await player.nextWhere(
+      (m) => (m.patch as { widgets?: { clock: number } })?.widgets?.clock === 7,
+    );
+
+    mj.send({ type: "widget.timer", action: "reset", seconds: 90 });
+    await player.nextWhere(
+      (m) =>
+        (m.patch as { widgets?: { timer: { remaining: number } } })?.widgets?.timer?.remaining ===
+        90,
+    );
+    mj.send({ type: "widget.timer", action: "start" });
+    const started = await player.nextWhere(
+      (m) =>
+        (m.patch as { widgets?: { timer: { running: boolean } } })?.widgets?.timer?.running ===
+        true,
+    );
+    expect(
+      (started.patch as { widgets: { timer: { endsAt: number } } }).widgets.timer.endsAt,
+    ).toBeGreaterThan(Date.now());
+
+    // Le joueur ne pilote pas : un ping sert de barrière d'ordre.
+    player.send({ type: "widget.counter", value: 99 });
+    player.send({ type: "ping", x: 0, y: 0 });
+    await player.next("ping");
+    const leaked = player.messages.some(
+      (m) => (m.patch as { widgets?: { counter: number } } | undefined)?.widgets?.counter === 99,
+    );
+    expect(leaked).toBe(false);
+
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const widgets = (
+      snap.state as {
+        widgets: { counter: number; clock: number; timer: { running: boolean } };
+      }
+    ).widgets;
+    expect(widgets.counter).toBe(3);
+    expect(widgets.clock).toBe(7);
+    expect(widgets.timer.running).toBe(true);
+  });
+
+  it("marker.set avec un id existant renomme le repère au lieu de le dupliquer", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    mj.send({ type: "marker.set", x: 20, y: 30, text: "Porte sud" });
+    const first = await mj.nextWhere(
+      (m) => ((m.patch as { markers?: unknown[] } | undefined)?.markers?.length ?? 0) === 1,
+    );
+    const marker = (first.patch as { markers: { id: string }[] }).markers[0]!;
+
+    mj.send({ type: "marker.set", id: marker.id, x: 20, y: 30, text: "Porte nord" });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { markers?: { text: string }[] } | undefined)?.markers?.[0]?.text ===
+        "Porte nord",
+    );
+
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const markers = (snap.state as { markers: { id: string; text: string }[] }).markers;
+    expect(markers).toHaveLength(1);
+    expect(markers[0]!.text).toBe("Porte nord");
   });
 
   it("cleanupMap (RPC) : suppression d'une carte = pions/repères purgés, carte active → aucune carte", async () => {
@@ -568,6 +743,7 @@ describe("GameTableDO — intégration", () => {
     // 1. Le MJ ajoute des objets et de l'argent à Kaelith.
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 2 });
     mj.send({ type: "inv.add", charId: "pj-1", item: "Potion de soin", qty: 1 });
+    mj.send({ type: "inv.money", charId: "pj-1", delta: { po: 10, pa: 2, pc: 0 } });
     await mj.nextWhere((m) => m.type === "inv");
 
     // La fusion par nom est insensible à la casse : 2 + 1 = 3.
@@ -575,6 +751,17 @@ describe("GameTableDO — intégration", () => {
     const asInv = (m: Record<string, unknown>) =>
       (m.inventories as Record<string, { items: { name: string; qty: number }[] }>)["pj-1"]!;
     expect(asInv(mjInv).items).toEqual([{ name: "Potion de soin", qty: 3 }]);
+
+    // La bourse reçoit le montant ajouté (et le journal le trace).
+    const moneyMsg = await mj.nextWhere((m) => {
+      const bags = m.inventories as
+        | Record<string, { money: { po: number; pa: number } }>
+        | undefined;
+      return bags?.["pj-1"]?.money.po === 10 && bags["pj-1"]!.money.pa === 2;
+    });
+    expect(
+      (moneyMsg.inventories as Record<string, { money: { po: number } }>)["pj-1"]!.money.po,
+    ).toBe(10);
 
     // 2. Le joueur ne voit QUE son sac (R9.1) : pas celui de l'autre PJ.
     const plInv = await kaelith.nextWhere((m) => m.type === "inv");
@@ -626,7 +813,9 @@ describe("GameTableDO — intégration", () => {
       to: "pj-1",
       item: "Torche",
     });
-    // 3. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
+    // 3. Ajouter de l'argent (MJ seulement) → refusé.
+    kaelith.send({ type: "inv.money", charId: "pnj-1", delta: { po: 1, pa: 0, pc: 0 } });
+    // 4. Donner son propre objet à un tiers sans être MJ → autorisé (c'est le
     //    cas légitime), donc on cible bien pnj-1 pour tester le refus.
     await new Promise((r) => setTimeout(r, 150));
 
@@ -635,10 +824,12 @@ describe("GameTableDO — intégration", () => {
       .from(schema.characters)
       .where(eq(schema.characters.id, "pnj-1"))
       .get();
-    // La torche est toujours là, à 4 : ni jetée, ni donnée.
+    // La torche est toujours là, à 4 : ni jetée, ni donnée, et la bourse
+    // n'a pas été créditée par un joueur.
     expect((npj!.inventory as { items: { name: string; qty: number }[] }).items).toEqual([
       { name: "Torche", qty: 4 },
     ]);
+    expect((npj!.inventory as { money: { po: number } }).money.po).toBe(5);
   });
 
   it("inventaire (R9) : transfert d'argent et d'objet, atomique et vérifié des deux côtés", async () => {
@@ -738,5 +929,449 @@ describe("GameTableDO — intégration", () => {
       }
     ).characters;
     expect(plChars["pnj-1"]).toBeNull();
+  });
+
+  it("notifyMapsUpdated (RPC) : la table prévient chaque navigateur de relire la liste des cartes", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await tableStub().notifyMapsUpdated();
+
+    const mjDelta = await mj.next("delta");
+    const plDelta = await player.next("delta");
+    expect((mjDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
+    expect((plDelta.patch as { mapsUpdated?: boolean }).mapsUpdated).toBe(true);
+  });
+
+  it("undo/redo (lot 4) : un drag de pion = un pas, l'annulation est diffusée aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+
+    mj.send({ type: "token.put", charId: "pj-1", x: 40, y: 40 });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1") !== undefined);
+
+    // Drag en TROIS messages : le premier ouvre le pas, les suivants complètent.
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 42, y: 41, begin: true });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1")?.x === 42);
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 44, y: 43 });
+    await mj.nextWhere((m) => tokenAt(m, "pj-1")?.x === 44);
+    mj.send({ type: "token.move", tokenId: "pj-1", x: 46, y: 45 });
+    await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 46);
+
+    // UN Mod+Z annule tout le drag (et pas seulement le dernier message).
+    const stub = tableStub();
+    const afterUndo = await stub.undo();
+    expect(afterUndo).toEqual({ canUndo: true, canRedo: true });
+    const back = await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 40);
+    expect(tokenAt(back, "pj-1")!.y).toBe(40);
+
+    // Redo : retour à la fin du geste.
+    const afterRedo = await stub.redo();
+    expect(afterRedo).toEqual({ canUndo: true, canRedo: false });
+    await player.nextWhere((m) => tokenAt(m, "pj-1")?.x === 46);
+  });
+
+  it("undo (lot 4) : une suppression de PNJ est restaurée pour le MJ sans révéler son nom au joueur (B5)", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    // pnj-1 n'a pas de pion : jamais visible par les joueurs.
+    mj.send({ type: "npc.remove", charId: "pnj-1" });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, unknown> } | undefined)?.characters?.["pnj-1"] ===
+        null,
+    );
+
+    const stub = tableStub();
+    const h = await stub.undo();
+    expect(h).toEqual({ canUndo: false, canRedo: true });
+
+    // Le MJ reçoit la fiche restaurée (PV, nom)…
+    const mjBack = await mj.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, { name?: string }> } | undefined)?.characters?.[
+          "pnj-1"
+        ]?.name === "Gobelin",
+    );
+    expect(
+      (mjBack.patch as { characters: Record<string, { pv: number }> }).characters["pnj-1"]!.pv,
+    ).toBe(7);
+
+    // …le joueur ne reçoit jamais la carte, seulement le retrait (null).
+    await new Promise((r) => setTimeout(r, 100));
+    for (const msg of player.messages.filter((m) => m.type === "delta")) {
+      const chars = (msg.patch as { characters?: Record<string, unknown> }).characters ?? {};
+      if ("pnj-1" in chars) expect(chars["pnj-1"]).toBeNull();
+    }
+
+    // La fiche est bien revenue en D1 ; le redo la resupprime.
+    const rows = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .all();
+    expect(rows[0]?.name).toBe("Gobelin");
+    await stub.redo();
+    const gone = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .all();
+    expect(gone.length).toBe(0);
+  });
+
+  it("undo (lot 4) : une passe de brouillard = un pas ; une nouvelle action vide le redo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "fog.enable" });
+    await mj.nextWhere((m) => fogReveals(m) !== undefined);
+
+    // Un trait de TROIS points (begin sur le premier).
+    mj.send({ type: "fog.reveal", x: 20, y: 20, begin: true });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 1);
+    mj.send({ type: "fog.reveal", x: 25, y: 20 });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 2);
+    mj.send({ type: "fog.reveal", x: 30, y: 20 });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 3);
+
+    const stub = tableStub();
+    await stub.undo(); // annule le trait ENTIER
+    await mj.nextWhere((m) => fogReveals(m)?.length === 0);
+
+    await stub.redo();
+    await mj.nextWhere((m) => fogReveals(m)?.length === 3);
+
+    // Une nouvelle action jette la branche redo.
+    mj.send({ type: "fog.reveal", x: 60, y: 60, begin: true });
+    await mj.nextWhere((m) => fogReveals(m)?.length === 4);
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { history?: { canRedo?: boolean } } | undefined)?.history?.canRedo === false,
+    );
+  });
+
+  it("keepalive (audit P4) : le DO éveillé répond au battement hb", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    mj.send({ type: "hb" });
+    const ack = await mj.next("hb.ack");
+    expect(ack.type).toBe("hb.ack");
+  });
+
+  it("fog.revealArea (lot 8.8) : une forme = un patch, un seul pas d'undo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "fog.enable" });
+    await mj.nextWhere((m) => fogReveals(m) !== undefined);
+
+    mj.send({
+      type: "fog.revealArea",
+      begin: true,
+      points: [
+        { x: 20, y: 20 },
+        { x: 29, y: 20 },
+        { x: 38, y: 20 },
+        { x: 20, y: 29 },
+        { x: 20, y: 20 },
+      ],
+    });
+    // Un seul patch pour les 4 points distincts (le doublon est dédupliqué).
+    await mj.nextWhere((m) => fogReveals(m)?.length === 4);
+
+    await tableStub().undo();
+    await mj.nextWhere((m) => fogReveals(m)?.length === 0);
+
+    // Un joueur ne peut pas dessiner : aucune révélation ne part.
+    const player = await connect(PLAYER);
+    await player.ready();
+    player.send({ type: "fog.revealArea", begin: true, points: [{ x: 50, y: 50 }] });
+    await new Promise((r) => setTimeout(r, 50));
+    for (const m of mj.messages) {
+      const reveals = fogReveals(m);
+      if (reveals) expect(reveals.length).toBe(0);
+    }
+  });
+
+  it("liens (lot 6) : un passage secret n'est jamais diffusé aux joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "link.set",
+      x: 25,
+      y: 25,
+      targetMapId: "map-2",
+      label: "Passage secret",
+      hidden: true,
+    });
+    const mjDelta = await mj.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const link = (mjDelta.patch as { links: { id: string; hidden: boolean }[] }).links[0]!;
+    expect(link.hidden).toBe(true);
+
+    // Le joueur n'a jamais reçu ce lien (aucun patch links non vide).
+    await new Promise((r) => setTimeout(r, 60));
+    for (const msg of player.messages.filter((m) => m.type === "delta")) {
+      const links = (msg.patch as { links?: unknown[] } | undefined)?.links;
+      if (links) expect(links.length).toBe(0);
+    }
+
+    // Même avec l'id, le joueur ne peut pas l'emprunter…
+    player.send({ type: "link.travel", id: link.id });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(
+      player.messages.some((m) => (m.patch as { mapId?: string } | undefined)?.mapId === "map-2"),
+    ).toBe(false);
+
+    // …et le journal du voyage ne part qu'au MJ.
+    mj.send({ type: "link.travel", id: link.id });
+    const journal = await mj.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { text: string }).text.includes("emprunte"),
+    );
+    expect((journal.entry as { text: string }).text).toContain("Passage secret");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(player.messages.some((m) => m.type === "journal")).toBe(false);
+  });
+
+  it("liens (lot 6) : un joueur emprunte un lien, et le retour est un lien posé à la main", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "link.set",
+      x: 30,
+      y: 40,
+      targetMapId: "map-2",
+      targetX: 70,
+      targetY: 60,
+      label: "Escalier",
+    });
+    const linkDelta = await player.nextWhere(
+      (m) => ((m.patch as { links?: unknown[] } | undefined)?.links?.length ?? 0) === 1,
+    );
+    const link = (linkDelta.patch as { links: { id: string; label: string }[] }).links[0]!;
+    expect(link.label).toBe("Escalier");
+
+    // Le joueur emprunte le lien (autorisé à tout membre), tout le monde suit.
+    player.send({ type: "link.travel", id: link.id });
+    const arrived = await player.nextWhere(
+      (m) => (m.patch as { mapId?: unknown })?.mapId === "map-2",
+    );
+    expect((arrived.patch as { arrival: { x: number; y: number } }).arrival).toEqual({
+      x: 70,
+      y: 60,
+    });
+
+    // Pas de retour automatique : si un « ← retour » existait, le patch de
+    // création ci-dessous aurait DEUX liens et le prédicat ne matcherait pas.
+    mj.send({
+      type: "link.set",
+      x: 20,
+      y: 20,
+      targetMapId: "map-1",
+      targetX: 30,
+      targetY: 40,
+      label: "Retour",
+    });
+    const backDelta = await player.nextWhere(
+      (m) =>
+        ((m.patch as { links?: { label: string }[] } | undefined)?.links?.[0]?.label ?? "") ===
+        "Retour",
+    );
+    const backLink = (backDelta.patch as { links: { id: string }[] }).links[0]!;
+
+    player.send({ type: "link.travel", id: backLink.id });
+    const back = await player.nextWhere((m) => {
+      const p = m.patch as { mapId?: unknown; arrival?: unknown } | undefined;
+      return p?.mapId === "map-1" && p.arrival !== null && p.arrival !== undefined;
+    });
+    expect((back.patch as { arrival: { x: number; y: number } }).arrival).toEqual({
+      x: 30,
+      y: 40,
+    });
+  });
+
+  it("liens (lot 6) : un joueur ne peut ni poser ni supprimer un lien", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d()
+      .insert(schema.maps)
+      .values([
+        { id: "map-1", campaignId: CAMPAIGN, name: "Salle" },
+        { id: "map-2", campaignId: CAMPAIGN, name: "Crypte" },
+      ]);
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    player.send({ type: "link.set", x: 10, y: 10, targetMapId: "map-2", label: "Pirate" });
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Un snapshot neuf prouve que rien n'a été enregistré.
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    expect((snap.state as { links: unknown[] }).links.length).toBe(0);
+  });
+
+  it("notes épinglées (lot 6) : le MJ crée/édite/déplace, le joueur ne peut que lire", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown })?.mapId === "map-1");
+
+    mj.send({
+      type: "pin.set",
+      x: 20,
+      y: 30,
+      label: "Salle du trône",
+      text: "Des **pièces d'or** au sol.",
+    });
+    const delta = await player.nextWhere(
+      (m) => ((m.patch as { pins?: unknown[] } | undefined)?.pins?.length ?? 0) === 1,
+    );
+    const pin = (delta.patch as { pins: { id: string; label: string; text: string }[] }).pins[0]!;
+    expect(pin.label).toBe("Salle du trône");
+    expect(pin.text).toContain("pièces d'or");
+
+    // Un joueur ne peut ni créer ni modifier : un snapshot neuf le prouve.
+    player.send({ type: "pin.set", x: 10, y: 10, label: "Pirate", text: "…" });
+    await new Promise((r) => setTimeout(r, 60));
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    const pins = (snap.state as { pins: { label: string }[] }).pins;
+    expect(pins.length).toBe(1);
+    expect(pins[0]!.label).toBe("Salle du trône");
+
+    // Déplacement et suppression diffusés.
+    mj.send({ type: "pin.move", id: pin.id, x: 40, y: 50 });
+    await player.nextWhere(
+      (m) => (m.patch as { pins?: { x: number }[] } | undefined)?.pins?.[0]?.x === 40,
+    );
+    mj.send({ type: "pin.remove", id: pin.id });
+    await player.nextWhere(
+      (m) => ((m.patch as { pins?: unknown[] } | undefined)?.pins?.length ?? 1) === 0,
+    );
+  });
+
+  it("undo (lot 4) : la pile est plafonnée à 50 pas, et le snapshot expose canUndo/canRedo", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    // 52 pas : 2 doivent tomber du bas de la pile.
+    for (let i = 0; i < 52; i += 1) {
+      mj.send({ type: "marker.set", x: 10 + (i % 20), y: 10, text: `repère ${i}` });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+
+    const stub = tableStub();
+    for (let i = 0; i < 50; i += 1) await stub.undo();
+
+    // Un nouveau MJ relit l'état : 2 repères (les plus anciens) restent posés.
+    const mj2 = await connect(MJ);
+    const snap = await mj2.next("snapshot");
+    expect((snap.state as { markers: unknown[] }).markers.length).toBe(2);
+    expect(snap.history).toEqual({ canUndo: false, canRedo: true });
+  });
+
+  it("target.set : cible partagée, PNJ caché filtré (B5), MJ seul la pose", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    const playerSnap = await player.next("snapshot");
+    expect((playerSnap.state as { target: string | null }).target).toBeNull();
+    await mj.next("presence");
+
+    // Le MJ cible un PJ : tout le monde reçoit la cible.
+    mj.send({ type: "target.set", charId: "pj-1" });
+    await mj.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pj-1");
+    await player.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pj-1");
+
+    // Un joueur ne peut pas cibler : un ping sert de barrière d'ordre (le DO
+    // traite les messages d'un même socket dans l'ordre) ; aucun delta non nul
+    // pour pj-2 ne doit se trouver avant.
+    player.send({ type: "target.set", charId: "pj-2" });
+    player.send({ type: "ping", x: 0, y: 0 });
+    await player.next("ping");
+    const leaked = player.messages.some(
+      (m) => (m.patch as { target?: string | null } | undefined)?.target === "pj-2",
+    );
+    expect(leaked).toBe(false);
+
+    // PNJ non révélé : le MJ le reçoit, le joueur reçoit un clear (B5).
+    mj.send({ type: "target.set", charId: "pnj-1" });
+    await mj.nextWhere((m) => (m.patch as { target?: string | null })?.target === "pnj-1");
+    await player.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
+
+    // Le MJ referme : tout le monde reçoit null.
+    mj.send({ type: "target.set", charId: null });
+    await mj.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
+    await player.nextWhere(
+      (m) => m.patch !== undefined && (m.patch as { target?: unknown }).target === null,
+    );
   });
 });

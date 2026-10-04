@@ -1,21 +1,130 @@
 /* ═══════════════════════════════════════════════════════════
    RollWith H&D — Design System « Carnet de nuit » — Tokens
    Référence : design V2/THEME-CARNET-DE-NUIT.md
+   Chantier UX : docs/atlas-benchmark/06-design-system.md
    ═══════════════════════════════════════════════════════════ */
+
+/* ── Primitifs de surface (@property) ─────────────────────────
+   Déclarés en propriétés enregistrées : vérification de type, héritage
+   explicite vers les contenus portalés (top layer), et transitions entre
+   plans d'élévation. Les noms historiques (--bg, --panel, --border…)
+   restent des alias pour ne rien casser.
+
+   ⚠️ Palette alignée sur la bibliothèque Penpot (`03 · Design system`, page
+   « Croquis v2 ») : les 19 couleurs y sont la source, ce fichier les reflète.
+   Toute nouvelle couleur doit d'abord exister dans Penpot. */
+@property --surface-canvas {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1b1917;
+}
+@property --surface-sunken {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #141210;
+}
+@property --surface-raised {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2e2a24;
+}
+@property --surface-overlay {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2e2a24;
+}
+@property --border-subtle {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #3a352d;
+}
+@property --border-default {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #4a443a;
+}
+@property --scrollbar-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
 
 :root {
   /* ── Fonds & surfaces ─────────────────────────────────────── */
-  --bg: #26221d; /* fond de page */
-  --panel: #2e2a24; /* panneaux, cartes, modales */
-  --border: #575043; /* bordures 2px solid, dashed, éléments inactifs */
-  --border-soft: #3a352d; /* séparateurs discrets */
-  --selected: #575043; /* fond d'élément sélectionné */
+  --bg: var(--surface-canvas); /* fond de page */
+  --panel: var(--surface-raised); /* panneaux, cartes, modales */
+  --sunken: var(--surface-sunken); /* creux : champs, historique, cartes de jet */
+  --border: var(--border-default); /* bordures des panneaux et fenêtres */
+  --border-soft: var(--border-subtle); /* séparateurs discrets */
+  --border-strong-2: #575043; /* « Bordure 2 » Penpot : contours de contrôles */
+  --selected: var(--surface-raised); /* fond d'élément sélectionné */
 
-  /* ── Textes ───────────────────────────────────────────────── */
+  /* Dérivés color-mix : zéro hexadécimal dupliqué. */
+  --surface-raised-hover: color-mix(in oklab, var(--surface-raised), var(--accent) 6%);
+  --surface-overlay-blur: color-mix(in oklab, var(--surface-overlay), transparent 8%);
+  --border-strong: var(--border-strong-2);
+
+  /* ── Échelle de rayons (chrome système) ───────────────────── */
+  --radius-xs: 4px; /* chips, cases à cocher, petits badges */
+  --radius-sm: 8px; /* boutons, champs, cartes */
+  --radius-md: 12px; /* panneaux, popovers, dropdowns */
+  --radius-lg: 16px; /* modales */
+  --radius-xl: 24px; /* fenêtres flottantes */
+  --radius-full: 9999px; /* pilules */
+
+  /* ── Tailles de contrôles ─────────────────────────────────── */
+  --control-h-sm: 24px;
+  --control-h: 32px;
+  --control-h-lg: 40px;
+  --icon-sm: 16px;
+  --icon: 20px;
+  --icon-lg: 24px;
+
+  /* ── Ordre d'empilement (sémantique) ────────────────────────
+     Le top layer (popovers, dialogs, menus) sort de cette échelle :
+     il s'ordonne par ordre d'ouverture. Ici, seules nos couches DOM. */
+  --z-map: 0;
+  --z-grid: 10;
+  --z-markers: 15;
+  /* Liens entre cartes : au-dessus des repères, sous les pions. */
+  --z-links: 16;
+  --z-tokens: 18;
+  --z-fog: 20;
+  --z-ping: 30;
+  --z-map-hud: 100;
+  --z-chrome: 200;
+  --z-panels: 300;
+  --z-overlay: 400;
+  --z-toast: 500;
+
+  /* ── Mouvement ────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 160ms;
+  --dur-in: 220ms;
+  --dur-out: 180ms;
+
+  /* ── Ombres de surfaces ───────────────────────────────────── */
+  --shadow-raised: 0 6px 20px var(--shadow-2);
+  --shadow-overlay: 0 12px 40px var(--shadow-2);
+
+  /* ── Textes (Penpot : Texte, Blanc cassé, Texte 2, Texte 3) ─ */
   --text: #e8e2d4;
-  --heading: #f2ede0;
-  --text-2: #9c947f;
-  --text-3: #6e6759;
+  --heading: #f5f1e6;
+  --text-2: #a79d88;
+  /* #6e6759 donnait 3,1:1 sur l'encre : sous le seuil AA. #8a8172 (déjà dans
+     la palette Penpot) monte à 4,6:1. */
+  --text-3: #8a8172;
+
+  /* ── Sémantique de jeu (Penpot : PV ok/moyen/bas, Or, Eau, Parchemin) ── */
+  --hp-ok: #6fa073;
+  --hp-mid: #c9a227;
+  --hp-low: #c0392b;
+  --presence-on: var(--hp-ok);
+  --presence-off: var(--hp-low);
+  --or: #d4a73c;
+  --eau: #8fb6c9;
+  --parchemin: #e7e0ce;
 
   /* ── Overlay & ombres ─────────────────────────────────────── */
   --overlay: rgba(15, 13, 10, 0.6);
@@ -40,9 +149,10 @@
   --coin-pa: #9c947f;
   --coin-pc: #b07d54;
 
-  /* ── Typographie (2 familles seulement) ───────────────────── */
+  /* ── Typographie (3 familles : titre, texte, interface) ───── */
   --font-title: "Vidaloka", Georgia, serif;
   --font-body: "Alegreya Sans", sans-serif;
+  --font-ui: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
 
   /* ── Layout (écran de jeu) ────────────────────────────────── */
   --w-compagnie: 288px;

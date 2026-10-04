@@ -1,0 +1,135 @@
+/* ═══════════════════════════════════════════════════════════
+   RollWith H&D — Design System « Carnet de nuit » — Typographie
+   Miroir des styles de la bibliothèque Penpot (`03 · Design system`,
+   section « Typographies »). Toute taille utilisée dans l'app doit venir
+   d'une de ces classes — jamais d'un `font-size` écrit à la main.
+
+   Trois familles, une seule responsabilité chacune :
+   - Vidaloka .................. titres (jamais en gras : elle n'a que 400)
+   - Alegreya Sans ............. texte courant, libellés, chiffres
+   - Alegreya Sans SC .......... interface : boutons, noms, chips
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* Échelle — les valeurs sont celles des styles Penpot. */
+  --fs-title-24: 24px;
+  --fs-title-20: 20px;
+  --fs-title-17: 17px;
+
+  --fs-text-16: 16px;
+  --fs-text-15: 15px;
+  --fs-text-14: 14px;
+  --fs-text-13: 13px;
+  --fs-text-125: 12.5px;
+
+  --fs-btn-30: 30px;
+  --fs-btn-24: 24px;
+  --fs-btn-22: 22px;
+  --fs-btn-18: 18px;
+  --fs-btn-16: 16px;
+  --fs-btn-15: 15px;
+  --fs-btn-14: 14px;
+  --fs-btn-13: 13px;
+
+  --lh-tight: 1.2; /* titres, boutons */
+  --lh-body: 1.4; /* texte courant */
+  --ls-caps: 2px; /* interlettrage des capitales */
+}
+
+/* ── Titres — Vidaloka 400 ─────────────────────────────────── */
+.type-title-24,
+.type-title-20,
+.type-title-17 {
+  font-family: var(--font-title);
+  font-weight: 400;
+  line-height: var(--lh-tight);
+}
+.type-title-24 {
+  font-size: var(--fs-title-24);
+}
+.type-title-20 {
+  font-size: var(--fs-title-20);
+}
+.type-title-17 {
+  font-size: var(--fs-title-17);
+}
+
+/* ── Texte courant — Alegreya Sans ─────────────────────────── */
+.type-text-16,
+.type-text-15,
+.type-text-14,
+.type-text-13,
+.type-text-125 {
+  font-family: var(--font-body);
+  line-height: var(--lh-body);
+}
+.type-text-16 {
+  font-size: var(--fs-text-16);
+  font-weight: 500;
+}
+.type-text-15 {
+  font-size: var(--fs-text-15);
+  font-weight: 400;
+}
+.type-text-14 {
+  font-size: var(--fs-text-14);
+  font-weight: 400;
+}
+.type-text-13 {
+  font-size: var(--fs-text-13);
+  font-weight: 400;
+}
+.type-text-125 {
+  font-size: var(--fs-text-125);
+  font-weight: 400;
+}
+
+/* ── Interface — Alegreya Sans SC 700 ──────────────────────── */
+.type-btn-30,
+.type-btn-24,
+.type-btn-22,
+.type-btn-18,
+.type-btn-16,
+.type-btn-15,
+.type-btn-14,
+.type-btn-13 {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+}
+.type-btn-30 {
+  font-size: var(--fs-btn-30);
+}
+.type-btn-24 {
+  font-size: var(--fs-btn-24);
+}
+.type-btn-22 {
+  font-size: var(--fs-btn-22);
+}
+.type-btn-18 {
+  font-size: var(--fs-btn-18);
+}
+.type-btn-16 {
+  font-size: var(--fs-btn-16);
+}
+.type-btn-15 {
+  font-size: var(--fs-btn-15);
+}
+.type-btn-14 {
+  font-size: var(--fs-btn-14);
+}
+.type-btn-13 {
+  font-size: var(--fs-btn-13);
+}
+
+/* ── Capitales espacées — en-têtes de section ──────────────── */
+.type-caps-12 {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: var(--ls-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+}
+
+/* EOF typography.css */

@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type CampaignSummary } from '$lib/api';
+  import { goto } from '$app/navigation';
+  import { api, type CampaignListItem } from '$lib/api';
   import { auth, type Session } from '$lib/auth-client';
   import Button from '$lib/ds/Button.svelte';
+  import Skeleton from '$lib/ds/Skeleton.svelte';
+  import { focusTrap } from '$lib/ds/focus-trap';
   import SketchyInput from '$lib/ds/SketchyInput.svelte';
   import EncreSelector from '$lib/ds/EncreSelector.svelte';
   import CharacterCreateModal from '$lib/components/CharacterCreateModal.svelte';
 
   let session = $state<Session | null>(null);
-  let campaigns = $state<CampaignSummary[]>([]);
+  let campaigns = $state<CampaignListItem[]>([]);
   let loading = $state(true);
 
   let createOpen = $state(false);
@@ -111,14 +114,20 @@
 
 {#if loading}
   <div class="center-page">
-    <p class="muted">…</p>
+    <div class="dash-skeleton" aria-busy="true" aria-label="Chargement des campagnes">
+      <Skeleton w="220px" h={30} />
+      <div class="sk-grid">
+        <Skeleton h={150} radius="var(--radius-md)" />
+        <Skeleton h={150} radius="var(--radius-md)" />
+      </div>
+    </div>
   </div>
 {:else if !session}
   <div class="center-page">
     <div class="hero-card">
       <div class="brand-hero">RollWith H&amp;D</div>
       <p class="muted">Connectez-vous pour accéder à vos campagnes.</p>
-      <a href="/login" class="cta">Se connecter</a>
+      <Button variant="primary" onclick={() => goto('/login')}>Se connecter</Button>
     </div>
   </div>
 {:else}
@@ -143,7 +152,13 @@
 
         <div class="campaign-grid">
           {#each campaigns as c, i (c.id)}
-            <div class="campaign-card" style="border-radius: {i % 2 ? 'var(--sketchy-2)' : 'var(--sketchy-1)'};">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="campaign-card"
+              style="border-radius: {i % 2 ? 'var(--sketchy-2)' : 'var(--sketchy-1)'};"
+              title="Double-clic : ouvrir la table"
+              ondblclick={() => goto(`/campaigns/${c.id}/table`)}
+            >
               <div class="campaign-top">
                 <div class="campaign-name-col">
                   <div class="campaign-name">{c.name}</div>
@@ -157,10 +172,19 @@
                 </span>
               </div>
               <div class="campaign-actions">
-                <a href="/campaigns/{c.id}/table" class="cta open-table">Ouvrir la table</a>
-                <button class="invite-link" onclick={() => (createCharFor = { id: c.id, name: c.name })}>
-                  {c.role === 'mj' ? '+ PJ' : 'Créer mon personnage'}
-                </button>
+                <Button variant="primary" onclick={() => goto(`/campaigns/${c.id}/table`)}>
+                  Ouvrir la table
+                </Button>
+                {#each c.myCharacters as pc (pc.id)}
+                  <button class="invite-link" onclick={() => goto(`/characters/${pc.id}`)}>
+                    Feuille · {pc.name}
+                  </button>
+                {/each}
+                {#if c.role === 'mj' || c.myCharacters.length === 0}
+                  <button class="invite-link" onclick={() => (createCharFor = { id: c.id, name: c.name })}>
+                    {c.role === 'mj' ? '+ PJ' : 'Créer mon personnage'}
+                  </button>
+                {/if}
                 {#if c.role === 'mj'}
                   <button class="invite-link" onclick={() => openInvite(c.id)}>
                     {inviteCampaignId === c.id ? 'Fermer' : "Inviter un joueur"}
@@ -212,7 +236,10 @@
     <CharacterCreateModal
       campaignId={createCharFor.id}
       campaignName={createCharFor.name}
-      onClose={() => (createCharFor = null)}
+      onClose={() => {
+        createCharFor = null;
+        void refresh();
+      }}
     />
   {/if}
 
@@ -223,9 +250,10 @@
       onclick={() => (createOpen = false)}
     >
       <div
-        class="modal"
+        class="modal surface-overlay surface-lg"
         role="dialog"
         aria-modal="true"
+        use:focusTrap
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (createOpen = false)}
       >
@@ -258,6 +286,18 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
+  }
+  .dash-skeleton {
+    width: 860px;
+    max-width: calc(100vw - 60px);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .sk-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
   }
   .hero-card {
     background: var(--panel);
@@ -425,23 +465,6 @@
     gap: 16px;
     margin-top: auto;
   }
-  .cta {
-    font-size: 14.5px;
-    font-weight: 700;
-    padding: 9px 20px;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border: 2px solid var(--accent-border);
-    border-radius: var(--sketchy-3);
-    text-decoration: none;
-    display: inline-block;
-    transition: background 0.15s;
-  }
-  .cta:hover {
-    background: var(--accent-hover);
-    color: var(--accent-fg);
-  }
-
   .create-tile {
     font-family: var(--font-body);
     border: 2px dashed var(--border);
@@ -557,18 +580,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: var(--z-overlay);
   }
   .modal {
-    background: var(--panel);
-    border: 2px solid var(--border);
-    border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
     padding: 32px 38px 28px;
     width: 400px;
     display: flex;
     flex-direction: column;
     gap: 18px;
-    box-shadow: 0 16px 50px var(--shadow-2);
   }
   .modal-head {
     display: flex;

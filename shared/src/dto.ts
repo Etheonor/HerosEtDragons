@@ -24,6 +24,11 @@ export interface CampaignSummary {
   createdAt: string;
 }
 
+/** Résumé de campagne + les PJ de l'utilisateur courant (accueil). */
+export interface CampaignListItem extends CampaignSummary {
+  myCharacters: { id: string; name: string }[];
+}
+
 export interface CampaignDetail extends CampaignSummary {
   members: {
     userId: string;
@@ -140,6 +145,8 @@ export interface NpcTemplate {
   conditions: string[];
   notes: string;
   source: { category: string; slug: string } | null;
+  /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
+  tokenScale: number;
   updatedAt: string;
 }
 

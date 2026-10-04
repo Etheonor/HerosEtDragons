@@ -45,11 +45,18 @@ export const charConditionSchema = z.object({
   on: z.boolean({ error: "on attendu" }),
 });
 
+export const charScaleSchema = z.object({
+  type: z.literal("char.scale"),
+  charId: id,
+  scale: z.number({ error: "échelle attendue" }).min(0.25).max(4),
+});
+
 export const tokenMoveSchema = z.object({
   type: z.literal("token.move"),
   tokenId: id,
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
 });
 
 export const tokenPutSchema = z.object({
@@ -116,6 +123,80 @@ export const markerMoveSchema = z.object({
   id: id,
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
+});
+
+export const linkSetSchema = z.object({
+  type: z.literal("link.set"),
+  id: z.string({ error: "identifiant requis" }).max(64).optional(),
+  x: coord,
+  y: coord,
+  targetMapId: id,
+  targetX: coord.optional(),
+  targetY: coord.optional(),
+  label: z.string({ error: "libellé requis" }).max(80).optional(),
+  kind: z.enum(["door", "stairs", "region", "portal"]).optional(),
+  oneWay: z.boolean().optional(),
+  hidden: z.boolean().optional(),
+});
+
+export const linkRemoveSchema = z.object({
+  type: z.literal("link.remove"),
+  id: id,
+});
+
+export const linkMoveSchema = z.object({
+  type: z.literal("link.move"),
+  id: id,
+  x: coord,
+  y: coord,
+});
+
+export const linkTravelSchema = z.object({
+  type: z.literal("link.travel"),
+  id: id,
+});
+
+export const pinSetSchema = z.object({
+  type: z.literal("pin.set"),
+  id: z.string({ error: "identifiant requis" }).max(64).optional(),
+  x: coord,
+  y: coord,
+  label: z.string({ error: "libellé requis" }).max(80).optional(),
+  text: z.string({ error: "texte requis" }).max(4000).optional(),
+});
+
+export const pinMoveSchema = z.object({
+  type: z.literal("pin.move"),
+  id: id,
+  x: coord,
+  y: coord,
+});
+
+export const pinRemoveSchema = z.object({
+  type: z.literal("pin.remove"),
+  id: id,
+});
+
+export const targetSetSchema = z.object({
+  type: z.literal("target.set"),
+  charId: id.nullable(),
+});
+
+export const widgetCounterSchema = z.object({
+  type: z.literal("widget.counter"),
+  value: intField(0, 99, "compteur"),
+});
+
+export const widgetClockSchema = z.object({
+  type: z.literal("widget.clock"),
+  value: intField(0, 12, "horloge"),
+});
+
+export const widgetTimerSchema = z.object({
+  type: z.literal("widget.timer"),
+  action: z.enum(["start", "pause", "reset"]),
+  seconds: intField(0, 86400, "durée du minuteur").optional(),
 });
 
 export const markerRemoveSchema = z.object({
@@ -133,6 +214,16 @@ export const fogRevealSchema = z.object({
   type: z.literal("fog.reveal"),
   x: coord,
   y: coord,
+  begin: z.boolean().optional(),
+});
+
+export const fogRevealAreaSchema = z.object({
+  type: z.literal("fog.revealArea"),
+  points: z
+    .array(z.object({ x: coord, y: coord }), { error: "points requis" })
+    .min(1)
+    .max(200),
+  begin: z.boolean().optional(),
 });
 
 export const pingSchema = z.object({
@@ -152,6 +243,12 @@ export const initiativeRollSchema = z.object({
 });
 
 export const combatNextSchema = z.object({ type: z.literal("combat.next") });
+
+export const combatReorderSchema = z.object({
+  type: z.literal("combat.reorder"),
+  charId: id,
+  up: z.boolean({ error: "up attendu" }),
+});
 
 // Messages d'inventaire (R9). `inv.give` couvre l'argent ET les objets via un
 // champ `kind` : le discriminant externe du union reste `type`, donc on ne peut
@@ -191,11 +288,22 @@ export const invDropSchema = z.object({
   item: itemName,
 });
 
+export const invMoneySchema = z.object({
+  type: z.literal("inv.money"),
+  charId: id,
+  delta: z.object({
+    po: intField(-999999, 999999, "pièces d'or"),
+    pa: intField(-999999, 999999, "pièces d'argent"),
+    pc: intField(-999999, 999999, "pièces de cuivre"),
+  }),
+});
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   chatSaySchema,
   diceRollSchema,
   charHpSchema,
   charConditionSchema,
+  charScaleSchema,
   tokenMoveSchema,
   tokenPutSchema,
   tokenRemoveSchema,
@@ -207,19 +315,33 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   mapSelectSchema,
   markerSetSchema,
   markerMoveSchema,
+  linkSetSchema,
+  linkRemoveSchema,
+  linkMoveSchema,
+  linkTravelSchema,
+  pinSetSchema,
+  pinMoveSchema,
+  pinRemoveSchema,
+  targetSetSchema,
+  widgetCounterSchema,
+  widgetClockSchema,
+  widgetTimerSchema,
   markerRemoveSchema,
   markerClearSchema,
   fogEnableSchema,
   fogCoverSchema,
   fogDisableSchema,
   fogRevealSchema,
+  fogRevealAreaSchema,
   pingSchema,
   modeSetSchema,
   initiativeRollSchema,
   combatNextSchema,
+  combatReorderSchema,
   invGiveSchema,
   invAddSchema,
   invDropSchema,
+  invMoneySchema,
 ]);
 
 export type ClientMessageInput = z.infer<typeof clientMessageSchema>;

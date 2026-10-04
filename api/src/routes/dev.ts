@@ -7,7 +7,7 @@
 
 import { Hono } from "hono";
 import { createDb, schema } from "../db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { createSheet } from "@rollwith/shared/sheet";
 import { DEV_COOKIE, isLocalHost } from "../middleware";
 import type { GameTableDO } from "../do/game-table";
@@ -95,8 +95,29 @@ app.post("/seed", async (c) => {
     // Le sac du PJ est réécrit plus bas ; on repart aussi des PV pleins.
     await db
       .update(schema.characters)
-      .set({ pv: 45, pvMax: 45, pvTemp: 0, conditions: [] })
+      .set({ pv: 45, pvMax: 45, pvTemp: 0, conditions: [], tokenScale: 1 })
       .where(eq(schema.characters.campaignId, campaign.id));
+    // Les tests créent des fiches (duplication, etc.) : on repart d'un monde
+    // strictement seedé, sinon les runs suivants voient des personnages en trop.
+    await db
+      .delete(schema.characters)
+      .where(
+        and(
+          eq(schema.characters.campaignId, campaign.id),
+          notInArray(schema.characters.id, ["pj-kaelith", "pj-ragnar", "pnj-gobelin"]),
+        ),
+      );
+    // Idem pour les cartes créées par les tests (import d'image, etc.).
+    await db
+      .delete(schema.maps)
+      .where(
+        and(
+          eq(schema.maps.campaignId, campaign.id),
+          notInArray(schema.maps.id, ["map-image", "map-grid"]),
+        ),
+      );
+    // Et pour les modèles PNJ enregistrés par les tests.
+    await db.delete(schema.npcTemplates).where(eq(schema.npcTemplates.campaignId, campaign.id));
   }
 
   for (const u of [{ id: mj.id, name: mj.name }, ...players]) {
@@ -200,6 +221,16 @@ app.post("/seed", async (c) => {
   // Le gridSize est REMIS à 32 à chaque seed : un test qui vient de retirer la
   // grille ne doit pas polluer les suivants (l'upsert ne le ferait pas).
   await db.update(schema.maps).set({ gridSize: 32 }).where(eq(schema.maps.campaignId, campaign.id));
+  // Idem pour les noms : un test qui vient de renommer « Carte illustrée » ne
+  // doit pas casser les suivants.
+  await db
+    .update(schema.maps)
+    .set({ name: "Carte illustrée" })
+    .where(and(eq(schema.maps.campaignId, campaign.id), eq(schema.maps.id, "map-image")));
+  await db
+    .update(schema.maps)
+    .set({ name: "Carte quadrillée" })
+    .where(and(eq(schema.maps.campaignId, campaign.id), eq(schema.maps.id, "map-grid")));
 
   if (!(await c.env.MAPS.head("dev-camp/map-image.png"))) {
     await c.env.MAPS.put("dev-camp/map-image.png", CARD_PNG, {
@@ -218,6 +249,14 @@ app.post("/seed", async (c) => {
       inventory: { items: [{ name: "Potion de soin", qty: 2 }], money: { po: 12, pa: 3, pc: 0 } },
     })
     .where(eq(schema.characters.id, "pj-kaelith"));
+  // Les autres sacs repartent VIDES : un test qui ajuste la bourse de Ragnar
+  // ne doit pas polluer les suivants.
+  for (const id of ["pj-ragnar", "pnj-gobelin"]) {
+    await db
+      .update(schema.characters)
+      .set({ inventory: { items: [], money: { po: 0, pa: 0, pc: 0 } } })
+      .where(and(eq(schema.characters.campaignId, campaign.id), eq(schema.characters.id, id)));
+  }
 
   return c.json({
     ok: true,

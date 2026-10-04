@@ -4,6 +4,7 @@
   import { tableStore, connectWs, disconnectWs, sendWs, type TableStore } from '$lib/ws.svelte';
   import CharacterSheet from '$lib/components/CharacterSheet.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
+  import Skeleton from '$lib/ds/Skeleton.svelte';
 
   let char = $state<CharacterDetail | null>(null);
   let error = $state('');
@@ -71,7 +72,16 @@
 </svelte:head>
 
 {#if loading}
-  <div class="center"><p class="muted">…</p></div>
+  <div class="sheet-skeleton" aria-busy="true" aria-label="Chargement de la fiche">
+    <Skeleton w="100%" h={46} />
+    <Skeleton w="100%" h={110} radius="var(--radius-md)" />
+    <div class="sk-cols">
+      <Skeleton h={260} radius="var(--radius-md)" />
+      <Skeleton h={260} radius="var(--radius-md)" />
+      <Skeleton h={260} radius="var(--radius-md)" />
+      <Skeleton h={260} radius="var(--radius-md)" />
+    </div>
+  </div>
 {:else if error}
   <div class="center"><p class="error">{error}</p></div>
 {:else if char}
@@ -81,6 +91,19 @@
 
 <style>
   .center { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-  .muted { color: var(--text-2); }
   .error { color: var(--accent-text); }
+  .sheet-skeleton {
+    min-height: 100vh;
+    max-width: 1290px;
+    margin: 0 auto;
+    padding: 18px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sk-cols {
+    display: grid;
+    grid-template-columns: 178px 242px 1fr 1fr;
+    gap: 14px;
+  }
 </style>

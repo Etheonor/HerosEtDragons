@@ -7,21 +7,55 @@
 import type {
   JournalEntry,
   Marker,
+  MapLink,
+  MapPin,
   FogState,
   CombatState,
   CharacterCard,
   TableSettings,
+  TableWidgets,
+  HistoryState,
 } from "@rollwith/shared/protocol";
 import type { Inventory } from "@rollwith/shared/inventory";
-import { DEFAULT_SETTINGS } from "@rollwith/shared/protocol";
+import { DEFAULT_SETTINGS, WS_HEARTBEAT_REQUEST } from "@rollwith/shared/protocol";
+
+/** Plafond mémoire du journal (entrées live + pagination cumulée). Le
+ *  serveur élague à 5 000 : au-delà de 2 000 en DOM, le coût de scroll et la
+ *  mémoire de l'onglet ne se justifient plus pour une session de jeu. */
+export const JOURNAL_MAX_ENTRIES = 2000;
+
+/** Keepalive (audit P4) : battement toutes les 25 s ; sans ack sous 70 s, la
+ *  connexion est un zombie (proxy coupé) : on ferme, le backoff reconnecte. */
+const HEARTBEAT_MS = 25_000;
+const HEARTBEAT_TIMEOUT_MS = 70_000;
+
+/** Plafond de reconnexion (audit P4) : après 8 échecs rapprochés (~40 s), on
+ *  passe à une tentative par minute — un onglet oublié ne martèle plus le
+ *  worker toutes les 8 s, mais finit quand même par revenir. */
+const MAX_FAST_ATTEMPTS = 8;
+const SLOW_RETRY_MS = 60_000;
 
 export interface TableState {
   mode: "exploration" | "combat";
   mapId: string | null;
   tokens: Record<string, { charId: string; x: number; y: number }>;
   markers: Marker[];
+  links: MapLink[];
+  pins: MapPin[];
   fog: Record<string, FogState>;
   combat: CombatState | null;
+  /** Cible partagée (TargetFrame) : charId, ou null. */
+  target: string | null;
+  /** Widgets de séance (compteur, horloge, minuteur). */
+  widgets: TableWidgets;
+}
+
+export function defaultWidgets(): TableWidgets {
+  return {
+    counter: 0,
+    clock: 0,
+    timer: { running: false, endsAt: null, remaining: 0, initial: 0 },
+  };
 }
 
 export interface PresenceUser {
@@ -39,7 +73,13 @@ export interface DiceAnim {
   detail: string;
   n: number;
   mod: number;
+  cron?: boolean;
+  fumble?: boolean;
 }
+
+/** Phases du jet (ms) — partagées entre le store, l'overlay et le badge. */
+export const DICE_ROTATE_MS = 1400;
+export const DICE_REVEAL_MS = 1000;
 
 export interface Ping {
   id: number;
@@ -59,6 +99,12 @@ export interface TableStore {
   pings: Ping[];
   diceAnim: DiceAnim | null;
   error: string | null;
+  /** Lot 2 : incrémenté quand la liste des cartes (REST) a changé côté serveur. */
+  mapsRevision: number;
+  /** Lot 4 : disponibilité de l'undo/redo (source de vérité : le DO). */
+  history: HistoryState;
+  /** Point d'arrivée du dernier voyage (à consommer par la caméra). */
+  arrival: { x: number; y: number } | null;
 }
 
 let pingSeq = 0;
@@ -70,7 +116,18 @@ let journalIds = new Set<number>();
 /** État partagé de la table — les mutations ci-dessous sont réactives partout. */
 export const tableStore = $state<TableStore>({
   connected: false,
-  state: { mode: "exploration", mapId: null, tokens: {}, markers: [], fog: {}, combat: null },
+  state: {
+    mode: "exploration",
+    mapId: null,
+    tokens: {},
+    markers: [],
+    links: [],
+    pins: [],
+    fog: {},
+    combat: null,
+    target: null,
+    widgets: defaultWidgets(),
+  },
   characters: [],
   settings: DEFAULT_SETTINGS,
   journal: [],
@@ -78,15 +135,57 @@ export const tableStore = $state<TableStore>({
   presence: [],
   pings: [],
   diceAnim: null,
+  mapsRevision: 0,
   error: null,
+  history: { canUndo: false, canRedo: false },
+  arrival: null,
 });
 
 let ws: WebSocket | null = null;
 let url = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let lastPongAt = 0;
 let disposed = true;
 let wasConnected = false;
 let attempts = 0;
+
+/** Fenêtre glissante : retire les plus anciennes entrées et oublie leurs ids. */
+function capJournal() {
+  const overflow = tableStore.journal.length - JOURNAL_MAX_ENTRIES;
+  if (overflow <= 0) return;
+  tableStore.journal.slice(0, overflow).forEach((e) => journalIds.delete(e.id));
+  tableStore.journal = tableStore.journal.slice(overflow);
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  lastPongAt = Date.now();
+  heartbeatTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+      tableStore.error = "Connexion perdue";
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      ws.send(WS_HEARTBEAT_REQUEST);
+    } catch {
+      /* ignore */
+    }
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
 
 /** N4 (audit) : remet le store singleton à zéro — passé d'une campagne à
  *  l'autre, l'écran affichait brièvement les personnages/journal de la
@@ -98,8 +197,12 @@ export function resetTableStore() {
     mapId: null,
     tokens: {},
     markers: [],
+    links: [],
+    pins: [],
     fog: {},
     combat: null,
+    target: null,
+    widgets: defaultWidgets(),
   };
   tableStore.characters = [];
   tableStore.settings = DEFAULT_SETTINGS;
@@ -110,6 +213,8 @@ export function resetTableStore() {
   tableStore.pings = [];
   tableStore.diceAnim = null;
   tableStore.error = null;
+  tableStore.history = { canUndo: false, canRedo: false };
+  tableStore.arrival = null;
 }
 
 export function connectWs(campaignId: string) {
@@ -121,6 +226,7 @@ export function connectWs(campaignId: string) {
 
 function doConnect() {
   if (disposed) return;
+  stopHeartbeat();
   if (ws) {
     ws.onclose = null;
     ws.onerror = null;
@@ -140,6 +246,7 @@ function doConnect() {
     wasConnected = true;
     tableStore.connected = true;
     tableStore.error = null;
+    startHeartbeat();
   };
 
   ws.onmessage = (ev) => {
@@ -152,6 +259,7 @@ function doConnect() {
   };
 
   ws.onclose = () => {
+    stopHeartbeat();
     if (disposed) return;
     tableStore.connected = false;
     scheduleReconnect();
@@ -171,9 +279,11 @@ function scheduleReconnect() {
   if (disposed) return;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   attempts += 1;
-  // Backoff exponentiel + jitter (évite la rafale si 5 joueurs retombent ensemble)
-  const base = Math.min(8000, 1000 * 2 ** (attempts - 1));
-  const jitter = Math.random() * 800;
+  // Backoff exponentiel + jitter (évite la rafale si 5 joueurs retombent
+  // ensemble), puis rythme lent : un onglet oublié ne martèle plus le worker.
+  const slow = attempts > MAX_FAST_ATTEMPTS;
+  const base = slow ? SLOW_RETRY_MS : Math.min(8000, 1000 * 2 ** (attempts - 1));
+  const jitter = Math.random() * (slow ? 5000 : 800);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     doConnect();
@@ -190,8 +300,11 @@ function handleMessage(msg: Record<string, unknown>) {
       tableStore.settings = (msg.settings as TableSettings) ?? DEFAULT_SETTINGS;
       tableStore.journal = (msg.journalTail as JournalEntry[]) ?? [];
       journalIds = new Set(tableStore.journal.map((e) => e.id));
+      capJournal();
       tableStore.inventories = (msg.inventories as Record<string, Inventory>) ?? {};
       tableStore.presence = (msg.presence as PresenceUser[]) ?? [];
+      tableStore.history = (msg.history as HistoryState) ?? { canUndo: false, canRedo: false };
+      tableStore.arrival = null;
       break;
 
     case "delta": {
@@ -199,6 +312,8 @@ function handleMessage(msg: Record<string, unknown>) {
       if (patch.mode) tableStore.state.mode = patch.mode as "exploration" | "combat";
       if (patch.combat !== undefined)
         tableStore.state.combat = patch.combat as TableStore["state"]["combat"];
+      if (patch.target !== undefined) tableStore.state.target = patch.target as string | null;
+      if (patch.widgets) tableStore.state.widgets = patch.widgets as TableWidgets;
       if (patch.tokens) {
         // Un patch contenant mapId est un CHANGEMENT DE CARTE : on remplace la
         // vue par celle de la nouvelle carte (le serveur envoie le dict complet).
@@ -213,6 +328,11 @@ function handleMessage(msg: Record<string, unknown>) {
         tableStore.state.tokens = tokens;
       }
       if (patch.markers) tableStore.state.markers = patch.markers as Marker[];
+      if (patch.links) tableStore.state.links = patch.links as MapLink[];
+      if (patch.pins) tableStore.state.pins = patch.pins as MapPin[];
+      if (patch.arrival !== undefined) {
+        tableStore.arrival = patch.arrival as { x: number; y: number } | null;
+      }
       if (patch.fog)
         tableStore.state.fog = {
           ...tableStore.state.fog,
@@ -220,6 +340,8 @@ function handleMessage(msg: Record<string, unknown>) {
         };
       if (patch.mapId !== undefined) tableStore.state.mapId = patch.mapId as string | null;
       if (patch.settings) tableStore.settings = patch.settings as TableSettings;
+      if (patch.history) tableStore.history = patch.history as HistoryState;
+      if (patch.mapsUpdated) tableStore.mapsRevision += 1;
       if (patch.characters) {
         const byId = new Map(tableStore.characters.map((c) => [c.id, c]));
         for (const [id, val] of Object.entries(
@@ -243,6 +365,7 @@ function handleMessage(msg: Record<string, unknown>) {
       if (entry.id !== undefined && journalIds.has(entry.id)) break;
       if (entry.id !== undefined) journalIds.add(entry.id);
       tableStore.journal = [...tableStore.journal, entry];
+      capJournal();
       break;
     }
 
@@ -253,9 +376,12 @@ function handleMessage(msg: Record<string, unknown>) {
 
     case "dice.result": {
       tableStore.diceAnim = msg.anim as DiceAnim;
-      setTimeout(() => {
-        tableStore.diceAnim = null;
-      }, 1700);
+      setTimeout(
+        () => {
+          tableStore.diceAnim = null;
+        },
+        DICE_ROTATE_MS + DICE_REVEAL_MS + 200,
+      );
       break;
     }
 
@@ -268,6 +394,10 @@ function handleMessage(msg: Record<string, unknown>) {
       });
       break;
     }
+
+    case "hb.ack":
+      lastPongAt = Date.now();
+      break;
 
     case "ping": {
       const id = ++pingSeq;
@@ -288,7 +418,7 @@ export function clearWsError() {
   tableStore.error = null;
 }
 
-export function sendWs(msg: Record<string, unknown>) {
+export function sendWs(msg: object) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
@@ -296,6 +426,7 @@ export function sendWs(msg: Record<string, unknown>) {
 
 export function disconnectWs() {
   disposed = true;
+  stopHeartbeat();
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
