@@ -103,6 +103,14 @@ export interface MapSummary {
   gridColor: string | null;
 }
 
+// ── Images d'illustration ──────────────────────────────────────
+
+export interface CampaignImageDto {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
 // ── Compendium ─────────────────────────────────────────────────
 
 export interface CompendiumEntryDto {

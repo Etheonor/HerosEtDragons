@@ -45,6 +45,7 @@ export const HOTKEYS: readonly HotkeyDef[] = [
   { id: "panel.journal", label: "Journal", group: "Fenêtres", key: "j" },
   { id: "panel.dice", label: "Dés", group: "Fenêtres", key: "d" },
   { id: "panel.inventory", label: "Inventaire", group: "Fenêtres", key: "i" },
+  { id: "panel.handout", label: "Illustration", group: "Fenêtres", key: "u" },
 
   { id: "tool.move", label: "Outil Déplacer", group: "Outils", key: "v", mjOnly: true },
   { id: "tool.pnj", label: "Outil PNJ", group: "Outils", key: "p", mjOnly: true },

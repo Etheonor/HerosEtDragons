@@ -210,6 +210,24 @@ export const maps = sqliteTable(
   (table) => [index("maps_campaign_id_idx").on(table.campaignId)],
 );
 
+/** Images d'illustration (fenêtre « Illustration » du MJ) — ni cartes ni avatars. */
+export const campaignImages = sqliteTable(
+  "campaign_images",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    r2Key: text("r2_key").notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("campaign_images_campaign_id_idx").on(table.campaignId)],
+);
+
 export const compendiumEntries = sqliteTable(
   "compendium_entries",
   {

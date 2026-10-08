@@ -1454,3 +1454,69 @@ test.describe("Brouillard (Lot 8.8)", () => {
     await expect.poll(() => alphaAt(0.87, 0.42)).toBe(0);
   });
 });
+
+test.describe("Illustration (fenêtre MJ)", () => {
+  test("le MJ importe, affiche, masque, renomme et supprime une image", async ({
+    page,
+    browser,
+  }) => {
+    await openTable(page, MJ);
+
+    // Bibliothèque → onglet Images (fixtures seedées) + upload d'un PNG 1×1.
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /Images/ }).click();
+    await expect(dialog.locator(".asset-card", { hasText: "Parchemin ancien" })).toBeVisible();
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      dialog.getByRole("button", { name: /Nouvelle image/ }).click(),
+    ]);
+    await chooser.setFiles({ name: "Relique.png", mimeType: "image/png", buffer: png });
+    const relic = dialog.locator(".asset-card", { hasText: "Relique" });
+    await expect(relic).toBeVisible();
+
+    // Double-clic : la fenêtre Illustration s'ouvre, visible par les joueurs.
+    await relic.dblclick();
+    const panel = page.locator(".handout-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator(".hp-status")).toHaveText(/Visible par les joueurs/);
+
+    // Le joueur (2e navigateur) voit la même illustration, sans contrôles.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.locator(".handout-panel img.hp-img")).toBeVisible();
+    await expect(p2.locator(".handout-panel .hp-status")).toHaveCount(0);
+
+    // Le MJ masque : disparition chez le joueur, bandeau côté MJ.
+    await page.getByRole("button", { name: "Masquer", exact: true }).click();
+    await expect(p2.locator(".handout-panel")).toHaveCount(0);
+    await expect(panel.locator(".hp-status")).toHaveText(/Masquée aux joueurs/);
+
+    // Renommage par clic droit dans la bibliothèque.
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dlg = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dlg.getByRole("tab", { name: /Images/ }).click();
+    await dlg.locator(".asset-card", { hasText: "Relique" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Renommer…" }).click();
+    const renameDialog = page.getByRole("dialog", { name: "Renommer l'image" });
+    await renameDialog.getByLabel("Nom").fill("Relique sacrée");
+    await renameDialog.getByRole("button", { name: "Renommer", exact: true }).click();
+    await expect(dlg.locator(".asset-card", { hasText: "Relique sacrée" })).toBeVisible();
+
+    // Suppression (confirmation) : la carte quitte la grille.
+    await dlg.locator(".asset-card", { hasText: "Relique sacrée" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Supprimer…" }).click();
+    const deleteDialog = page.getByRole("dialog", { name: "Supprimer l'image" });
+    await deleteDialog.getByRole("button", { name: "Supprimer", exact: true }).click();
+    await expect(dlg.locator(".asset-card", { hasText: "Relique sacrée" })).toHaveCount(0);
+
+    await ctx.close();
+  });
+});

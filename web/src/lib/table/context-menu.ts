@@ -1,11 +1,15 @@
 import type { NpcTemplate } from "@rollwith/shared/dto";
 
+/** Onglets de la bibliothèque (partagé avec la page : ouverture ciblée). */
+export type AssetTab = "maps" | "npcs" | "chars" | "links" | "images";
+
 /** Cible d'un clic droit dans l'asset manager : le composant décrit la cible,
  *  la page construit les entrées et ouvre son menu unique (lot 5.4). */
 export type AssetTarget =
   | { kind: "asset-map"; mapId: string }
   | { kind: "asset-template"; template: NpcTemplate; count: number }
-  | { kind: "asset-char"; charId: string };
+  | { kind: "asset-char"; charId: string }
+  | { kind: "asset-image"; imageId: string; name: string };
 
 /** Entrée du menu contextuel unique (lot 5). */
 export interface ContextMenuItem {

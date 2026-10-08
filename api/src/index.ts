@@ -6,6 +6,7 @@ import { consumeInvitation } from "./invitations";
 import campaigns from "./routes/campaigns";
 import characters from "./routes/characters";
 import maps from "./routes/maps";
+import images from "./routes/images";
 import notes from "./routes/notes";
 import npcTemplates from "./routes/npc-templates";
 import compendium from "./routes/compendium";
@@ -125,6 +126,7 @@ app.get("/api/invitations/:token", async (c) => {
 app.route("/api/campaigns", campaigns);
 app.route("/api/characters", characters);
 app.route("/api/maps", maps);
+app.route("/api", images);
 app.route("/api/notes", notes);
 app.route("/api/npc-templates", npcTemplates);
 app.route("/api/compendium", compendium);

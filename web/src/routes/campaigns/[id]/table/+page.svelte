@@ -45,9 +45,10 @@
   import { bringToFront } from '$lib/table/panelStack.svelte';
   import SheetPanel from '$lib/table/SheetPanel.svelte';
   import ContextMenu from '$lib/table/ContextMenu.svelte';
-  import type { AssetTarget, ContextMenuItem } from '$lib/table/context-menu';
+  import type { AssetTarget, AssetTab, ContextMenuItem } from '$lib/table/context-menu';
   import AssetManager from '$lib/table/AssetManager.svelte';
   import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
+  import HandoutPanel from '$lib/table/HandoutPanel.svelte';
   import TargetFrame from '$lib/table/TargetFrame.svelte';
   import GroupFrame from '$lib/table/GroupFrame.svelte';
   import TopActions from '$lib/table/TopActions.svelte';
@@ -177,7 +178,14 @@
   // Ouverts par défaut ; l'état est persistant par navigateur. Un panneau ne se
   // referme que par son bouton — pas au clic sur la carte (décision du 07 §Lot 1).
   const PANELS_KEY = 'hd-table-panels-v3';
-  type PanelId = 'compagnie' | 'journal' | 'dice' | 'inventory' | 'dashboard' | 'initiative';
+  type PanelId =
+    | 'compagnie'
+    | 'journal'
+    | 'dice'
+    | 'inventory'
+    | 'dashboard'
+    | 'initiative'
+    | 'handout';
 
   function loadPanelState(): Record<PanelId, boolean> {
     try {
@@ -193,6 +201,7 @@
           inventory: p.inventory === true,
           dashboard: p.dashboard === true,
           initiative: p.initiative !== false,
+          handout: p.handout === true,
         };
       }
     } catch {
@@ -205,6 +214,7 @@
       inventory: false,
       dashboard: false,
       initiative: true,
+      handout: false,
     };
   }
 
@@ -229,6 +239,19 @@
     wasInCombat = inCombat;
   });
 
+  /** L'illustration s'ouvre d'elle-même quand le MJ la montre ou la change ;
+   *  un joueur qui la ferme localement ne la revoit qu'au prochain changement. */
+  let handoutSeen: { visible: boolean; imageId: string | null } = {
+    visible: false,
+    imageId: null,
+  };
+  $effect(() => {
+    const h = store.state.handout;
+    const changed = h.imageId !== handoutSeen.imageId || (!handoutSeen.visible && h.visible);
+    if (h.visible && changed) setPanelOpen('handout', true);
+    handoutSeen = { visible: h.visible, imageId: h.imageId };
+  });
+
   // ── Fiches de personnage en panneaux (Lot 7.1) ───────────────
   // Éphémères (pas de persistance) : une fiche s'ouvre à la demande et le MJ
   // peut en garder plusieurs ouvertes. Le z-order est celui de panelStack.
@@ -247,6 +270,13 @@
   let paletteOpen = $state(false);
   let helpOpen = $state(false);
   let assetManagerOpen = $state(false);
+  /** Onglet appliqué à l'ouverture de la bibliothèque (le prop n'est lu qu'à
+   *  ce moment-là : ensuite l'utilisateur navigue librement). */
+  let assetManagerTab = $state<AssetTab>('maps');
+  function openLibrary(tab: AssetTab = 'maps') {
+    assetManagerTab = tab;
+    assetManagerOpen = true;
+  }
   let compendiumOpen = $state(false);
   let compendiumDeep = $state<{ category: string; slug: string } | null>(null);
 
@@ -256,6 +286,8 @@
   }
   /** Incrémenté après suppression d'un modèle : l'asset manager recharge. */
   let templatesRevision = $state(0);
+  /** Incrémenté après upload/renommage/suppression d'image → rechargement. */
+  let imagesRevision = $state(0);
   /** Boîte « demander une valeur » (renommage de carte, etc.). */
   let prompt = $state<{
     title: string;
@@ -393,6 +425,17 @@
         keywords: ['panneau', 'inventaire', 'sac'],
         run: () => setPanelOpen('inventory', !panelsOpen.inventory),
       },
+      ...(isMj || store.state.handout.visible
+        ? [
+            {
+              id: 'panel.handout',
+              label: panelsOpen.handout ? "Masquer l'illustration" : "Afficher l'illustration",
+              group: 'Actions',
+              keywords: ['illustration', 'image', 'handout'],
+              run: () => setPanelOpen('handout', !panelsOpen.handout),
+            },
+          ]
+        : []),
       ...(store.state.mode === 'combat'
         ? [
             {
@@ -454,7 +497,7 @@
           label: 'Ouvrir la bibliothèque',
           group: 'Actions',
           keywords: ['bibliothèque', 'cartes', 'pnj', 'modèles', 'personnages', 'asset'],
-          run: () => (assetManagerOpen = true),
+          run: () => openLibrary(),
         },
         {
           id: 'dashboard.toggle',
@@ -2175,6 +2218,32 @@
       return items;
     }
 
+    if (t.kind === 'asset-image') {
+      return [
+        {
+          id: 'show',
+          label: 'Afficher aux joueurs',
+          onSelect: () => {
+            showHandout(t.imageId);
+            assetManagerOpen = false;
+          },
+        },
+        {
+          id: 'rename',
+          label: 'Renommer…',
+          separatorBefore: true,
+          onSelect: () => openRenameImagePrompt(t.imageId, t.name),
+        },
+        {
+          id: 'delete',
+          label: 'Supprimer…',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => askDeleteImage(t.imageId, t.name),
+        },
+      ];
+    }
+
     if (t.kind === 'token') {
       const c = charById(t.charId);
       const placed = !!store.state.tokens[t.charId];
@@ -2519,6 +2588,64 @@
     }
   }
 
+  // ── Images d'illustration (fenêtre « Illustration ») ─────────
+
+  function showHandout(imageId: string) {
+    sendWs({ type: 'handout.set', imageId, visible: true });
+  }
+
+  function imageNameFromFile(name: string): string {
+    return name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Image';
+  }
+
+  async function createImageFromFile(file: File) {
+    try {
+      await api.images.upload(campaignId, imageNameFromFile(file.name), file);
+      imagesRevision += 1;
+      showToast('Image importée', 'success');
+    } catch {
+      showToast("Import de l'image impossible", 'error');
+    }
+  }
+
+  function openRenameImagePrompt(imageId: string, name: string) {
+    prompt = {
+      title: "Renommer l'image",
+      label: 'Nom',
+      initial: name,
+      confirmLabel: 'Renommer',
+      onSubmit: (v) => void renameImage(imageId, v),
+    };
+  }
+
+  async function renameImage(imageId: string, name: string) {
+    try {
+      await api.images.rename(imageId, name);
+      imagesRevision += 1;
+    } catch {
+      showToast('Renommage impossible', 'error');
+    }
+  }
+
+  function askDeleteImage(imageId: string, name: string) {
+    confirmState = {
+      title: "Supprimer l'image",
+      message: `« ${name} » sera retirée de la bibliothèque et masquée si elle est à l'écran.`,
+      confirmLabel: 'Supprimer',
+      danger: true,
+      onConfirm: () => void deleteImage(imageId),
+    };
+  }
+
+  async function deleteImage(imageId: string) {
+    try {
+      await api.images.remove(imageId);
+      imagesRevision += 1;
+    } catch {
+      showToast('Suppression impossible', 'error');
+    }
+  }
+
   function openRenameLinkPrompt(id: string) {
     const l = store.state.links.find((x) => x.id === id);
     if (!l) return;
@@ -2579,7 +2706,7 @@
   }
 
   // ── Raccourcis clavier ───────────────────────────────────────
-  function togglePanel(id: 'journal' | 'dice' | 'inventory') {
+  function togglePanel(id: PanelId) {
     setPanelOpen(id, !panelsOpen[id]);
   }
 
@@ -2619,6 +2746,9 @@
         break;
       case 'panel.inventory':
         togglePanel('inventory');
+        break;
+      case 'panel.handout':
+        if (isMj || store.state.handout.visible) togglePanel('handout');
         break;
       case 'map.hand':
         toolSelect('hand');
@@ -3419,7 +3549,7 @@
                   class="asset-btn"
                   type="button"
                   aria-label="Bibliothèque"
-                  onclick={() => (assetManagerOpen = true)}
+                  onclick={() => openLibrary()}
                 >
                   <ICONS.library size={19} strokeWidth={2} aria-hidden="true" />
                 </button>
@@ -3857,7 +3987,13 @@
       tokenCharIds={Object.keys(store.state.tokens)}
       {isMj}
       {templatesRevision}
+      handoutImageId={store.state.handout.imageId}
+      handoutVisible={store.state.handout.visible}
+      {imagesRevision}
+      initialTab={assetManagerTab}
       onPickMap={selectMap}
+      onShowImage={showHandout}
+      onNewImage={() => pickFile(IMAGE_ACCEPT, (f) => void createImageFromFile(f))}
       onNewMap={() => pickFile(IMAGE_ACCEPT, (f) => void createMapFromFile(f))}
       onPlaceTemplate={(tpl, count) => armTemplate(tpl.id, tpl.name, count)}
       onPlaceChar={placeCharFromLibrary}
@@ -3867,6 +4003,15 @@
       }}
       onRemoveLink={(id) => sendWs({ type: 'link.remove', id })}
       onContextMenu={openAssetMenu}
+    />
+  {/if}
+
+  {#if (isMj || store.state.handout.visible) && panelsOpen.handout}
+    <HandoutPanel
+      {campaignId}
+      {isMj}
+      onClose={() => setPanelOpen('handout', false)}
+      onPick={() => openLibrary('images')}
     />
   {/if}
 

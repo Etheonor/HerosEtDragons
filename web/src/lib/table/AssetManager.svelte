@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * Asset manager (lot 5.4) : overlay à trois onglets — Cartes, PNJ, Personnages.
+   * Asset manager (lot 5.4) : overlay à onglets — Cartes, PNJ, Personnages,
+   * Liens, Images (illustrations de la fenêtre « Illustration »).
    *
    * Filtrage strict : l'onglet **Personnages** ne contient que les PJ ; l'onglet
    * **PNJ** contient les PNJ de la campagne **et** les modèles réutilisables
@@ -20,10 +21,11 @@
   import CloseButton from '$lib/ds/CloseButton.svelte';
   import { ICONS } from '$lib/ds/icons';
   import { api, type MapSummary, type NpcTemplate } from '$lib/api';
+  import type { CampaignImageDto } from '@rollwith/shared/dto';
   import type { CharacterCard, MapLink } from '@rollwith/shared/protocol';
   import { portraitUrl } from '$lib/portraits';
   import { showToast } from '$lib/toast.svelte';
-  import type { AssetTarget } from './context-menu';
+  import type { AssetTab, AssetTarget } from './context-menu';
 
   interface Props {
     open: boolean;
@@ -37,9 +39,18 @@
     /** Ids des personnages ayant un pion sur la carte active. */
     tokenCharIds: string[];
     isMj: boolean;
+    /** Illustration courante (badge « à l'écran » / « masquée »). */
+    handoutImageId: string | null;
+    handoutVisible: boolean;
+    /** Incrémenté par la page après upload/renommage/suppression → rechargement. */
+    imagesRevision: number;
+    /** Onglet demandé à l'ouverture (le bouton Bibliothèque ouvre « maps »). */
+    initialTab: Tab;
   /** Incrémenté par la page après suppression d'un modèle → rechargement. */
   templatesRevision: number;
     onPickMap: (id: string) => void;
+    onShowImage: (id: string) => void;
+    onNewImage: () => void;
     /** Ouvre le sélecteur d'image pour créer une carte (la page s'en charge). */
     onNewMap: () => void;
     onPlaceTemplate: (tpl: NpcTemplate, count: number) => void;
@@ -59,8 +70,14 @@
     links,
     tokenCharIds,
     isMj,
+    handoutImageId,
+    handoutVisible,
+    imagesRevision,
+    initialTab,
     templatesRevision,
     onPickMap,
+    onShowImage,
+    onNewImage,
     onNewMap,
     onPlaceTemplate,
     onPlaceChar,
@@ -69,12 +86,21 @@
     onContextMenu,
   }: Props = $props();
 
-  type Tab = 'maps' | 'npcs' | 'chars' | 'links';
+  type Tab = AssetTab;
 
   let tab = $state<Tab>('maps');
   let search = $state('');
   let templates = $state<NpcTemplate[]>([]);
+  let images = $state<CampaignImageDto[]>([]);
   let counts = $state<Record<string, number>>({});
+
+  // L'onglet demandé ne s'applique qu'à l'OUVERTURE : ensuite l'utilisateur
+  // navigue librement (le prop n'est pas réappliqué à chaque changement).
+  let wasOpen = false;
+  $effect(() => {
+    if (open && !wasOpen) tab = initialTab;
+    wasOpen = open;
+  });
 
   $effect(() => {
     if (!open || !isMj) return;
@@ -82,6 +108,22 @@
     void templatesRevision;
     void loadTemplates();
   });
+
+  $effect(() => {
+    if (!open) return;
+    // `imagesRevision` dans les dépendances : upload/suppression rechargent.
+    void imagesRevision;
+    void loadImages();
+  });
+
+  async function loadImages() {
+    try {
+      const res = await api.images.list(campaignId);
+      images = res.images;
+    } catch {
+      showToast('Images indisponibles', 'error');
+    }
+  }
 
   async function loadTemplates() {
     try {
@@ -116,6 +158,7 @@
   const filteredTemplates = $derived(templates.filter((t) => matches(t.name)));
   const filteredPj = $derived(pjChars.filter((c) => matches(c.name)));
   const filteredPnj = $derived(pnjChars.filter((c) => matches(c.name)));
+  const filteredImages = $derived(images.filter((i) => matches(i.name)));
 
   function placeChar(charId: string) {
     onPlaceChar(charId);
@@ -135,7 +178,9 @@
         ? filteredTemplates.length + filteredPnj.length
         : tab === 'chars'
           ? filteredPj.length
-          : links.length,
+          : tab === 'images'
+            ? filteredImages.length
+            : links.length,
   );
 </script>
 
@@ -188,6 +233,14 @@
           role="tab"
           aria-selected={tab === 'links'}
           onclick={() => (tab = 'links')}>Liens <span class="asset-count">{links.length}</span></button
+        >
+        <button
+          class="asset-tab"
+          class:active={tab === 'images'}
+          role="tab"
+          aria-selected={tab === 'images'}
+          onclick={() => (tab = 'images')}
+          >Images <span class="asset-count">{images.length}</span></button
         >
       </div>
 
@@ -357,6 +410,63 @@
               {#each filteredPj as c (c.id)}
                 {@render charCard(c)}
               {/each}
+            </div>
+          {/if}
+        {:else if tab === 'images'}
+          {#if filteredImages.length === 0 && search.trim() !== ''}
+            <p class="asset-empty">Aucune image pour cette recherche.</p>
+          {:else if images.length === 0 && !isMj}
+            <p class="asset-empty">Aucune illustration dans cette campagne.</p>
+          {:else}
+            <div class="asset-grid">
+              {#each filteredImages as img (img.id)}
+                <div
+                  class="asset-card"
+                  data-kind="image"
+                  class:on-map={img.id === handoutImageId}
+                  role="button"
+                  tabindex="0"
+                  title={isMj ? 'Double-clic : afficher aux joueurs' : img.name}
+                  ondblclick={() => {
+                    if (!isMj) return;
+                    onShowImage(img.id);
+                    onOpenChange(false);
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' && isMj) {
+                      onShowImage(img.id);
+                      onOpenChange(false);
+                    }
+                  }}
+                  oncontextmenu={(e) =>
+                    onContextMenu(e, { kind: 'asset-image', imageId: img.id, name: img.name })}
+                >
+                  <span class="asset-thumb">
+                    <img
+                      src={api.images.fileUrl(img.id)}
+                      alt=""
+                      draggable="false"
+                      loading="lazy"
+                    />
+                  </span>
+                  <span class="asset-name">{img.name}</span>
+                  {#if img.id === handoutImageId}
+                    <span class="asset-badge">{handoutVisible ? "à l'écran" : 'masquée'}</span>
+                  {/if}
+                </div>
+              {/each}
+
+              {#if isMj}
+                <button
+                  class="asset-card asset-new"
+                  type="button"
+                  title="Importer une image d'illustration"
+                  onclick={onNewImage}
+                >
+                  <span class="asset-thumb asset-new-thumb">＋</span>
+                  <span class="asset-name">Nouvelle image…</span>
+                </button>
+              {/if}
             </div>
           {/if}
         {:else if links.length === 0}

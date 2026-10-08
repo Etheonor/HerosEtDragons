@@ -96,6 +96,14 @@ export interface TableLiveState {
   target: string | null;
   /** Widgets de séance (horloge, compteur, minuteur), partagés MJ + joueurs. */
   widgets: TableWidgets;
+  /** Illustration du MJ (une seule à la fois). Un joueur ne reçoit l'imageId
+   *  que si `visible` (règle B5 : rien ne fuit avant l'affichage). */
+  handout: HandoutState;
+}
+
+export interface HandoutState {
+  imageId: string | null;
+  visible: boolean;
 }
 
 export interface TableWidgets {
@@ -375,6 +383,14 @@ export interface TargetSetMsg {
   charId: string | null;
 }
 
+export interface HandoutSetMsg {
+  type: "handout.set";
+  /** Image d'illustration affichée, ou null pour n'en garder aucune. */
+  imageId: string | null;
+  /** Masquée aux joueurs, le MJ peut la garder « prête » (imageId conservé). */
+  visible: boolean;
+}
+
 export interface WidgetCounterMsg {
   type: "widget.counter";
   value: number;
@@ -520,6 +536,7 @@ export type ClientMessage =
   | PinMoveMsg
   | PinRemoveMsg
   | TargetSetMsg
+  | HandoutSetMsg
   | WidgetCounterMsg
   | WidgetClockMsg
   | WidgetTimerMsg
@@ -551,6 +568,8 @@ export interface TableDeltaPatch {
   target?: string | null;
   /** Widgets de séance (horloge, compteur, minuteur). */
   widgets?: TableWidgets;
+  /** Illustration (filtrée B5 : jamais d'id chez les joueurs si masquée). */
+  handout?: HandoutState;
   markers?: Marker[];
   links?: MapLink[];
   pins?: MapPin[];
@@ -680,6 +699,7 @@ export function isClientMessageValid(msg: unknown): msg is ClientMessage {
     "pin.move",
     "pin.remove",
     "target.set",
+    "handout.set",
     "widget.counter",
     "widget.clock",
     "widget.timer",

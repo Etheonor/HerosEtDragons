@@ -183,6 +183,12 @@ export const targetSetSchema = z.object({
   charId: id.nullable(),
 });
 
+export const handoutSetSchema = z.object({
+  type: z.literal("handout.set"),
+  imageId: id.nullable(),
+  visible: z.boolean({ error: "visibilité booléenne requise" }),
+});
+
 export const widgetCounterSchema = z.object({
   type: z.literal("widget.counter"),
   value: intField(0, 99, "compteur"),
@@ -323,6 +329,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   pinMoveSchema,
   pinRemoveSchema,
   targetSetSchema,
+  handoutSetSchema,
   widgetCounterSchema,
   widgetClockSchema,
   widgetTimerSchema,

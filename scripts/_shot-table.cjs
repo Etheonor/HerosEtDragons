@@ -28,6 +28,10 @@ const OUT = process.env.SHOT_OUT || "/tmp";
 
   await page.goto(`${URL}/campaigns/dev-camp/table`);
   await page.locator(".journal-panel").waitFor();
+  // Le tutoriel s'auto-ouvre (le script ne pose pas le flag) : on le passe.
+  const skipTuto = page.getByRole("button", { name: "Passer" });
+  await skipTuto.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
+  if (await skipTuto.count()) await skipTuto.click();
 
   // Carte active : sans elle, le HUD de zoom n'est pas rendu.
   await page.getByRole("button", { name: "Bibliothèque" }).click();
@@ -170,6 +174,15 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -30);
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${OUT}/fog-zoomed.png` });
+  }
+
+  if (process.env.SHOT_HANDOUT) {
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dlg = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dlg.getByRole("tab", { name: /Images/ }).click();
+    await dlg.locator(".asset-card", { hasText: "Parchemin ancien" }).dblclick();
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${OUT}/handout.png` });
   }
 
   if (process.env.SHOT_COMPENDIUM) {

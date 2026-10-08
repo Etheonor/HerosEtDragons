@@ -25,6 +25,7 @@ import {
   type TableSettings,
   type TableLiveState,
   type TableWidgets,
+  type HandoutState,
   type HistoryState,
 } from "@rollwith/shared/protocol";
 import {
@@ -82,6 +83,8 @@ interface LiveState {
   target: string | null;
   /** Widgets de séance (horloge, compteur, minuteur). */
   widgets: TableWidgets;
+  /** Illustration du MJ (une seule à la fois). */
+  handout: HandoutState;
 }
 
 const MAX_CHAT_LENGTH = 2000;
@@ -170,6 +173,7 @@ type PinMoveMsg = Extract<ClientMessageInput, { type: "pin.move" }>;
 type PinRemoveMsg = Extract<ClientMessageInput, { type: "pin.remove" }>;
 type FogRevealMsg = Extract<ClientMessageInput, { type: "fog.reveal" }>;
 type FogRevealAreaMsg = Extract<ClientMessageInput, { type: "fog.revealArea" }>;
+type HandoutSetMsg = Extract<ClientMessageInput, { type: "handout.set" }>;
 type PingMsg = Extract<ClientMessageInput, { type: "ping" }>;
 type InvAddMsg = Extract<ClientMessageInput, { type: "inv.add" }>;
 type InvDropMsg = Extract<ClientMessageInput, { type: "inv.drop" }>;
@@ -203,6 +207,7 @@ function defaultLiveState(): LiveState {
     combat: null,
     target: null,
     widgets: defaultWidgets(),
+    handout: { imageId: null, visible: false },
   };
 }
 
@@ -266,15 +271,21 @@ export class GameTableDO extends DurableObject<Env> {
         !legacy.linksByMap ||
         !legacy.pinsByMap ||
         legacy.target === undefined ||
-        !legacy.widgets
+        !legacy.widgets ||
+        legacy.handout === undefined
       ) {
         const widgets = legacy.widgets as Partial<TableWidgets> | undefined;
         const timer = widgets?.timer as Partial<TableWidgets["timer"]> | undefined;
+        const handout = legacy.handout as Partial<HandoutState> | undefined;
         return {
           ...stored,
           linksByMap: (legacy.linksByMap as Record<string, MapLink[]>) ?? {},
           pinsByMap: (legacy.pinsByMap as Record<string, MapPin[]>) ?? {},
           target: (legacy.target as string | null) ?? null,
+          handout: {
+            imageId: typeof handout?.imageId === "string" ? handout.imageId : null,
+            visible: handout?.visible === true,
+          },
           widgets: {
             counter: Number(widgets?.counter) || 0,
             clock: Number(widgets?.clock) || 0,
@@ -301,6 +312,7 @@ export class GameTableDO extends DurableObject<Env> {
       combat: (legacy.combat as CombatState | null) ?? null,
       target: null,
       widgets: defaultWidgets(),
+      handout: { imageId: null, visible: false },
     };
   }
 
@@ -1240,6 +1252,9 @@ export class GameTableDO extends DurableObject<Env> {
         case "target.set":
           await this.handleTargetSet(attachment, m);
           break;
+        case "handout.set":
+          await this.handleHandoutSet(attachment, m);
+          break;
         case "widget.counter":
           await this.handleWidgetCounter(attachment, m);
           break;
@@ -1440,6 +1455,16 @@ export class GameTableDO extends DurableObject<Env> {
     if (mapIdActive === null && this.ctx.getWebSockets().length > 0) {
       this.broadcastRoleAware({ mapId: null, tokens: {}, markers: [] });
     }
+  }
+
+  /** Suppression REST d'une image : si c'est celle qui est affichée, la table
+   *  revient à « rien » (appelé par DELETE /api/images/:id, comme cleanupMap). */
+  async cleanupImage(imageId: string): Promise<void> {
+    const state = await this.getState();
+    if (state.handout.imageId !== imageId) return;
+    const handout: HandoutState = { imageId: null, visible: false };
+    await this.patchState({ handout });
+    this.broadcastRoleAware({ handout });
   }
 
   // ── Handlers : chat & dés ─────────────────────────────────────
@@ -2986,6 +3011,22 @@ export class GameTableDO extends DurableObject<Env> {
     this.broadcastAll({ type: "ping", x, y });
   }
 
+  /** Illustration du MJ : une seule image, masquable sans être oubliée.
+   *  Jamais d'undo (état de présentation, comme la cible). */
+  private async handleHandoutSet(att: WsAttachment, msg: HandoutSetMsg) {
+    if (att.role !== "mj") return;
+    const state = await this.getState();
+    const handout: HandoutState = {
+      imageId: msg.imageId,
+      visible: msg.visible && msg.imageId !== null,
+    };
+    if (state.handout.imageId === handout.imageId && state.handout.visible === handout.visible) {
+      return;
+    }
+    await this.patchState({ handout });
+    this.broadcastRoleAware({ handout });
+  }
+
   private async handleModeSet(ws: WebSocket, att: WsAttachment, msg: ModeSetMsg) {
     if (att.role !== "mj") return;
     const mode = msg.mode;
@@ -3314,6 +3355,16 @@ export class GameTableDO extends DurableObject<Env> {
       hasCombat && this.liveState
         ? this.filterCombatForPlayers(patch.combat as CombatState | null, this.liveState)
         : undefined;
+    // B5 : une illustration masquée part SANS son id chez les joueurs.
+    const hasHandout = patch.handout !== undefined;
+    const playerHandout = hasHandout
+      ? (() => {
+          const h = patch.handout as HandoutState;
+          return h.visible && h.imageId
+            ? { imageId: h.imageId, visible: true }
+            : { imageId: null, visible: false };
+        })()
+      : undefined;
     // B5 : une cible non révélée (ou un clear) part à null chez les joueurs.
     const hasTarget = patch.target !== undefined;
     const playerTarget =
@@ -3334,6 +3385,7 @@ export class GameTableDO extends DurableObject<Env> {
           ...(playerCharacters ? { characters: playerCharacters } : {}),
           ...(hasCombat ? { combat: playerCombat ?? null } : {}),
           ...(hasTarget ? { target: playerTarget } : {}),
+          ...(hasHandout ? { handout: playerHandout } : {}),
         };
       }
       try {
@@ -3436,6 +3488,11 @@ export class GameTableDO extends DurableObject<Env> {
       role === "mj" || (state.target && this.isCharVisibleToPlayers(state.target, state))
         ? state.target
         : null;
+    // B5 : idem pour l'illustration masquée — les joueurs ne reçoivent rien.
+    const handout: HandoutState =
+      role === "mj" || (state.handout.visible && state.handout.imageId)
+        ? state.handout
+        : { imageId: null, visible: false };
 
     await this.ensureLegacyJournalImport();
     const journalTail = await this.getJournalTail(50, role);
@@ -3460,6 +3517,7 @@ export class GameTableDO extends DurableObject<Env> {
         combat,
         target,
         widgets: state.widgets ?? defaultWidgets(),
+        handout,
       },
       characters,
       settings: campaign?.settings ?? DEFAULT_SETTINGS,
