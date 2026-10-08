@@ -2,6 +2,7 @@
 // Les types viennent de @rollwith/shared/dto (source unique avec l'API).
 import type {
   CampaignDetail,
+  CampaignImageDto,
   CampaignListItem,
   CharacterDetail,
   CharacterSummary,
@@ -190,6 +191,24 @@ export const api = {
     },
     remove: (mapId: string) => fetchJson<{ ok: true }>(`/api/maps/${mapId}`, { method: "DELETE" }),
     imageUrl: (mapId: string) => `/api/maps/${mapId}/image`,
+  },
+  images: {
+    list: (campaignId: string) =>
+      fetchJson<{ images: CampaignImageDto[] }>(`/api/campaigns/${campaignId}/images`),
+    upload: (campaignId: string, name: string, image: File) => {
+      const form = new FormData();
+      form.set("name", name);
+      form.set("image", image);
+      return fetchForm<CampaignImageDto>(`/api/campaigns/${campaignId}/images`, form);
+    },
+    rename: (imageId: string, name: string) =>
+      fetchJson<CampaignImageDto>(`/api/images/${imageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      }),
+    remove: (imageId: string) =>
+      fetchJson<{ ok: true }>(`/api/images/${imageId}`, { method: "DELETE" }),
+    fileUrl: (imageId: string) => `/api/images/${imageId}/file`,
   },
   npcTemplates: {
     list: (campaignId: string) =>

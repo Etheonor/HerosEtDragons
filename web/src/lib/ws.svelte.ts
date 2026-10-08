@@ -14,6 +14,7 @@ import type {
   CharacterCard,
   TableSettings,
   TableWidgets,
+  HandoutState,
   HistoryState,
 } from "@rollwith/shared/protocol";
 import type { Inventory } from "@rollwith/shared/inventory";
@@ -48,6 +49,8 @@ export interface TableState {
   target: string | null;
   /** Widgets de séance (compteur, horloge, minuteur). */
   widgets: TableWidgets;
+  /** Illustration du MJ (une seule à la fois ; filtrée B5 par le serveur). */
+  handout: HandoutState;
 }
 
 export function defaultWidgets(): TableWidgets {
@@ -127,6 +130,7 @@ export const tableStore = $state<TableStore>({
     combat: null,
     target: null,
     widgets: defaultWidgets(),
+    handout: { imageId: null, visible: false },
   },
   characters: [],
   settings: DEFAULT_SETTINGS,
@@ -203,6 +207,7 @@ export function resetTableStore() {
     combat: null,
     target: null,
     widgets: defaultWidgets(),
+    handout: { imageId: null, visible: false },
   };
   tableStore.characters = [];
   tableStore.settings = DEFAULT_SETTINGS;
@@ -314,6 +319,7 @@ function handleMessage(msg: Record<string, unknown>) {
         tableStore.state.combat = patch.combat as TableStore["state"]["combat"];
       if (patch.target !== undefined) tableStore.state.target = patch.target as string | null;
       if (patch.widgets) tableStore.state.widgets = patch.widgets as TableWidgets;
+      if (patch.handout) tableStore.state.handout = patch.handout as HandoutState;
       if (patch.tokens) {
         // Un patch contenant mapId est un CHANGEMENT DE CARTE : on remplace la
         // vue par celle de la nouvelle carte (le serveur envoie le dict complet).

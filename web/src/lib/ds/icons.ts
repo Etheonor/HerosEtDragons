@@ -20,6 +20,7 @@ import {
   Dices,
   Flag,
   Hand,
+  Image as ImageIcon,
   LayoutDashboard,
   List,
   Map,
@@ -57,6 +58,8 @@ export const ICONS = {
   /** TopActions (lot 10.3) : compendium et tableau de bord. */
   compendium: BookOpenText,
   dashboard: LayoutDashboard,
+  /** Fenêtre « Illustration » (images de campagne). */
+  image: ImageIcon,
   /** Icônes d'action et de fenêtre. */
   dice: Dices,
   attack: Swords,
