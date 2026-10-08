@@ -18,6 +18,7 @@ import {
   CircleQuestionMark,
   CloudFog,
   Dices,
+  EyeOff,
   Flag,
   Hand,
   Image as ImageIcon,
@@ -60,6 +61,8 @@ export const ICONS = {
   dashboard: LayoutDashboard,
   /** Fenêtre « Illustration » (images de campagne). */
   image: ImageIcon,
+  /** Jet caché (visible du MJ seul). */
+  secret: EyeOff,
   /** Icônes d'action et de fenêtre. */
   dice: Dices,
   attack: Swords,

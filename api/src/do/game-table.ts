@@ -1501,7 +1501,9 @@ export class GameTableDO extends DurableObject<Env> {
     const { n, sides, mod, drop } = msg;
     const label = msg.label || undefined;
     const expr = label ?? formatExpression({ n, sides, mod, drop });
-    await this.executeDiceRoll(ws, att, n, sides, mod, expr, drop);
+    // Jet caché : réservé au MJ (un joueur qui le demande est ignoré).
+    const hidden = msg.hidden === true && att.role === "mj";
+    await this.executeDiceRoll(ws, att, n, sides, mod, expr, drop, hidden);
   }
 
   private makeRng() {
@@ -1544,6 +1546,7 @@ export class GameTableDO extends DurableObject<Env> {
     mod: number,
     expr: string,
     drop = 0,
+    hidden = false,
   ) {
     const roll = rollDice(n, sides, mod, this.makeRng(), drop);
     const crit = isCritical(roll);
@@ -1563,8 +1566,12 @@ export class GameTableDO extends DurableObject<Env> {
       fumble,
     };
 
-    await this.appendJournal(entry);
-    this.broadcastAll({ type: "journal", entry });
+    // Jet caché : entrée de journal en visibilité « mj » — les joueurs ne la
+    // reçoivent ni en live ni au reload (même filtre que les PNJ non révélés).
+    const visibility = hidden ? "mj" : "all";
+    if (hidden) entry.hidden = true;
+    await this.appendJournal(entry, visibility);
+    this.broadcastJournal(entry, visibility);
 
     ws.send(
       JSON.stringify({
@@ -3600,6 +3607,7 @@ export class GameTableDO extends DurableObject<Env> {
       text: r.text as string,
       roll: r.roll ? (JSON.parse(r.roll as string) as JournalEntry["roll"]) : undefined,
       ref: r.ref ? (JSON.parse(r.ref as string) as JournalEntry["ref"]) : undefined,
+      hidden: r.visibility === "mj" ? true : undefined,
     };
   }
 

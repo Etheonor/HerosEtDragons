@@ -1079,6 +1079,36 @@ describe("GameTableDO — intégration", () => {
     expect(ack.type).toBe("hb.ack");
   });
 
+  it("dice.roll hidden (MJ) : ni jet ni entrée de journal chez les joueurs", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    mj.send({ type: "dice.roll", sides: 20, n: 1, mod: 0, hidden: true });
+    const entry = await mj.nextWhere((m) => m.type === "journal");
+    expect((entry.entry as { hidden?: boolean }).hidden).toBe(true);
+    await mj.nextWhere((m) => m.type === "dice.result"); // l'animation du MJ
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(player.messages.filter((m) => m.type === "journal")).toEqual([]);
+    expect(player.messages.filter((m) => m.type === "dice.result")).toEqual([]);
+
+    // Reload : le snapshot d'un joueur ne contient pas l'entrée cachée.
+    const late = await connect(PLAYER2);
+    const snap = await late.next("snapshot");
+    expect(snap.journalTail).toEqual([]);
+
+    // Un joueur ne peut pas cacher : son jet reste public et badgé normal.
+    player.send({ type: "dice.roll", sides: 6, n: 1, mod: 0, hidden: true });
+    const pub = await mj.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { kind: string }).kind === "roll",
+    );
+    expect((pub.entry as { hidden?: boolean }).hidden).toBeUndefined();
+    await player.nextWhere((m) => m.type === "journal");
+  });
+
   it("handout.set (illustration) : MJ seul, filtré B5 tant que masquée, cleanupImage", async () => {
     await setupWorld();
     const mj = await connect(MJ);

@@ -123,6 +123,8 @@ export interface JournalEntry {
   who: string | null;
   whoColor: string | null;
   text: string;
+  /** Entrée réservée au MJ (jet caché, PNJ non révélé…) : badge « caché ». */
+  hidden?: boolean;
   roll?: {
     expression: string;
     total: number;
@@ -474,6 +476,9 @@ export interface DiceRollMsg {
   /** dés à retirer, les plus bas d'abord (0 = aucun) */
   drop?: number;
   label?: string;
+  /** Jet caché : le journal et le résultat ne partent qu'aux sockets MJ.
+   *  Ignoré pour un joueur (seul le MJ peut cacher un jet). */
+  hidden?: boolean;
 }
 
 export interface InvGiveMoneyMsg {

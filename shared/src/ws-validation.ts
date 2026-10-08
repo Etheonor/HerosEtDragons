@@ -29,6 +29,7 @@ export const diceRollSchema = z
     mod: intField(-100, 100, "modificateur").default(0),
     drop: intField(0, 19, "dés biffés").default(0),
     label: z.string({ error: "label requis" }).max(120).optional(),
+    hidden: z.boolean().optional(),
   })
   .refine((v) => v.drop <= v.n - 1, { message: "dés biffés : au plus n-1", path: ["drop"] });
 

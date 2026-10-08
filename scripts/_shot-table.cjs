@@ -176,6 +176,14 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/fog-zoomed.png` });
   }
 
+  if (process.env.SHOT_SECRET) {
+    await page.keyboard.press("d");
+    await page.getByRole("button", { name: /Jet caché/ }).click();
+    await page.getByRole("button", { name: /Lancer 1d20/ }).click();
+    await page.waitForTimeout(700);
+    await page.screenshot({ path: `${OUT}/jet-cache.png` });
+  }
+
   if (process.env.SHOT_HANDOUT) {
     await page.getByRole("button", { name: "Bibliothèque" }).click();
     const dlg = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });

@@ -169,6 +169,8 @@
   }
   let diceMod = $state(0);
   let diceSides = $state(20);
+  /** Jets cachés (MJ) : le journal et le résultat ne partent qu'aux sockets MJ. */
+  let diceHidden = $state(false);
   let diceHistory: { id: number; label: string; total: number | null }[] = $state([]);
   let diceHistSeq = 0;
   let session = $state<{ user: { id: string; name: string } } | null>(null);
@@ -1432,11 +1434,18 @@
   }
 
   function quickRoll(sides: number) {
-    sendWs({ type: 'dice.roll', sides, n: 1, mod: diceMod });
+    const hidden = isMj && diceHidden;
+    sendWs({
+      type: 'dice.roll',
+      sides,
+      n: 1,
+      mod: diceMod,
+      ...(hidden ? { hidden: true } : {}),
+    });
     diceHistory = [
       {
         id: ++diceHistSeq,
-        label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}`,
+        label: `1d${sides}${diceMod >= 0 ? '+' : ''}${diceMod}${hidden ? ' · caché' : ''}`,
         total: null,
       },
       ...diceHistory,
@@ -3612,6 +3621,7 @@
                     <div class="roll-head">
                       <span class="journal-who" style="color: {entry.whoColor};">{entry.who}</span>
                       <span class="roll-expr">{entry.roll?.expression}</span>
+                      {#if entry.hidden}<span class="roll-hidden">caché</span>{/if}
                     </div>
                     <div class="roll-result" class:fumble={entry.roll?.fumble}>
                       {entry.roll?.total}
@@ -3703,6 +3713,19 @@
               >
             {/each}
           </div>
+          {#if isMj}
+            <button
+              type="button"
+              class="dice-secret"
+              class:on={diceHidden}
+              aria-pressed={diceHidden}
+              title="Le jet et son résultat ne partent qu'à vous"
+              onclick={() => (diceHidden = !diceHidden)}
+            >
+              <ICONS.secret size={14} strokeWidth={2} aria-hidden="true" />
+              Jet caché{diceHidden ? ' — activé' : ''}
+            </button>
+          {/if}
           <button class="dice-launch" onclick={() => quickRoll(diceSides)}>
             Lancer 1d{diceSides} {diceMod >= 0 ? '+' : '−'} {Math.abs(diceMod)}
           </button>
@@ -4931,6 +4954,11 @@
     display: flex; flex-direction: column; gap: 11px; font-size: 13px; line-height: 1.5; min-height: 0;
   }
   .journal-entry { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+  .roll-hidden {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-xs);
+    padding: 0 4px;
+  }
   .older-btn {
     font-family: var(--font-body); font-size: 12px; font-weight: 500;
     align-self: center; padding: 3px 12px; margin-bottom: 4px;
@@ -5023,6 +5051,18 @@
     cursor: pointer;
   }
   .dice-launch:hover { background: var(--accent-hover); }
+  .dice-secret {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; padding: 6px 8px;
+    font-size: 13px; font-weight: 700;
+    color: var(--text-2); background: var(--panel);
+    border: 1.5px solid var(--border-default); border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .dice-secret:hover { color: var(--heading); border-color: var(--border-strong); }
+  .dice-secret.on {
+    color: var(--accent-fg); background: var(--accent); border-color: var(--accent-border);
+  }
   .dice-tip { font-size: 13px; font-weight: 500; color: var(--text-2); }
 
   .dice-history { border-top: 1px solid var(--border-soft); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; }

@@ -1520,3 +1520,28 @@ test.describe("Illustration (fenêtre MJ)", () => {
     await ctx.close();
   });
 });
+
+test.describe("Jets cachés (MJ)", () => {
+  test("un jet caché n'apparaît que chez le MJ", async ({ page, browser }) => {
+    await openTable(page, MJ);
+
+    // Panneau Dés : activer « Jet caché », puis lancer.
+    await openPanel(page, "dice");
+    await page.getByRole("button", { name: /Jet caché/ }).click();
+    await page.getByRole("button", { name: /Lancer 1d20/ }).click();
+
+    // Le MJ voit son jet, badgé « caché ».
+    const entry = page.locator(".journal-entry", { hasText: "1d20" });
+    await expect(entry).toBeVisible();
+    await expect(entry.locator(".roll-hidden")).toHaveText("caché");
+
+    // Le joueur, lui, n'a rien reçu.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, KAELITH);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.locator(".journal-panel")).toBeVisible();
+    await expect(p2.locator(".journal-entry", { hasText: "1d20" })).toHaveCount(0);
+    await ctx.close();
+  });
+});
