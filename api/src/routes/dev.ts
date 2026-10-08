@@ -56,12 +56,7 @@ app.get("/whoami", async (c) => {
  *  dans le dépôt). */
 const CARD_PNG = Uint8Array.from(
   atob(
-    "iVBORw0KGgoAAAANSUhEUgAAAMgAAACWCAYAAACb3McZAAAAAXNSR0IArs4c6QAAAARnQU1BAACx" +
-      "jwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAMBSURBVHhe7dQxAcAwDMCw9O90/aDHdAAAAJ0" +
-      "dEVKQVRVbu7Nr63VB3BMTQPYBKo4aL3Jn6WLkzECc5GZzbxIXrPe4p+W5e6TDsrFwz39jaL9HZL" +
-      "9j63xMbHMzP//u3BhkYXRmVzhjYmF2c4fXz//59///9jY2Y8/P//59///9jY2Y8Pf///5+/v//Z2b3" +
-      "t7O7d7u7e7v//7u7v//f39/f3D////////////////////////////////////////////////////////////////" +
-      "//////////////////////////////8J+RvAAAAABJRU5ErkJggg==",
+    "iVBORw0KGgoAAAANSUhEUgAAAMgAAACWCAYAAACb3McZAAABxUlEQVR42u3cwQ1GQBCAUXWJCvakCFeVaEYjenDUBQ0IFxNrvMNrQP4v8ye7s800lh041/gIIBAQCAgEBAKVB7KtC/yGQEAgIBAQCAgEBAICAYGAQASCQAQCAgGBgEAgRyBD3/2KH5dAQCACQSACAYGAQEAgIBAQCAgEBOIknXw3FkwQEAgIBAQCAgGBgEBAICAQgSAQgYBAQCAgEBAICAQEAgIBgYBABIJA7KTjNXsTBAQCAgGBgEBAICAQEIhAEIhAwEk6TvpNEPAXCwQCAgGBgEBAICAQgSAQgYBAQCAgEBAICAQEAgIBgfhoCEQgIBCwk273GhMEBAICAYGAQEAgIBCBIBCBgEDASTpuBJggIBAQCAgEBAIC8dEQiEBAICAQEAgIBAQCAoFLc2lvCQRhvByKQPh0HNGRCITPxxEZiUBIEUdUJAIhTRwRkQgEgdhJp8Zd84g4no7EBCHV9BAIAhEIAhEIAhEICAQEIhAEIhAEIhCcpDtJ94q5QEwQROI2LyKxD4JIbBSCnXTwqgl4F0sgCEQgIBAQCAgEBAICAYGAQEAgAkEgAgGBgEBAICAQEAgIBBIHAggEBAICAYGAQKAaB0pwKAZ5CKl4AAAAAElFTkSuQmCC",
   ),
   (c) => c.charCodeAt(0),
 );
@@ -118,6 +113,15 @@ app.post("/seed", async (c) => {
       );
     // Et pour les modèles PNJ enregistrés par les tests.
     await db.delete(schema.npcTemplates).where(eq(schema.npcTemplates.campaignId, campaign.id));
+    // Idem pour les images d'illustration (fenêtre « Illustration »).
+    await db
+      .delete(schema.campaignImages)
+      .where(
+        and(
+          eq(schema.campaignImages.campaignId, campaign.id),
+          notInArray(schema.campaignImages.id, ["img-parchemin", "img-blason"]),
+        ),
+      );
   }
 
   for (const u of [{ id: mj.id, name: mj.name }, ...players]) {
@@ -232,14 +236,55 @@ app.post("/seed", async (c) => {
     .set({ name: "Carte quadrillée" })
     .where(and(eq(schema.maps.campaignId, campaign.id), eq(schema.maps.id, "map-grid")));
 
-  if (!(await c.env.MAPS.head("dev-camp/map-image.png"))) {
-    await c.env.MAPS.put("dev-camp/map-image.png", CARD_PNG, {
-      httpMetadata: { contentType: "image/png" },
-    });
-    await db
-      .update(schema.maps)
-      .set({ r2Key: "dev-camp/map-image.png" })
-      .where(and(eq(schema.maps.id, "map-image"), eq(schema.maps.campaignId, campaign.id)));
+  // Réécriture inconditionnelle : une fixture corrigée doit remplacer l'objet
+  // existant (un `head` de garde garderait l'ancien binaire).
+  await c.env.MAPS.put("dev-camp/map-image.png", CARD_PNG, {
+    httpMetadata: { contentType: "image/png" },
+  });
+  await db
+    .update(schema.maps)
+    .set({ r2Key: "dev-camp/map-image.png" })
+    .where(and(eq(schema.maps.id, "map-image"), eq(schema.maps.campaignId, campaign.id)));
+
+  // Deux illustrations seedées (fenêtre « Illustration ») — noms réécrits à
+  // chaque seed, comme les cartes : un test qui renomme ne pollue pas la suite.
+  await db
+    .insert(schema.campaignImages)
+    .values([
+      {
+        id: "img-parchemin",
+        campaignId: campaign.id,
+        name: "Parchemin ancien",
+        r2Key: "images/dev-camp/img-parchemin",
+      },
+      {
+        id: "img-blason",
+        campaignId: campaign.id,
+        name: "Blason du royaume",
+        r2Key: "images/dev-camp/img-blason",
+      },
+    ])
+    .onConflictDoNothing();
+  await db
+    .update(schema.campaignImages)
+    .set({ name: "Parchemin ancien" })
+    .where(
+      and(
+        eq(schema.campaignImages.campaignId, campaign.id),
+        eq(schema.campaignImages.id, "img-parchemin"),
+      ),
+    );
+  await db
+    .update(schema.campaignImages)
+    .set({ name: "Blason du royaume" })
+    .where(
+      and(
+        eq(schema.campaignImages.campaignId, campaign.id),
+        eq(schema.campaignImages.id, "img-blason"),
+      ),
+    );
+  for (const key of ["images/dev-camp/img-parchemin", "images/dev-camp/img-blason"]) {
+    await c.env.MAPS.put(key, CARD_PNG, { httpMetadata: { contentType: "image/png" } });
   }
 
   // Un objet et de l'argent dans le sac du premier PJ, pour l'onglet Inventaire.

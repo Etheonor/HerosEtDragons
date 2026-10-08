@@ -401,3 +401,66 @@ describe("REST — createAuth mémoïsé (audit P4)", () => {
     expect(d).toBe(c);
   });
 });
+
+describe("REST — images d'illustration (fenêtre « Illustration »)", () => {
+  beforeEach(async () => {
+    await seedWorld();
+  });
+
+  function pngFile(): File {
+    // Signature PNG minimale : le sniff ne lit que les magic bytes.
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return new File([bytes], "test.png", { type: "image/png" });
+  }
+
+  function uploadImage(user: string, name: string, file: File) {
+    const form = new FormData();
+    form.set("name", name);
+    form.set("image", file);
+    return SELF.fetch(`https://localhost/api/campaigns/${CAMPAIGN}/images`, {
+      method: "POST",
+      headers: { Cookie: `hd-dev-user=${user}` },
+      body: form,
+    });
+  }
+
+  // NB : l'upload VALIDE, le service du fichier et la suppression MJ touchent R2
+  // et sont couverts en e2e (le pool vitest échoue sur l'isolation R2 dès
+  // qu'un objet est écrit). Ici : autorisation et validation, sans écriture.
+  it("upload réservé au MJ et contenu sniffé", async () => {
+    expect((await uploadImage(OTHER, "Interdite", pngFile())).status).toBe(403);
+
+    const fake = new File([new Uint8Array([1, 2, 3])], "x.png", { type: "image/png" });
+    expect((await uploadImage(MISTRESS, "Fausse", fake)).status).toBe(400);
+  });
+
+  it("liste pour les membres, renommage et suppression réservés au MJ", async () => {
+    const d = await db();
+    await d
+      .insert(schema.campaignImages)
+      .values({
+        id: "img-rest",
+        campaignId: CAMPAIGN,
+        name: "Parchemin",
+        r2Key: "images/rest-camp/img-rest",
+      })
+      .onConflictDoNothing();
+
+    const list = (await (await get(`/api/campaigns/${CAMPAIGN}/images`, OTHER)).json()) as {
+      images: { id: string; name: string }[];
+    };
+    expect(list.images.map((i) => i.id)).toContain("img-rest");
+
+    expect((await patch(`/api/images/img-rest`, { name: "Autre" }, OTHER)).status).toBe(403);
+    const renamed = await patch(`/api/images/img-rest`, { name: "Vieux grimoire" }, MISTRESS);
+    expect(renamed.status).toBe(200);
+    expect(((await renamed.json()) as { name: string }).name).toBe("Vieux grimoire");
+
+    // Un joueur ne supprime pas (refus AVANT tout accès R2).
+    const del = await SELF.fetch("https://localhost/api/images/img-rest", {
+      method: "DELETE",
+      headers: { Cookie: `hd-dev-user=${OTHER}` },
+    });
+    expect(del.status).toBe(403);
+  });
+});

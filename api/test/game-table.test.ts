@@ -1079,6 +1079,56 @@ describe("GameTableDO — intégration", () => {
     expect(ack.type).toBe("hb.ack");
   });
 
+  it("handout.set (illustration) : MJ seul, filtré B5 tant que masquée, cleanupImage", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+    const player = await connect(PLAYER);
+    await player.ready();
+
+    // Le MJ charge une image SANS l'afficher : les joueurs ne reçoivent RIEN.
+    mj.send({ type: "handout.set", imageId: "img-1", visible: false });
+    await mj.nextWhere(
+      (m) => (m.patch as { handout?: { imageId: string | null } })?.handout?.imageId === "img-1",
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    for (const m of player.messages) {
+      const h = (m.patch as { handout?: { imageId: string | null } } | undefined)?.handout;
+      if (h) expect(h.imageId).toBeNull();
+    }
+
+    // Un joueur qui se connecte ensuite reçoit un snapshot sans l'id.
+    const late = await connect(PLAYER2);
+    const snap = await late.next("snapshot");
+    expect((snap.state as { handout: unknown }).handout).toEqual({
+      imageId: null,
+      visible: false,
+    });
+
+    // Afficher : tout le monde reçoit l'id.
+    mj.send({ type: "handout.set", imageId: "img-1", visible: true });
+    await player.nextWhere(
+      (m) => (m.patch as { handout?: { imageId: string | null } })?.handout?.imageId === "img-1",
+    );
+    await late.nextWhere(
+      (m) => (m.patch as { handout?: { imageId: string | null } })?.handout?.imageId === "img-1",
+    );
+
+    // Un joueur ne pilote pas l'illustration.
+    player.send({ type: "handout.set", imageId: "img-2", visible: true });
+    await new Promise((r) => setTimeout(r, 50));
+    for (const m of mj.messages) {
+      const h = (m.patch as { handout?: { imageId: string | null } } | undefined)?.handout;
+      if (h) expect(h.imageId).not.toBe("img-2");
+    }
+
+    // RPC cleanupImage : l'image affichée supprimée remet la table à zéro.
+    await tableStub().cleanupImage("img-1");
+    await player.nextWhere(
+      (m) => (m.patch as { handout?: { imageId: string | null } })?.handout?.imageId === null,
+    );
+  });
+
   it("fog.revealArea (lot 8.8) : une forme = un patch, un seul pas d'undo", async () => {
     await setupWorld();
     const mj = await connect(MJ);
