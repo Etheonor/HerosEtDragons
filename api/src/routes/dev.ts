@@ -287,6 +287,24 @@ app.post("/seed", async (c) => {
     await c.env.MAPS.put(key, CARD_PNG, { httpMetadata: { contentType: "image/png" } });
   }
 
+  // Les portraits importés par un test précédent repartent à zéro (le
+  // marqueur `custom:` vit dans la feuille, et l'objet R2 est déterministe).
+  for (const id of ["pj-kaelith", "pj-ragnar", "pnj-gobelin"]) {
+    const [row] = await db
+      .select({ sheet: schema.characters.sheet })
+      .from(schema.characters)
+      .where(and(eq(schema.characters.campaignId, campaign.id), eq(schema.characters.id, id)))
+      .limit(1);
+    if (row?.sheet?.portrait) {
+      const { portrait: _drop, ...rest } = row.sheet;
+      await db
+        .update(schema.characters)
+        .set({ sheet: rest })
+        .where(and(eq(schema.characters.campaignId, campaign.id), eq(schema.characters.id, id)));
+    }
+    await c.env.MAPS.delete(`portraits/${campaign.id}/${id}`);
+  }
+
   // Un objet et de l'argent dans le sac du premier PJ, pour l'onglet Inventaire.
   await db
     .update(schema.characters)

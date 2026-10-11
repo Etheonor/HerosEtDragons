@@ -1,4 +1,47 @@
 const { chromium } = require("@playwright/test");
+const zlib = require("node:zlib");
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (const b of buf) {
+    c ^= b;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(td));
+  return Buffer.concat([len, td, crc]);
+}
+/** Portrait de test : dégradé + bande diagonale, pour voir le cadrage. */
+function makePng(w, h) {
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 4 + 1) + 1 + x * 4;
+      const band = Math.abs(x - y) < 12;
+      raw[o] = band ? 220 : Math.round((x / w) * 200);
+      raw[o + 1] = band ? 60 : Math.round((y / h) * 200);
+      raw[o + 2] = band ? 40 : 120;
+      raw[o + 3] = 255;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 const URL = process.env.SHOT_URL || "http://localhost:8787";
 const USER = process.env.SHOT_USER || "mj";
@@ -174,6 +217,24 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -30);
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${OUT}/fog-zoomed.png` });
+  }
+
+  if (process.env.SHOT_CROPPER) {
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dlg = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dlg.getByRole("tab", { name: /Personnages/ }).click();
+    await dlg.locator(".asset-card", { hasText: "Kaelith" }).click({ button: "right" });
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByRole("menuitem", { name: "Changer l'avatar…" }).click(),
+    ]);
+    await chooser.setFiles({
+      name: "portrait.png",
+      mimeType: "image/png",
+      buffer: makePng(480, 320),
+    });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${OUT}/cropper.png` });
   }
 
   if (process.env.SHOT_SECRET) {

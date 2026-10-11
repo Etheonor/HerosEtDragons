@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import zlib from "node:zlib";
 
 export const CAMPAIGN = "dev-camp";
 
@@ -97,4 +98,50 @@ export async function selectMap(page: Page, name: string) {
   await expect(page.locator(".asset-scrim")).toHaveCount(0);
   await expect(page.locator("body")).not.toHaveCSS("pointer-events", "none");
   await expect(page.locator(".map-frame")).toHaveAttribute("data-map", name);
+}
+
+// ── PNG généré pour les tests (zlib + CRC32 maison, aucun binaire au dépôt) ──
+
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (const b of buf) {
+    c ^= b;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(td));
+  return Buffer.concat([len, td, crc]);
+}
+
+/** Image de test : dégradé + bande diagonale (le cadrage se voit à l'œil). */
+export function makePng(w: number, h: number): Buffer {
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 4 + 1) + 1 + x * 4;
+      const band = Math.abs(x - y) < 10;
+      raw[o] = band ? 220 : Math.round((x / w) * 200);
+      raw[o + 1] = band ? 60 : Math.round((y / h) * 200);
+      raw[o + 2] = band ? 40 : 120;
+      raw[o + 3] = 255;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }

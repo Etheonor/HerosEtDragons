@@ -126,7 +126,11 @@ export const api = {
     updatePortrait: (id: string, file: File) => {
       const form = new FormData();
       form.set("image", file);
-      return fetchForm<{ portrait: string }>(`/api/characters/${id}/portrait`, form, "PUT");
+      return fetchForm<{ portrait: string; updatedAt: string }>(
+        `/api/characters/${id}/portrait`,
+        form,
+        "PUT",
+      );
     },
   },
   compendium: {

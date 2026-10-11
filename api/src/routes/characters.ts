@@ -363,12 +363,18 @@ app.put("/:charId/portrait", requireAuth, memberOfChar, async (c) => {
   });
 
   const portrait = `custom:${char.id}:${Date.now()}`;
+  // updatedAt renvoyé : la fiche autosauvegarde avec If-Match — sans lui, le
+  // prochain flush partirait avec un jeton périmé et prendrait un 409.
+  const updatedAt = new Date();
   await db
     .update(schema.characters)
-    .set({ sheet: { ...char.sheet, portrait }, updatedAt: new Date() })
+    .set({ sheet: { ...char.sheet, portrait }, updatedAt })
     .where(eq(schema.characters.id, char.id));
   await notifyTable(c, char.campaignId, char.id);
-  return c.json<{ portrait: string }>({ portrait });
+  return c.json<{ portrait: string; updatedAt: string }>({
+    portrait,
+    updatedAt: updatedAt.toISOString(),
+  });
 });
 
 app.get("/:charId/portrait", requireAuth, memberOfChar, async (c) => {

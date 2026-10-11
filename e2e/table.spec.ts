@@ -6,6 +6,7 @@ import {
   MJ,
   RAGNAR,
   login,
+  makePng,
   openPanel,
   openTable,
   placeFromLibrary,
@@ -788,6 +789,11 @@ test.describe("Panneaux et initiative (Lot 5)", () => {
     ]);
     await chooser.setFiles({ name: "gobelin.png", mimeType: "image/png", buffer: png });
 
+    // Le fichier passe par le cadrage (cercle de l'avatar) avant l'envoi.
+    const crop = page.getByRole("dialog", { name: "Cadrer l'avatar" });
+    await crop.getByRole("button", { name: "Valider" }).click();
+    await expect(crop).toHaveCount(0);
+
     // La fiche est repoussée par le DO (broadcast) : la vignette montre
     // l'image, et elle se CHARGE réellement (naturalWidth > 0, pas un 404).
     await expect(card.locator("img")).toHaveCount(1);
@@ -1543,5 +1549,63 @@ test.describe("Jets cachés (MJ)", () => {
     await expect(p2.locator(".journal-panel")).toBeVisible();
     await expect(p2.locator(".journal-entry", { hasText: "1d20" })).toHaveCount(0);
     await ctx.close();
+  });
+});
+
+test.describe("Avatar — cadrage et upload", () => {
+  test("le MJ importe une image, la recadre, l'avatar apparaît sur la carte", async ({ page }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+    await placePjFromFrame(page, "Kaelith");
+
+    // Bibliothèque → Personnages → clic droit → Changer l'avatar…
+    await page.getByRole("button", { name: "Bibliothèque" }).click();
+    const dialog = page.getByRole("dialog", { name: "Bibliothèque de la campagne" });
+    await dialog.getByRole("tab", { name: /Personnages/ }).click();
+    await dialog.locator(".asset-card", { hasText: "Kaelith" }).click({ button: "right" });
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByRole("menuitem", { name: "Changer l'avatar…" }).click(),
+    ]);
+    await chooser.setFiles({
+      name: "portrait.png",
+      mimeType: "image/png",
+      buffer: makePng(480, 320),
+    });
+
+    // Cadrage : déplacement + zoom, puis validation.
+    const crop = page.getByRole("dialog", { name: "Cadrer l'avatar" });
+    await expect(crop.locator("canvas.crop-canvas")).toBeVisible();
+    const box = await crop.locator(".crop-view").boundingBox();
+    if (!box) throw new Error("zone de cadrage introuvable");
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 46, cy + 22, { steps: 5 });
+    await page.mouse.up();
+    await page.mouse.move(cx, cy);
+    await page.mouse.wheel(0, -240);
+    await crop.getByRole("button", { name: "Valider" }).click();
+    await expect(crop).toHaveCount(0);
+
+    // L'avatar importé est posé : la carte de la bibliothèque et le pion le
+    // servent par la route versionnée (custom:<id>:<version>).
+    const card = dialog.locator(".asset-card", { hasText: "Kaelith" });
+    await expect(card.locator("img")).toHaveAttribute(
+      "src",
+      /\/api\/characters\/pj-kaelith\/portrait\?v=/,
+    );
+    await expect(page.locator(".token", { hasText: "Kaelith" }).locator("img")).toHaveAttribute(
+      "src",
+      /\/api\/characters\/pj-kaelith\/portrait\?v=/,
+    );
+
+    // La fiche expose aussi l'import dans son sélecteur de portrait.
+    await dialog.getByRole("button", { name: "Fermer la bibliothèque" }).click();
+    await page.locator(".token", { hasText: "Kaelith" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Ouvrir la feuille" }).click();
+    await page.locator(".portrait-frame").click();
+    await expect(page.getByRole("button", { name: "Importer une image…" })).toBeVisible();
   });
 });

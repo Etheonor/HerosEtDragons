@@ -7,6 +7,8 @@
   import { api } from '$lib/api';
   import { showToast } from '$lib/toast.svelte';
   import { loadPortraits, portraitUrl, portraitsByRace, type PortraitEntry } from '$lib/portraits';
+  import AvatarCropper from '$lib/table/AvatarCropper.svelte';
+  import { IMAGE_ACCEPT, pickFile } from '$lib/pick-file';
   import {
     findRace,
     findClass,
@@ -52,6 +54,7 @@
 
   // ── Portraits ────────────────────────────────────────────────
   let pickerOpen = $state(false);
+  let cropFile = $state<File | null>(null);
   let portraitList = $state<PortraitEntry[]>([]);
   const portraitGroups = $derived(portraitsByRace(portraitList));
 
@@ -67,6 +70,22 @@
     sheet.portrait = key;
     touch();
     pickerOpen = false;
+  }
+
+  /** Avatar importé : le serveur stocke l'image et pose le marqueur `custom:`
+   *  versionné. `updatedAt` est rafraîchi pour ne pas périmer l'If-Match de
+   *  l'autosauvegarde (le PUT portrait vient de toucher la ligne). */
+  async function uploadAvatar(f: File) {
+    cropFile = null;
+    try {
+      const res = await api.characters.updatePortrait(char.id, f);
+      sheet.portrait = res.portrait;
+      sheetUpdatedAt = res.updatedAt;
+      pickerOpen = false;
+      showToast('Avatar mis à jour', 'success');
+    } catch {
+      showToast("Import de l'avatar impossible", 'error');
+    }
   }
   let pv = $state(char.pv);
   let pvTemp = $state(char.pvTemp);
@@ -508,6 +527,12 @@
       >
         <div class="picker-head">
           <div class="picker-title">Choisir un portrait</div>
+          <button
+            class="picker-import"
+            type="button"
+            onclick={() => pickFile(IMAGE_ACCEPT, (f) => (cropFile = f))}
+          >Importer une image…</button
+          >
           <button class="picker-clear" onclick={() => choosePortrait(null)}>Aucun</button>
         </div>
         <div class="picker-body">
@@ -533,6 +558,14 @@
         </div>
       </div>
     </div>
+  {/if}
+
+  {#if cropFile}
+    <AvatarCropper
+      file={cropFile}
+      onCancel={() => (cropFile = null)}
+      onConfirm={(f) => void uploadAvatar(f)}
+    />
   {/if}
 </div>
 
@@ -636,6 +669,19 @@
     font-family: var(--font-title);
     font-size: 22px;
     color: var(--heading);
+  }
+  .picker-import {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    background: var(--accent);
+    border: 2px solid var(--accent-border);
+    border-radius: 10px 3px 12px 3px;
+    color: var(--accent-fg);
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .picker-import:hover {
+    background: var(--accent-hover);
   }
   .picker-clear {
     font-family: var(--font-body);

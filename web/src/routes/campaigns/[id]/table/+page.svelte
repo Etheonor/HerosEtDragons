@@ -49,6 +49,8 @@
   import AssetManager from '$lib/table/AssetManager.svelte';
   import CompendiumWindow from '$lib/table/CompendiumWindow.svelte';
   import HandoutPanel from '$lib/table/HandoutPanel.svelte';
+  import AvatarCropper from '$lib/table/AvatarCropper.svelte';
+  import { IMAGE_ACCEPT, pickFile } from '$lib/pick-file';
   import TargetFrame from '$lib/table/TargetFrame.svelte';
   import GroupFrame from '$lib/table/GroupFrame.svelte';
   import TopActions from '$lib/table/TopActions.svelte';
@@ -2213,7 +2215,7 @@
           id: 'portrait',
           label: "Changer l'avatar…",
           separatorBefore: true,
-          onSelect: () => pickFile(IMAGE_ACCEPT, (f) => void changePortrait(t.charId, f)),
+          onSelect: () => openAvatarCropper(t.charId),
         },
         {
           id: 'sheet',
@@ -2552,19 +2554,6 @@
 
   // ── Bibliothèque : import et renommage (lot 5.4, compléments) ──
   /** Sélecteur de fichier programmatique (pas d'input permanent à l'écran). */
-  function pickFile(accept: string, onPick: (file: File) => void) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.onchange = () => {
-      const f = input.files?.[0];
-      if (f) onPick(f);
-    };
-    input.click();
-  }
-
-  const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp';
-
   function mapNameFromFile(name: string): string {
     return name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Nouvelle carte';
   }
@@ -2689,6 +2678,17 @@
       confirmLabel: 'Renommer',
       onSubmit: (v) => void renameMap(mapId, v),
     };
+  }
+
+  /** Cadrage d'avatar en cours : le fichier choisi + sa cible. */
+  let cropFile = $state<File | null>(null);
+  let cropTarget = $state<string | null>(null);
+
+  function openAvatarCropper(charId: string) {
+    pickFile(IMAGE_ACCEPT, (f) => {
+      cropTarget = charId;
+      cropFile = f;
+    });
   }
 
   async function changePortrait(charId: string, file: File) {
@@ -4059,6 +4059,22 @@
         }
       }}
       onConfirm={(v) => prompt?.onSubmit(v)}
+    />
+  {/if}
+
+  {#if cropFile}
+    <AvatarCropper
+      file={cropFile}
+      onCancel={() => {
+        cropFile = null;
+        cropTarget = null;
+      }}
+      onConfirm={(f) => {
+        const id = cropTarget;
+        cropFile = null;
+        cropTarget = null;
+        if (id) void changePortrait(id, f);
+      }}
     />
   {/if}
 

@@ -46,6 +46,11 @@
       "require": "./dist/armor.js",
       "import": "./dist/armor.js"
     },
+    "./avatar-crop": {
+      "types": "./dist/avatar-crop.d.ts",
+      "require": "./dist/avatar-crop.js",
+      "import": "./dist/avatar-crop.js"
+    },
     "./dto": {
       "types": "./dist/dto.d.ts",
       "require": "./dist/dto.js",
