@@ -5097,7 +5097,13 @@
   }
   .history-entry:first-child { color: #c9bfaa; }
 
-  .inv-tab { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  /* Le contenu doit DÉFILER dans le panneau (comme .dice-tab) : sans
+     overflow, la section de don débordait hors du panneau, sous les poignées.
+     Retrait bas > poignée (3 px dans le panneau) pour le dernier bouton. */
+  .inv-tab {
+    padding: 12px 14px 22px; flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
   .inv-placeholder { color: var(--text-2); font-style: italic; font-size: 13px; }
   .inv-selector { display: flex; align-items: center; gap: 8px; }
   .inv-selector label {

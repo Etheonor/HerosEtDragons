@@ -1650,4 +1650,37 @@ test.describe("Inventaire (onglet I)", () => {
     await expect(page.locator(".journal-panel")).toBeVisible();
     await expect(page.getByText("Équipement", { exact: true })).toHaveCount(0);
   });
+
+  test("un joueur donne un objet et de l'argent à un autre PJ", async ({ page, browser }) => {
+    // Dev-camp a deux PJ (Kaelith, Ragnar) : la section de don apparaît.
+    await openTable(page, KAELITH);
+    await openPanel(page, "inventory");
+    const panel = page.locator(".inv-panel");
+
+    // Don d'objet : l'objet du sac de Kaelith part chez Ragnar.
+    await panel.locator(".inv-select").selectOption({ label: "Ragnar" });
+    await panel.getByTitle("Donner à Ragnar").click();
+    await expect(page.locator(".journal-system").last()).toContainText(
+      "Kaelith donne Potion de soin à Ragnar",
+    );
+
+    // Don d'argent : 1 po.
+    await panel.locator('.inv-money input[placeholder="po"]').fill("1");
+    await panel.getByRole("button", { name: "Donner l'argent" }).click();
+    await expect(page.locator(".journal-system").last()).toContainText(
+      "Kaelith donne 1 po à Ragnar",
+    );
+
+    // Chez Ragnar : l'objet et la pièce sont bien arrivés dans SON sac.
+    const ctx = await browser.newContext();
+    const p2 = await ctx.newPage();
+    await login(p2, RAGNAR);
+    await p2.goto(`/campaigns/${CAMPAIGN}/table`);
+    await expect(p2.locator(".journal-panel")).toBeVisible();
+    await openPanel(p2, "inventory");
+    const bag = p2.locator(".inv-panel");
+    await expect(bag.locator(".inv-name", { hasText: "Potion de soin" })).toHaveCount(1);
+    await expect(bag.locator(".coin.po .coin-value")).toHaveText("1 po");
+    await ctx.close();
+  });
 });
