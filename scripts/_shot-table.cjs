@@ -237,6 +237,17 @@ const OUT = process.env.SHOT_OUT || "/tmp";
     await page.screenshot({ path: `${OUT}/cropper.png` });
   }
 
+  if (process.env.SHOT_MEASURE) {
+    await page.keyboard.press("m");
+    const box = await page.locator(".map-surface").boundingBox();
+    if (!box) throw new Error("surface introuvable");
+    await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.5);
+    await page.mouse.click(box.x + box.width * 0.55, box.y + box.height * 0.42);
+    await page.mouse.move(box.x + box.width * 0.68, box.y + box.height * 0.62);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${OUT}/regle.png` });
+  }
+
   if (process.env.SHOT_SECRET) {
     await page.keyboard.press("d");
     await page.getByRole("button", { name: /Jet caché/ }).click();

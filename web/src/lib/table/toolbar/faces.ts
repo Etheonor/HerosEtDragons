@@ -5,9 +5,9 @@
  * pour qu'aucun libellé ne soit dupliqué entre le bouton, l'aide et la palette.
  */
 
-export type ToolId = "hand" | "move" | "pnj" | "marker" | "fog";
+export type ToolId = "hand" | "move" | "pnj" | "marker" | "fog" | "measure";
 
-export type ToolFamily = "hand" | "move" | "token" | "marker" | "fog";
+export type ToolFamily = "hand" | "move" | "token" | "marker" | "fog" | "measure";
 
 import type { IconKey } from "$lib/ds/icons";
 
@@ -61,7 +61,15 @@ export const TOOL_FACES: Record<ToolId, ToolFace> = {
     options: true,
     mjOnly: true,
   },
+  measure: {
+    id: "measure",
+    family: "measure",
+    label: "Règle",
+    icon: "ruler",
+    hotkey: "tool.measure",
+    options: true,
+  },
 };
 
 /** Ordre visuel de la barre (les entrées MJ sont filtrées par le rôle). */
-export const TOOL_ORDER: readonly ToolId[] = ["hand", "move", "pnj", "marker", "fog"];
+export const TOOL_ORDER: readonly ToolId[] = ["hand", "move", "pnj", "marker", "fog", "measure"];

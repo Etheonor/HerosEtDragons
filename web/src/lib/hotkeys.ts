@@ -51,6 +51,7 @@ export const HOTKEYS: readonly HotkeyDef[] = [
   { id: "tool.pnj", label: "Outil PNJ", group: "Outils", key: "p", mjOnly: true },
   { id: "tool.marker", label: "Outil Repère", group: "Outils", key: "r", mjOnly: true },
   { id: "tool.fog", label: "Brouillard", group: "Outils", key: "b", mjOnly: true },
+  { id: "tool.measure", label: "Règle — mesurer une distance", group: "Outils", key: "m" },
 
   { id: "dice.d4", label: "Lancer 1d4", group: "Combat", key: "1", mjOnly: true },
   { id: "dice.d6", label: "Lancer 1d6", group: "Combat", key: "2", mjOnly: true },

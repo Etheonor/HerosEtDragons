@@ -33,6 +33,7 @@ import {
   Play,
   Plus,
   Redo2,
+  Ruler,
   Settings,
   Skull,
   Sparkles,
@@ -63,6 +64,8 @@ export const ICONS = {
   image: ImageIcon,
   /** Jet caché (visible du MJ seul). */
   secret: EyeOff,
+  /** Outil Règle (mesure de distance). */
+  ruler: Ruler,
   /** Icônes d'action et de fenêtre. */
   dice: Dices,
   attack: Swords,

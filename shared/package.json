@@ -46,6 +46,11 @@
       "require": "./dist/armor.js",
       "import": "./dist/armor.js"
     },
+    "./measure": {
+      "types": "./dist/measure.d.ts",
+      "require": "./dist/measure.js",
+      "import": "./dist/measure.js"
+    },
     "./avatar-crop": {
       "types": "./dist/avatar-crop.d.ts",
       "require": "./dist/avatar-crop.js",

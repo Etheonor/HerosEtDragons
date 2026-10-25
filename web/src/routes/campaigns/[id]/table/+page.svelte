@@ -38,6 +38,7 @@
   import { hotkeyIdFromEvent } from '$lib/hotkeys';
   import { commandRegistry, type PaletteCommand } from '$lib/table/commands.svelte';
   import { createCamera, type CameraPose } from '$lib/table/camera.svelte';
+  import { cellsToMeters, distanceInCells, formatCells, formatMeters } from '@rollwith/shared/measure';
   import { slugify } from '$lib/slug';
   import { portraitUrl } from '$lib/portraits';
   import { ICONS } from '$lib/ds/icons';
@@ -335,6 +336,7 @@
   }
 
   let toolbarWidth = $state(1280);
+  let toolbarPillWidth = $state(0);
 
   function onToolbarResize(node: HTMLElement) {
     const ro = new ResizeObserver((entries) => {
@@ -407,6 +409,13 @@
         group: 'Actions',
         keywords: ['panneau', 'compagnie', 'sidebar', 'liste'],
         run: () => setPanelOpen('compagnie', !panelsOpen.compagnie),
+      },
+      {
+        id: 'tool.measure',
+        label: tool === 'measure' ? 'Terminer la règle' : 'Mesurer une distance',
+        group: 'Carte',
+        keywords: ['règle', 'mesure', 'distance', 'mètres'],
+        run: () => toolSelect('measure'),
       },
       {
         id: 'panel.journal',
@@ -689,7 +698,7 @@
   let maps = $state<MapSummary[]>([]);
   let mapContainer = $state<HTMLDivElement | null>(null);
   let fogCanvas = $state<HTMLCanvasElement | null>(null);
-  let tool = $state<'move' | 'hand' | 'pnj' | 'marker' | 'fog'>('move');
+  let tool = $state<'move' | 'hand' | 'pnj' | 'marker' | 'fog' | 'measure'>('move');
   let pendingMarkerPos: { x: number; y: number } | null = null;
 
   function openRenameMarkerPrompt(id: string) {
@@ -1567,9 +1576,72 @@
     };
   }
 
-  function toolSelect(t: 'move' | 'hand' | 'pnj' | 'marker' | 'fog') {
+  function toolSelect(t: 'move' | 'hand' | 'pnj' | 'marker' | 'fog' | 'measure') {
     pendingPlace = null;
     tool = tool === t ? 'move' : t;
+  }
+
+  // ── Règle : mesure de distance, 100 % locale (comme la caméra) ──
+  // Points en % de la surface ; le SVG vit DANS la surface transformée, donc
+  // tout suit le zoom/pan sans recalcul. Les étiquettes sont contre-zoomées
+  // (k) pour rester lisibles de ×0,5 à ×8.
+  type MeasurePoint = { x: number; y: number };
+  let measurePoints = $state<MeasurePoint[]>([]);
+  let measureCursor = $state<MeasurePoint | null>(null);
+  let measureFinished = $state(false);
+
+  const measurePath = $derived(
+    measureFinished || !measureCursor ? measurePoints : [...measurePoints, measureCursor],
+  );
+
+  const measure = $derived.by(() => {
+    const cellPx = activeGridSize ?? store.settings.tokenSize;
+    const w = surfaceSize.w;
+    const h = surfaceSize.h;
+    const segments: { mx: number; my: number; meters: number }[] = [];
+    let totalCells = 0;
+    for (let i = 1; i < measurePath.length; i += 1) {
+      const a = measurePath[i - 1]!;
+      const b = measurePath[i]!;
+      const cells = distanceInCells(((b.x - a.x) / 100) * w, ((b.y - a.y) / 100) * h, cellPx);
+      totalCells += cells;
+      segments.push({ mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, meters: cellsToMeters(cells) });
+    }
+    return {
+      segments,
+      totalCells,
+      totalMeters: cellsToMeters(totalCells),
+      k: 1 / Math.max(0.5, camera.zoom),
+    };
+  });
+
+  const measureEnd = $derived(
+    measurePath.length > 0 ? measurePx(measurePath[measurePath.length - 1]!) : { x: 0, y: 0 },
+  );
+
+  function measurePx(p: MeasurePoint): { x: number; y: number } {
+    return { x: (p.x / 100) * surfaceSize.w, y: (p.y / 100) * surfaceSize.h };
+  }
+
+  function addMeasurePoint(e: PointerEvent) {
+    const p = mapXY(e);
+    if (measureFinished) {
+      measurePoints = [p];
+      measureFinished = false;
+      measureCursor = null;
+      return;
+    }
+    const last = measurePoints[measurePoints.length - 1];
+    // Le second clic d'un double-clic retombe sur place : on l'ignore.
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.6) return;
+    measurePoints = [...measurePoints, p];
+    measureCursor = null;
+  }
+
+  function clearMeasure() {
+    measurePoints = [];
+    measureCursor = null;
+    measureFinished = false;
   }
 
   function tokenPointerDown(charId: string, e: PointerEvent) {
@@ -1649,6 +1721,10 @@
   function onMapPointerMove(e: PointerEvent) {
     if (isMj && tool === 'fog' && fogOn && !panning) updateFogCursor(e);
     if (panning) return;
+    if (tool === 'measure') {
+      if (measurePoints.length > 0 && !measureFinished) measureCursor = mapXY(e);
+      return;
+    }
     if (fogErasing) {
       if (fogOn) sendFogReveal(mapXY(e));
       return;
@@ -1691,6 +1767,7 @@
   function onMapPointerLeave() {
     onMapPointerUp();
     fogCursor = null;
+    measureCursor = null;
   }
 
   function onMapPointerUp() {
@@ -1727,6 +1804,11 @@
     // Le clic droit/molette appartient au panoramique (voir
     // onFramePointerDown) : il ne doit déclencher aucune action d'outil ici.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // La règle est dispo pour tous (locale, aucun message serveur).
+    if (tool === 'measure') {
+      addMeasurePoint(e);
+      return;
+    }
     if (!isMj || tool !== 'fog') return;
     if (!fogOn) return;
     if (fogMode !== 'brush') {
@@ -1825,6 +1907,7 @@
       skipNextClick = false;
       return;
     }
+    if (tool === 'measure') return; // les points sont posés au pointerdown
     if (!isMj) return;
     const { x, y } = mapXY(e);
     if (pendingPlace) {
@@ -1867,6 +1950,12 @@
   }
 
   function onMapDblClick(e: MouseEvent) {
+    if (tool === 'measure') {
+      // Fin de tracé : le dernier clic a posé le point, le suivant est dédupliqué.
+      measureFinished = true;
+      measureCursor = null;
+      return;
+    }
     const { x, y } = mapXY(e);
     sendWs({ type: 'ping', x, y });
   }
@@ -2049,6 +2138,7 @@
     { id: 'fog', width: 49, priority: 55, pinned: tool === 'fog' },
     { id: 'marker', width: 49, priority: 50, pinned: tool === 'marker' },
     { id: 'pnj', width: 49, priority: 45, pinned: tool === 'pnj' || !!pendingPlace },
+    { id: 'measure', width: 49, priority: 52, pinned: tool === 'measure' },
   ]);
   // 560 px réservés de chaque côté : le bloc Zoom + DiceButton vit à droite,
   // la barre reste centrée sans jamais le chevaucher.
@@ -2065,6 +2155,15 @@
   const toolbarFit = $derived(fitToolbar(toolbarItems, toolbarAvailable));
   const visibleToolIds = $derived(toolbarFit.visible.map((i) => i.id));
 
+  /** La barre est centrée ; le journal (panneau bas-gauche) peut recouvrir son
+   *  bord gauche sur écran étroit, rendant Annuler/Rétablir incliquables. On
+   *  la décale juste assez pour dégager le panneau (aucun effet sur grand écran). */
+  const toolbarShift = $derived.by(() => {
+    if (!toolbarWidth || !toolbarPillWidth || !panelsOpen.journal) return 0;
+    const leftLimit = 432 + 12;
+    return Math.max(0, Math.round(leftLimit - (toolbarWidth / 2 - toolbarPillWidth / 2)));
+  });
+
   function runToolbarItem(id: string) {
     switch (id) {
       case 'hand':
@@ -2078,6 +2177,9 @@
         break;
       case 'marker':
         toolSelect('marker');
+        break;
+      case 'measure':
+        toolSelect('measure');
         break;
       case 'fog':
         fogToggle();
@@ -2731,7 +2833,8 @@
     if (e.key === 'Escape') {
       ctxMenu = null;
       pendingPlace = null;
-      if (isMj) tool = 'move';
+      if (tool === 'measure') clearMeasure();
+      tool = 'move';
       return;
     }
     const id = hotkeyIdFromEvent(e, { isMj, overlayOpen: paletteOpen || helpOpen });
@@ -2787,6 +2890,9 @@
         break;
       case 'tool.fog':
         fogToggle();
+        break;
+      case 'tool.measure':
+        toolSelect('measure');
         break;
       case 'dice.d4':
         quickRoll(4);
@@ -2888,6 +2994,7 @@
             class:cursor-hand={tool === 'hand'}
             class:cursor-fog={isMj && tool === 'fog'}
             class:cursor-place={(isMj && (tool === 'pnj' || tool === 'marker')) || !!pendingPlace}
+            class:cursor-measure={tool === 'measure'}
             onpointerdown={onFramePointerDown}
             onpointermove={onFramePointerMove}
             onpointerup={onFramePointerUp}
@@ -2898,6 +3005,7 @@
           <div
             class="map-zoom"
             class:tool-hand={tool === 'hand'}
+            class:tool-measure={tool === 'measure'}
             style="transform: translate({camera.panX}px, {camera.panY}px) scale({camera.zoom})"
           >
             <div
@@ -2940,6 +3048,44 @@
                 {:else}
                   <polygon points={fogShape.points.map((p) => `${p.x},${p.y}`).join(' ')} />
                 {/if}
+              </svg>
+            {/if}
+
+            {#if measurePath.length >= 2}
+              <svg
+                class="measure-svg"
+                viewBox="0 0 {surfaceSize.w} {surfaceSize.h}"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <polyline
+                  class="measure-line"
+                  points={measurePath
+                    .map((p) => {
+                      const q = measurePx(p);
+                      return `${q.x},${q.y}`;
+                    })
+                    .join(' ')}
+                />
+                {#each measurePath as p, i (i)}
+                  {@const q = measurePx(p)}
+                  <circle class="measure-dot" cx={q.x} cy={q.y} r={(i === 0 ? 4 : 3) * measure.k} />
+                {/each}
+                {#each measure.segments as seg, i (i)}
+                  <text
+                    class="measure-seg"
+                    x={(seg.mx / 100) * surfaceSize.w}
+                    y={(seg.my / 100) * surfaceSize.h - 10 * measure.k}
+                    font-size={12 * measure.k}>{formatMeters(seg.meters)}</text
+                  >
+                {/each}
+                <text
+                  class="measure-total"
+                  x={measureEnd.x}
+                  y={measureEnd.y - 16 * measure.k}
+                  font-size={13 * measure.k}
+                  >{formatCells(measure.totalCells)} · {formatMeters(measure.totalMeters)}</text
+                >
               </svg>
             {/if}
 
@@ -3433,7 +3579,11 @@
             {/if}
           </div>
         {/if}
-        <div class="mj-toolbar surface-raised">
+        <div
+          class="mj-toolbar surface-raised"
+          bind:clientWidth={toolbarPillWidth}
+          style="transform: translateX({toolbarShift}px)"
+        >
           {#if isMj}
             <div class="history-group" role="group" aria-label="Historique">
               <Tooltip label="Annuler" kbd="Ctrl/⌘ Z">
@@ -3552,6 +3702,26 @@
                   <button class="ghost-btn danger" onclick={fogDisable}>Dissiper</button>
                 </div>
                 <span class="opt-hint">Glissez sur la carte pour dévoiler — invisible pour les joueurs.</span>
+              {/snippet}
+            </ToolGroup>
+          {/if}
+          {#if isMj && visibleToolIds.includes('measure')}
+            <ToolGroup
+              label="Règle"
+              icon="ruler"
+              hotkeyLabel="M"
+              active={tool === 'measure'}
+              onselect={() => toolSelect('measure')}
+            >
+              {#snippet options()}
+                <span class="opt-title">Mesurer une distance</span>
+                <span class="opt-hint"
+                  >Cliquez pour poser les points · double-clic pour terminer · Échap pour
+                  effacer. 1 case = 1,50 m.</span
+                >
+                <div class="opt-row">
+                  <button class="ghost-btn" onclick={clearMeasure}>Tout effacer</button>
+                </div>
               {/snippet}
             </ToolGroup>
           {/if}
@@ -4557,6 +4727,7 @@
   }
   .map-bg.panning { cursor: grabbing; }
   .map-bg.cursor-fog { cursor: crosshair; }
+  .map-bg.cursor-measure { cursor: crosshair; }
   .map-bg.cursor-place { cursor: copy; }
   .map-bg.cursor-hand { cursor: grab; }
   .map-placeholder {
@@ -4598,6 +4769,11 @@
   .map-zoom.tool-hand .marker,
   .map-zoom.tool-hand .map-link,
   .map-zoom.tool-hand .map-pin { pointer-events: none; }
+  /* Mesure : les clics traversent pions/repères/notes jusqu'à la frame. */
+  .map-zoom.tool-measure .token,
+  .map-zoom.tool-measure .marker,
+  .map-zoom.tool-measure .map-link,
+  .map-zoom.tool-measure .map-pin { pointer-events: none; }
 
   /* Contrôle de zoom — visible par les joueurs (c'est leur cadrage). */
   .map-hud {
@@ -4708,6 +4884,24 @@
     stroke: var(--accent); stroke-width: 1.5px; stroke-dasharray: 5 4;
   }
   .fog-preview rect, .fog-preview polygon { vector-effect: non-scaling-stroke; }
+  /* Règle (mesure locale) : au-dessus des pions et du brouillard. */
+  .measure-svg {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: var(--z-measure); overflow: visible;
+  }
+  .measure-line {
+    fill: none; stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 7 5;
+    stroke-linecap: round; vector-effect: non-scaling-stroke;
+  }
+  .measure-dot {
+    fill: var(--accent); stroke: var(--bg); stroke-width: 1.5px;
+    vector-effect: non-scaling-stroke;
+  }
+  .measure-seg, .measure-total {
+    fill: var(--accent-text); stroke: var(--bg); stroke-width: 3px; paint-order: stroke;
+    stroke-linejoin: round; text-anchor: middle;
+    font-family: var(--font-ui); font-weight: 700; letter-spacing: 0.02em;
+  }
 
   .marker {
     position: absolute; transform: translate(-50%, -100%);

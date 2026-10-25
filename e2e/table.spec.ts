@@ -1684,3 +1684,30 @@ test.describe("Inventaire (onglet I)", () => {
     await ctx.close();
   });
 });
+
+test.describe("Règle (mesure)", () => {
+  test("mesure en cases et en mètres, termine au double-clic, s'efface avec Échap", async ({
+    page,
+  }) => {
+    await openTable(page, MJ);
+    await selectMap(page, "Carte illustrée");
+
+    await page.keyboard.press("m");
+    const box = await page.locator(".map-surface").boundingBox();
+    if (!box) throw new Error("surface introuvable");
+
+    // Deux points à mi-hauteur : 50 % de 960 px = 480 px = 15 cases = 22,5 m.
+    await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.5);
+    await page.mouse.click(box.x + box.width * 0.75, box.y + box.height * 0.5);
+    await expect(page.locator(".measure-total")).toHaveText("15 cases · 22,5 m");
+
+    // Double-clic : le tracé se fige et ne suit plus la souris.
+    await page.mouse.dblclick(box.x + box.width * 0.75, box.y + box.height * 0.5);
+    await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.1);
+    await expect(page.locator(".measure-total")).toHaveText("15 cases · 22,5 m");
+
+    // Échap efface et quitte l'outil.
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".measure-svg")).toHaveCount(0);
+  });
+});
