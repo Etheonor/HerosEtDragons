@@ -54,9 +54,12 @@ import { eq, and, inArray, asc } from "drizzle-orm";
 
 interface WsAttachment {
   userId: string;
+  /** Nom du compte (Discord) — présence. */
   name: string;
   role: "mj" | "player";
   charId: string | null;
+  /** Nom du personnage actif — signature du journal. */
+  charName: string;
   color: string;
 }
 
@@ -1040,6 +1043,7 @@ export class GameTableDO extends DurableObject<Env> {
     const name = url.searchParams.get("name") ?? "";
     const role = (url.searchParams.get("role") as "mj" | "player") ?? "player";
     const charId = url.searchParams.get("charId") || null;
+    const charName = url.searchParams.get("charName") ?? "";
     const color = url.searchParams.get("color") ?? "#C0392B";
     const campaignId = url.searchParams.get("campaignId") ?? "";
 
@@ -1076,7 +1080,7 @@ export class GameTableDO extends DurableObject<Env> {
       new WebSocketRequestResponsePair(WS_HEARTBEAT_REQUEST, WS_HEARTBEAT_RESPONSE),
     );
 
-    const attachment: WsAttachment = { userId, name, role, charId, color };
+    const attachment: WsAttachment = { userId, name, role, charId, charName, color };
     server.serializeAttachment(attachment);
 
     // L'upgrade (101) part IMMÉDIATEMENT. Le snapshot (plusieurs lectures D1)
@@ -1507,7 +1511,7 @@ export class GameTableDO extends DurableObject<Env> {
       return;
     }
 
-    const entry = this.makeJournalEntry("say", att.name ?? null, att.color, trimmed);
+    const entry = this.makeJournalEntry("say", this.actorName(att), att.color, trimmed);
     await this.appendJournal(entry);
     this.broadcastAll({ type: "journal", entry });
   }
@@ -1545,9 +1549,9 @@ export class GameTableDO extends DurableObject<Env> {
     }
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
-      `✦ ${att.name} lance ses caracs (4d6, dé le plus bas retiré) : ${formatScoresSummary(scores)}.`,
+      `✦ ${this.actorName(att)} lance ses caracs (4d6, dé le plus bas retiré) : ${formatScoresSummary(scores)}.`,
     );
     await this.appendJournal(entry);
     this.broadcastAll({ type: "journal", entry });
@@ -1568,7 +1572,7 @@ export class GameTableDO extends DurableObject<Env> {
     const fumble = isFumble(roll);
     const detail = formatRollDetail(roll);
 
-    const entry = this.makeJournalEntry("roll", att.name ?? null, att.color, expr);
+    const entry = this.makeJournalEntry("roll", this.actorName(att), att.color, expr);
     entry.roll = {
       expression: expr,
       total: roll.total,
@@ -1667,7 +1671,7 @@ export class GameTableDO extends DurableObject<Env> {
     const visibility = this.journalVisibilityFor(charId);
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       `✦ ${char.name} ${on ? "gagne" : "perd"} l'état ${cond}.`,
     );
@@ -1787,7 +1791,7 @@ export class GameTableDO extends DurableObject<Env> {
     const visibility = this.journalVisibilityFor(id);
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       `✦ Le MJ ajoute ${name} sur la carte.`,
     );
@@ -1933,7 +1937,7 @@ export class GameTableDO extends DurableObject<Env> {
     const label = count > 1 ? `${tpl.name} ×${count}` : tpl.name;
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       `\u2726 Le MJ pose ${label}.`,
     );
@@ -2141,7 +2145,7 @@ export class GameTableDO extends DurableObject<Env> {
 
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       `✦ Le MJ retire ${char.name}.`,
     );
@@ -2364,7 +2368,7 @@ export class GameTableDO extends DurableObject<Env> {
     const visibility = this.journalVisibilityFor(charId);
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       `✦ Le MJ duplique ${src.name}.`,
     );
@@ -2502,7 +2506,7 @@ export class GameTableDO extends DurableObject<Env> {
     await this.patchState(this.patchMarkers(state, []));
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       "✦ Le MJ efface les repères.",
     );
@@ -2841,7 +2845,7 @@ export class GameTableDO extends DurableObject<Env> {
     await this.patchState({ fog });
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       "✦ Le MJ recouvre toute la carte de brouillard.",
     );
@@ -2862,7 +2866,7 @@ export class GameTableDO extends DurableObject<Env> {
     await this.patchState({ fog });
     const entry = this.makeJournalEntry(
       "system",
-      att.name ?? null,
+      this.actorName(att),
       att.color,
       "✦ Le brouillard se dissipe.",
     );
@@ -2944,7 +2948,7 @@ export class GameTableDO extends DurableObject<Env> {
 
   private async journalInv(charIds: string[], text: string, att: WsAttachment): Promise<void> {
     const visibility = this.invVisibility(charIds);
-    const entry = this.makeJournalEntry("system", att.name ?? null, att.color, text);
+    const entry = this.makeJournalEntry("system", this.actorName(att), att.color, text);
     this.appendJournal(entry, visibility);
     this.broadcastJournal(entry, visibility);
   }
@@ -2959,7 +2963,7 @@ export class GameTableDO extends DurableObject<Env> {
     const name = msg.item.trim();
     const inv = addItem(target.inv, name, msg.qty);
     await this.saveInv(msg.charId, inv);
-    const who = att.role === "mj" ? "Le MJ" : (att.name ?? "Un joueur");
+    const who = att.role === "mj" ? "Le MJ" : this.actorName(att);
     await this.journalInv(
       [msg.charId],
       `✦ ${who} ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${name} à ${target.name}.`,
@@ -3107,7 +3111,7 @@ export class GameTableDO extends DurableObject<Env> {
 
       const entry = this.makeJournalEntry(
         "system",
-        att.name ?? null,
+        this.actorName(att),
         att.color,
         "✦ Combat lancé. Chaque héros lance sa propre initiative.",
       );
@@ -3125,7 +3129,7 @@ export class GameTableDO extends DurableObject<Env> {
       await this.patchState({ mode: "exploration", combat: null });
       const entry = this.makeJournalEntry(
         "system",
-        att.name ?? null,
+        this.actorName(att),
         att.color,
         "✦ Fin du combat.",
       );
@@ -3314,6 +3318,11 @@ export class GameTableDO extends DurableObject<Env> {
   // ── Helpers ───────────────────────────────────────────────────
 
   private journalSeq = 0;
+
+  /** Signature du journal : nom du personnage (RP), sinon nom du compte. */
+  private actorName(att: WsAttachment): string {
+    return att.charName || att.name || "Joueur";
+  }
 
   private makeJournalEntry(
     kind: "say" | "system" | "roll" | "share",

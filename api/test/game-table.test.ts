@@ -178,6 +178,7 @@ async function connect(who: {
   name: string;
   role: "mj" | "player";
   charId?: string;
+  charName?: string;
 }): Promise<TestWs> {
   const stub = tableStub();
   const url = new URL("https://internal/ws");
@@ -186,6 +187,7 @@ async function connect(who: {
   url.searchParams.set("name", who.name);
   url.searchParams.set("role", who.role);
   url.searchParams.set("charId", who.charId ?? "");
+  url.searchParams.set("charName", who.charName ?? "");
   url.searchParams.set("color", "#C0392B");
   const res = await stub.fetch(url.toString(), { headers: { Upgrade: "websocket" } });
   const ws = res.webSocket;
@@ -1067,6 +1069,31 @@ describe("GameTableDO — intégration", () => {
       (m) =>
         (m.patch as { history?: { canRedo?: boolean } } | undefined)?.history?.canRedo === false,
     );
+  });
+
+  it("journal : les messages d'un joueur signent le nom du personnage (pas Discord)", async () => {
+    await setupWorld();
+    // Discord « etheon » ≠ personnage « Kaelith » : le journal doit dire Kaelith.
+    const kaelith = await connect({
+      userId: PLAYER.userId,
+      name: "etheon",
+      role: "player",
+      charId: "pj-1",
+      charName: "Kaelith",
+    });
+    await kaelith.ready();
+
+    kaelith.send({ type: "chat.say", text: "Bonjour la table" });
+    const say = await kaelith.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { kind: string }).kind === "say",
+    );
+    expect((say.entry as { who: string }).who).toBe("Kaelith");
+
+    kaelith.send({ type: "dice.roll", sides: 20, n: 1, mod: 0 });
+    const roll = await kaelith.nextWhere(
+      (m) => m.type === "journal" && (m.entry as { kind: string }).kind === "roll",
+    );
+    expect((roll.entry as { who: string }).who).toBe("Kaelith");
   });
 
   it("keepalive (audit P4) : le DO éveillé répond au battement hb", async () => {

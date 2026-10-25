@@ -190,6 +190,8 @@ app.get("/api/tables/:campaignId/ws", async (c) => {
   wsUrl.searchParams.set("name", userName);
   wsUrl.searchParams.set("role", membership.role);
   wsUrl.searchParams.set("charId", char?.id ?? "");
+  // Nom RP : le journal signe les messages avec le personnage, pas le compte.
+  wsUrl.searchParams.set("charName", char?.name ?? "");
   wsUrl.searchParams.set("color", char?.color ?? "#C0392B");
 
   return stub.fetch(new Request(`https://internal/ws?${wsUrl.searchParams.toString()}`, c.req.raw));
