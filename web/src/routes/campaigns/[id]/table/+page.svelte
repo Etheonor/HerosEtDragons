@@ -3776,7 +3776,7 @@
       class="inv-panel"
     >
         <div class="inv-tab scroll-area" use:scrollArea>
-          {#if invGiveTargets.length === 0}
+          {#if !invOwner}
             <p class="inv-placeholder">Inventaire — aucun personnage visible</p>
           {:else}
             {#if isMj && invCandidates.length > 1}
