@@ -8,10 +8,14 @@
 
 export const DEFAULT_CELL_METERS = 1.5;
 
-/** Distance euclidienne en cases : pixels de surface / taille d'une case. */
+/**
+ * Distance en cases selon la règle D&D 5e (2024, « Playing on a Grid ») :
+ * la diagonale compte comme une case, donc distance de Chebyshev
+ * `max(|dx|, |dy|)` en cases — pas la distance à vol d'oiseau.
+ */
 export function distanceInCells(dxPx: number, dyPx: number, cellPx: number): number {
   if (!(cellPx > 0)) return 0;
-  return Math.hypot(dxPx, dyPx) / cellPx;
+  return Math.max(Math.abs(dxPx), Math.abs(dyPx)) / cellPx;
 }
 
 export function cellsToMeters(cells: number, metersPerCell = DEFAULT_CELL_METERS): number {

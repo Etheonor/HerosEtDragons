@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { cellsToMeters, distanceInCells, formatCells, formatMeters } from "./measure";
 
-describe("distanceInCells", () => {
-  it("convertit des pixels en cases (3-4-5)", () => {
-    expect(distanceInCells(96, 128, 32)).toBeCloseTo(5);
+describe("distanceInCells (règle 5e : diagonale = 1 case)", () => {
+  it("ligne droite : pixels / taille de case", () => {
+    expect(distanceInCells(160, 0, 32)).toBeCloseTo(5);
+    expect(distanceInCells(0, 96, 32)).toBeCloseTo(3);
+  });
+
+  it("diagonale : compte comme une case (Chebyshev, pas Euclide)", () => {
+    // 3 cases × 4 cases : Euclide donnerait 5, la 5e compte 4.
+    expect(distanceInCells(96, 128, 32)).toBeCloseTo(4);
+    // 2×2 cases : 2 cases (et non 2,83).
+    expect(distanceInCells(64, 64, 32)).toBeCloseTo(2);
+  });
+
+  it("angle faible : c'est la plus grande composante qui compte", () => {
+    expect(distanceInCells(320, 32, 32)).toBeCloseTo(10);
   });
 
   it("une case fait 1,50 m", () => {

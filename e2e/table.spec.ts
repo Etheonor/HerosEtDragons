@@ -1709,5 +1709,12 @@ test.describe("Règle (mesure)", () => {
     // Échap efface et quitte l'outil.
     await page.keyboard.press("Escape");
     await expect(page.locator(".measure-svg")).toHaveCount(0);
+
+    // Règle 5e : une diagonale de 15 × 11,25 cases compte 15 cases (Chebyshev),
+    // et non 18,75 comme le ferait un vol d'oiseau.
+    await page.keyboard.press("m");
+    await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.25);
+    await page.mouse.click(box.x + box.width * 0.75, box.y + box.height * 0.75);
+    await expect(page.locator(".measure-total")).toHaveText("15 cases · 22,5 m");
   });
 });

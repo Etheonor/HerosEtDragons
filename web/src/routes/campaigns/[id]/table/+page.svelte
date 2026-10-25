@@ -3717,7 +3717,7 @@
                 <span class="opt-title">Mesurer une distance</span>
                 <span class="opt-hint"
                   >Cliquez pour poser les points · double-clic pour terminer · Échap pour
-                  effacer. 1 case = 1,50 m.</span
+                  effacer. Règle 5e : une diagonale compte comme une case · 1 case = 1,50 m.</span
                 >
                 <div class="opt-row">
                   <button class="ghost-btn" onclick={clearMeasure}>Tout effacer</button>
