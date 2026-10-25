@@ -1309,7 +1309,7 @@
 
   function invAddItem() {
     const name = invItemDraft.trim();
-    if (!name || !invTarget || !isMj) return;
+    if (!name || !invTarget || !canEditInv) return;
     sendWs({ type: 'inv.add', charId: invTarget, item: name, qty: Math.max(1, invQtyDraft | 0) });
     invItemDraft = '';
     invQtyDraft = 1;
@@ -2814,8 +2814,15 @@
     return () => window.removeEventListener('keydown', onWindowKeydown);
   });
 
-  function tokenTitle(c: { name: string; ca: number; pv: number | null; pvMax: number | null }): string {
-    return isMj ? `${c.name} — CA ${c.ca} · PV ${c.pv ?? '–'}/${c.pvMax ?? '–'}` : c.name;
+  function tokenTitle(c: {
+    name: string;
+    ca: number | null;
+    pv: number | null;
+    pvMax: number | null;
+  }): string {
+    return isMj
+      ? `${c.name} — CA ${c.ca ?? '–'} · PV ${c.pv ?? '–'}/${c.pvMax ?? '–'}`
+      : c.name;
   }
 
   /** Taille du pion en px : `tokenScale` × case si la carte est quadrillée,
@@ -3010,7 +3017,7 @@
                 {@const down = c.conditions.some((cond) => DOWN_CONDITIONS.has(cond))}
                 <div
                   class="token {c.kind === 'pnj' ? 'token-pnj' : 'token-pj'} {activeCharId === c.id ? 'token-active' : ''} {pUrl ? 'token-portrait' : ''}"
-                  class:token-dead={hpPct !== null && hpPct <= 0}
+                  class:token-dead={(hpPct !== null && hpPct <= 0) || c.dead}
                   class:token-down={down}
                   style="left: {t.x}%; top: {t.y}%; --token-color: {c.color}; --tok-size: {tokSize}px; width: {tokSize}px; height: {tokSize}px; font-size: {Math.round(tokSize * 0.42)}px;"
                   role="button"
@@ -3830,7 +3837,7 @@
               {/each}
             </ul>
 
-            {#if isMj}
+            {#if canEditInv}
               <div class="inv-add">
                 <input class="inv-input" placeholder="nom de l'objet" bind:value={invItemDraft} onkeydown={(e) => e.key === 'Enter' && invAddItem()} />
                 <input class="inv-input narrow" type="number" min="1" max="9999" bind:value={invQtyDraft} title="quantité" />

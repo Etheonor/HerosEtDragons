@@ -91,7 +91,7 @@ test.describe("Inventaire (R9)", () => {
     await expect(page.locator(".journal-system").last()).toContainText("jette Potion de soin");
   });
 
-  test("le MJ peut ajouter un objet ; un joueur n'a pas le champ", async ({ page, browser }) => {
+  test("le MJ et le propriétaire peuvent ajouter un objet à un sac", async ({ page, browser }) => {
     await openTable(page, MJ);
     await openPanel(page, "inventory");
     await page.locator(".inv-add input").first().fill("Élan");
@@ -103,7 +103,10 @@ test.describe("Inventaire (R9)", () => {
     const p2 = await ctx.newPage();
     await openTable(p2, KAELITH);
     await openPanel(p2, "inventory");
-    await expect(p2.locator(".inv-add")).toHaveCount(0);
+    // Le joueur gère SON sac : le champ d'ajout est là (comme l'ancienne feuille).
+    await p2.locator(".inv-add input").first().fill("Corde");
+    await p2.getByRole("button", { name: "Ajouter", exact: true }).click();
+    await expect(p2.locator(".inv-name", { hasText: "Corde" })).toHaveCount(1);
     await ctx.close();
   });
 
@@ -457,6 +460,22 @@ test.describe("Pions vivants (Lot 3)", () => {
     const plToken = p2.locator(".token", { hasText: "Gobelin" });
     await expect(plToken).toBeVisible();
     await expect(plToken.locator(".token-hp")).toHaveCount(0);
+
+    // Le MJ cible le gobelin : le joueur voit le cadre SANS la CA.
+    await mjToken.click();
+    const plTarget = p2.locator(".target");
+    await expect(plTarget).toContainText("Gobelin");
+    await expect(plTarget).not.toContainText("CA");
+
+    // Le MJ le tue (−5 puis −5) : le pion grise pour les joueurs aussi, sans
+    // révéler ses PV (dead est exposé, pv reste null).
+    for (let i = 0; i < 2; i += 1) {
+      await mjToken.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Points de vie" }).hover();
+      await page.getByRole("menuitem", { name: "-5 PV", exact: true }).click();
+    }
+    await expect(plToken).toHaveClass(/token-dead/);
+    await expect(mjToken).toHaveClass(/token-dead/);
 
     await ctx.close();
   });
@@ -1607,5 +1626,28 @@ test.describe("Avatar — cadrage et upload", () => {
     await page.getByRole("menuitem", { name: "Ouvrir la feuille" }).click();
     await page.locator(".portrait-frame").click();
     await expect(page.getByRole("button", { name: "Importer une image…" })).toBeVisible();
+  });
+});
+
+test.describe("Inventaire (onglet I)", () => {
+  test("le joueur ajoute un objet à son sac ; la feuille ne duplique plus l'inventaire", async ({
+    page,
+  }) => {
+    await openTable(page, KAELITH);
+    await openPanel(page, "inventory");
+    const panel = page.locator(".inv-panel");
+    await expect(panel.locator(".inv-list")).toContainText("Potion de soin");
+
+    await panel.getByPlaceholder("nom de l'objet").fill("Corde");
+    await panel.getByRole("button", { name: "Ajouter", exact: true }).click();
+    await expect(panel.locator(".inv-list")).toContainText("Corde");
+
+    // L'ancien bloc Équipement de la feuille a disparu (l'onglet I fait foi).
+    await page.keyboard.press("i"); // ferme l'inventaire (il masque la palette)
+    await expect(page.locator(".inv-panel")).toHaveCount(0);
+    await page.getByRole("button", { name: "Command palette (Espace)" }).click();
+    await page.locator(".palette-item", { hasText: "Ouvrir ma feuille de personnage" }).click();
+    await expect(page.locator(".journal-panel")).toBeVisible();
+    await expect(page.getByText("Équipement", { exact: true })).toHaveCount(0);
   });
 });

@@ -1109,6 +1109,74 @@ describe("GameTableDO — intégration", () => {
     await player.nextWhere((m) => m.type === "journal");
   });
 
+  it("PNJ masqué (B5) : CA jamais diffusée, dead exposé quand il tombe à 0", async () => {
+    await setupWorld();
+    const mj = await connect(MJ);
+    await mj.ready();
+
+    // Révéler le PNJ : pion sur la carte active, sans brouillard.
+    await d().insert(schema.maps).values({ id: "map-1", campaignId: CAMPAIGN, name: "Salle" });
+    mj.send({ type: "map.select", mapId: "map-1" });
+    await mj.nextWhere((m) => (m.patch as { mapId?: unknown } | undefined)?.mapId !== undefined);
+    mj.send({ type: "token.put", charId: "pnj-1", x: 50, y: 50 });
+    await mj.nextWhere(
+      (m) =>
+        (m.patch as { tokens?: Record<string, unknown> } | undefined)?.tokens?.["pnj-1"] !==
+        undefined,
+    );
+
+    // Le joueur reçoit la carte du PNJ révélé : CA et PV masqués, pas mort.
+    const player = await connect(PLAYER);
+    const snap = await player.next("snapshot");
+    const card = (
+      snap.characters as { id: string; ca: number | null; pv: number | null; dead: boolean }[]
+    ).find((c) => c.id === "pnj-1");
+    expect(card).toBeDefined();
+    expect(card!.ca).toBeNull();
+    expect(card!.pv).toBeNull();
+    expect(card!.dead).toBe(false);
+
+    // Il tombe à 0 : le joueur reçoit dead SANS révéler PV ni CA.
+    mj.send({ type: "char.hp", charId: "pnj-1", delta: -7 });
+    const delta = await player.nextWhere(
+      (m) =>
+        (m.patch as { characters?: Record<string, { dead?: boolean }> } | undefined)?.characters?.[
+          "pnj-1"
+        ]?.dead === true,
+    );
+    const deadCard = (
+      delta.patch as {
+        characters: Record<string, { pv: number | null; ca: number | null; dead: boolean }>;
+      }
+    ).characters["pnj-1"]!;
+    expect(deadCard.pv).toBeNull();
+    expect(deadCard.ca).toBeNull();
+    expect(deadCard.dead).toBe(true);
+  });
+
+  it("inventaire (R9) : un joueur ajoute un objet à son propre sac", async () => {
+    await setupWorld();
+    const kaelith = await connect({ ...PLAYER, charId: "pj-1" });
+    await kaelith.ready();
+
+    kaelith.send({ type: "inv.add", charId: "pj-1", item: "Corde", qty: 2 });
+    const msg = await kaelith.nextWhere((m) => m.type === "inv");
+    const bag = (msg.inventories as Record<string, { items: { name: string; qty: number }[] }>)[
+      "pj-1"
+    ]!;
+    expect(bag.items).toEqual([{ name: "Corde", qty: 2 }]);
+
+    // …mais pas à celui d'un autre.
+    kaelith.send({ type: "inv.add", charId: "pnj-1", item: "Torche", qty: 1 });
+    await new Promise((r) => setTimeout(r, 50));
+    const pnj = await d()
+      .select()
+      .from(schema.characters)
+      .where(eq(schema.characters.id, "pnj-1"))
+      .get();
+    expect((pnj!.inventory as { items: unknown[] }).items).toEqual([]);
+  });
+
   it("handout.set (illustration) : MJ seul, filtré B5 tant que masquée, cleanupImage", async () => {
     await setupWorld();
     const mj = await connect(MJ);

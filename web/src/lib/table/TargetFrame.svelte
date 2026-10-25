@@ -31,7 +31,9 @@
 
   <span class="t-id">
     <span class="t-name">{card.name}</span>
-    <span class="t-sub">{card.kind === 'pnj' ? 'PNJ' : 'PJ'} · CA {card.ca}</span>
+    <span class="t-sub"
+      >{card.kind === 'pnj' ? 'PNJ' : 'PJ'}{card.ca !== null ? ` · CA ${card.ca}` : ''}</span
+    >
   </span>
 
   {#if hp !== null}

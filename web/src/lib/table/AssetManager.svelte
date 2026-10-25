@@ -319,7 +319,7 @@
             </span>
             <span class="asset-name">{c.name}</span>
             <span class="asset-stats">
-              {c.kind === 'pj' ? 'PJ' : 'PNJ'} · CA {c.ca}
+              {c.kind === 'pj' ? 'PJ' : 'PNJ'} · CA {c.ca ?? '—'}
               {#if c.pv !== null && c.pvMax !== null}· PV {c.pv}/{c.pvMax}{/if}
             </span>
             {#if c.sub}<span class="asset-sub">{c.sub}</span>{/if}

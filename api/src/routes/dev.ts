@@ -201,6 +201,22 @@ app.post("/seed", async (c) => {
       })
       .onConflictDoNothing();
   }
+  // Réécriture des fixtures : un test précédent a pu toucher aux PV, au nom ou
+  // à la feuille, et onConflictDoNothing garderait l'ancien état.
+  for (const ch of chars) {
+    await db
+      .update(schema.characters)
+      .set({
+        name: ch.name,
+        color: ch.color,
+        sheet: ch.sheet,
+        pv: ch.sheet.pvMax,
+        pvMax: ch.sheet.pvMax,
+        pvTemp: 0,
+        conditions: [],
+      })
+      .where(and(eq(schema.characters.campaignId, campaign.id), eq(schema.characters.id, ch.id)));
+  }
 
   // Deux cartes : une avec image (pour la grille / le zoom), une quadrillée.
   await db

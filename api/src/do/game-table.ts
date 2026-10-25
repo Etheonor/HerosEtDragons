@@ -437,7 +437,19 @@ export class GameTableDO extends DurableObject<Env> {
         out[id] = null;
         continue;
       }
-      out[id] = isPnj && hidePv ? { ...val, pv: null, pvMax: null } : val;
+      if (isPnj && hidePv) {
+        // B5 : PV et CA masqués, mais `dead` reste exposé — un mob à 0 PV
+        // doit apparaître grisé aux joueurs (sinon il semble en pleine forme).
+        out[id] = {
+          ...val,
+          pv: null,
+          pvMax: null,
+          ca: null,
+          ...(val.pv !== undefined ? { dead: val.pv === 0 } : {}),
+        };
+      } else {
+        out[id] = val;
+      }
     }
     return out;
   }
@@ -489,6 +501,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        dead: ch.pv === 0,
         tokenScale: ch.tokenScale,
       };
     }
@@ -959,6 +972,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: char.pvMax,
       pvTemp: char.pvTemp,
       conditions: char.conditions,
+      dead: char.pv === 0,
       tokenScale: char.tokenScale,
     };
   }
@@ -1424,6 +1438,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: ch.pvMax,
       pvTemp: ch.pvTemp,
       conditions: ch.conditions,
+      dead: ch.pv === 0,
       tokenScale: ch.tokenScale,
     };
     this.broadcastRoleAware({ characters: { [charId]: card } });
@@ -1747,6 +1762,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: pv,
       pvTemp: 0,
       conditions: [],
+      dead: pv === 0,
       tokenScale: 1,
     };
 
@@ -1881,6 +1897,7 @@ export class GameTableDO extends DurableObject<Env> {
         pvMax: tpl.pvMax,
         pvTemp: 0,
         conditions: [...tpl.conditions],
+        dead: tpl.pvMax === 0,
         tokenScale: tpl.tokenScale,
       };
       created.push({
@@ -2324,6 +2341,7 @@ export class GameTableDO extends DurableObject<Env> {
       pvMax: src.pvMax,
       pvTemp: src.pvTemp,
       conditions: [...src.conditions],
+      dead: src.pv === 0,
       tokenScale: src.tokenScale,
     };
 
@@ -2933,14 +2951,18 @@ export class GameTableDO extends DurableObject<Env> {
 
   /** MJ uniquement : conjure / dépose N × un objet dans un sac. */
   private async handleInvAdd(ws: WebSocket, att: WsAttachment, msg: InvAddMsg) {
-    if (att.role !== "mj") return;
+    // MJ, ou propriétaire du sac : le joueur gère son propre inventaire
+    // (comme le faisait l'ancienne feuille ; l'onglet I remplace celle-ci).
+    if (att.role !== "mj" && msg.charId !== att.charId) return;
     const target = await this.loadInv(msg.charId);
     if (!target) return;
-    const inv = addItem(target.inv, msg.item.trim(), msg.qty);
+    const name = msg.item.trim();
+    const inv = addItem(target.inv, name, msg.qty);
     await this.saveInv(msg.charId, inv);
+    const who = att.role === "mj" ? "Le MJ" : (att.name ?? "Un joueur");
     await this.journalInv(
       [msg.charId],
-      `✦ Le MJ ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${msg.item.trim()} à ${target.name}.`,
+      `✦ ${who} ajoute ${msg.qty > 1 ? `${msg.qty} × ` : ""}${name} à ${target.name}.`,
       att,
     );
     await this.broadcastInventories();
@@ -3473,16 +3495,17 @@ export class GameTableDO extends DurableObject<Env> {
         color: ch.color,
         active: ch.active,
         portrait: ch.sheet.portrait ?? null,
-        ca: ch.sheet.ca,
         sub:
           ch.kind === "pj"
             ? `${ch.sheet.identite.race} ${ch.sheet.identite.classe} niv. ${ch.sheet.identite.niveau}`
             : "",
         initiativeBonus: ch.sheet.initiativeBonus,
+        ca: hidePv && ch.kind === "pnj" ? null : ch.sheet.ca,
         pv: hidePv && ch.kind === "pnj" ? null : ch.pv,
         pvMax: hidePv && ch.kind === "pnj" ? null : ch.pvMax,
         pvTemp: ch.pvTemp,
         conditions: ch.conditions,
+        dead: ch.pv === 0,
         tokenScale: ch.tokenScale,
       }));
 

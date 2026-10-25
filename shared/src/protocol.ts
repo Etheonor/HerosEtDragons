@@ -154,7 +154,8 @@ export interface CharacterCard {
   active: boolean;
   /** clé "<Race>/<CODE>" d'un portrait (voir tools/portraits), null = pas de portrait. */
   portrait: string | null;
-  ca: number;
+  /** CA ; null = masquée par le serveur (PNJ non visualisé par un joueur). */
+  ca: number | null;
   sub: string;
   initiativeBonus: number;
   /** null = PV masqués par le serveur (PNJ quand pnjPvVisible=false, vue joueur). */
@@ -162,6 +163,9 @@ export interface CharacterCard {
   pvMax: number | null;
   pvTemp: number;
   conditions: string[];
+  /** À 0 PV. Exposé même quand les PV sont masqués : un mob mort se voit
+   *  grisé sur la carte pour tout le monde (sans révéler son total). */
+  dead: boolean;
   /** Taille du pion en cases (multiplicateur de gridSize), 1 = une case. */
   tokenScale: number;
 }

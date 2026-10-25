@@ -94,7 +94,9 @@
       {#if down}
         <span class="gf-chip">à terre</span>
       {:else}
-        <span class="gf-sub">{card.kind === 'pnj' ? `CA ${card.ca}` : card.sub}</span>
+        <span class="gf-sub"
+          >{card.kind === 'pnj' ? (card.ca !== null ? `CA ${card.ca}` : 'PNJ') : card.sub}</span
+        >
       {/if}
     </span>
 
