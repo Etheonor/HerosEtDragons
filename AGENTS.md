@@ -161,6 +161,12 @@ plafond de reconnexion). Il reste :
 - Formatage et lint automatiques : `oxfmt` et `oxlint`. Ne jamais committer sans
   `pnpm check` vert.
 - Ne pas committer sans demande explicite de l'utilisateur.
+- **Flux de travail par PR** : toute brique part d'une branche dédiée
+  (`feat/…`, `fix/…`, `chore/…`) et arrive sur `main` par une **pull request** —
+  c'est le support de validation du travail par le propriétaire. La CI
+  (`.github/workflows/ci.yml` : jobs `check` et `e2e`) doit être verte avant
+  relecture ; `main` = prod (Workers Builds déploie à chaque push sur `main`,
+  et nulle part ailleurs). Ne jamais pousser directement sur `main`.
 
 ## 9. Leçons / pièges connus
 
