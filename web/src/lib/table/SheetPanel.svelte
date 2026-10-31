@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type CharacterDetail } from '$lib/api';
   import { tableStore, sendWs } from '$lib/ws.svelte';
+  import type { ParsedDice } from '@rollwith/shared/dice';
   import CharacterSheet from '$lib/components/CharacterSheet.svelte';
   import Skeleton from '$lib/ds/Skeleton.svelte';
 
@@ -57,6 +58,10 @@
   function onRoll(mod: number, label: string) {
     sendWs({ type: 'dice.roll', sides: 20, n: 1, mod, label });
   }
+
+  function onRollDice(parsed: ParsedDice, label: string) {
+    sendWs({ type: 'dice.roll', sides: parsed.sides, n: parsed.n, mod: parsed.mod, drop: parsed.drop, label });
+  }
 </script>
 
 {#if loading}
@@ -68,7 +73,7 @@
 {:else if error}
   <div class="sheet-state"><p class="error">{error}</p></div>
 {:else if char}
-  <CharacterSheet {char} {onRoll} {onPvDelta} embedded />
+  <CharacterSheet {char} {onRoll} {onRollDice} {onPvDelta} embedded />
 {/if}
 
 <style>
