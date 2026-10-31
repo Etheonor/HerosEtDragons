@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: pnpm check (lint, types, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm d'abord : setup-node en a besoin pour `cache: pnpm`.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `shared/dist` est gitignoré : api/ et web/ importent le domaine via ce
+      # dossier, il doit exister avant tout typecheck (AGENTS.md §3).
+      - run: pnpm --filter shared build
+
+      - run: pnpm check
+
+  e2e:
+    name: e2e Playwright (wrangler dev + navigateur)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+
+      # Le mode dev (bypass auth pour l'e2e et les seeds) exige DEV_AUTH=1 ;
+      # .dev.vars est gitignoré, on en pose un minimal. Les secrets Discord ne
+      # servent pas : better-auth n'est initialisé qu'à la demande (createAuth).
+      - run: |
+          echo 'DEV_AUTH=1' > .dev.vars
+          echo 'BETTER_AUTH_SECRET=ci-local-secret' >> .dev.vars
+
+      # Clone frais = D1 local vide : appliquer les migrations avant que
+      # `wrangler dev` ne serve l'API (le seed crée les lignes, pas le schéma).
+      - run: pnpm db:migrate
+
+      # Construit `shared` puis `web`, démarre `wrangler dev` sur :8787 et
+      # rejoue la suite complète (scripts/e2e.mjs + playwright.config.ts).
+      - run: pnpm e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
