@@ -1098,6 +1098,25 @@ test.describe("Fiche en panneau (Lot 7)", () => {
     // Le propriétaire édite : les valeurs éditables sont rendues.
     await expect(fiche.locator(".ed").first()).toBeVisible();
   });
+
+  test("la fiche lance les dégâts d'une arme au journal de la table", async ({ page }) => {
+    await openTable(page, KAELITH);
+    await page.getByRole("button", { name: "Command palette (Espace)" }).click();
+    await page.getByPlaceholder(/rechercher une action/i).fill("feuille");
+    await page.locator(".palette-item", { hasText: "Ouvrir ma feuille de personnage" }).click();
+
+    const fiche = page.locator(".panel-surface", { hasText: "Feuille de personnage" });
+    await expect(fiche).toBeVisible();
+
+    await fiche.getByRole("button", { name: /Lancer les dégâts/ }).click();
+
+    // Un seul jet part (le clic sur le bouton ne déclenche pas l'attaque de
+    // la ligne), et la carte de jet est signée avec l'expression de dégâts.
+    const rolls = page.locator(".journal-entry.entry-roll");
+    await expect(rolls).toHaveCount(1);
+    await expect(rolls.first()).toContainText("Dégâts — Épée longue");
+    await expect(rolls.first().locator(".roll-detail")).toContainText("+");
+  });
 });
 
 test.describe("Compendium par-dessus la table (Lot 7)", () => {

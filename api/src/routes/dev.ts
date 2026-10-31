@@ -160,6 +160,7 @@ app.post("/seed", async (c) => {
         identite: { nom: "Kaelith", race: "Elfe", classe: "Rôdeuse", niveau: 5 },
         pvMax: 45,
         ca: 16,
+        attaques: [{ id: "atk-epee", name: "Épée longue", bonus: 7, damage: "1d8+3" }],
       }),
     },
     {

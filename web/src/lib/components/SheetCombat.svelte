@@ -11,8 +11,10 @@
     spellMatchesClass,
   } from '$lib/char-utils';
   import { ARMOR_KINDS, ARMOR_KIND_LABELS, type ArmorKind, type SheetArmor, type CharacterSheet } from '$lib/api';
+  import { parseDiceCommand, type ParsedDice } from '@rollwith/shared/dice';
   import { cantripsFor, findClass } from '@rollwith/shared/hd';
   import { api } from '$lib/api';
+  import { ICONS } from '$lib/ds/icons';
   import BlockLabel from '$lib/ds/BlockLabel.svelte';
   import Editable from '$lib/ds/Editable.svelte';
 
@@ -21,6 +23,7 @@
     readonly,
     touch,
     onRoll,
+    onRollDice,
     onPvDelta,
     charId,
     campaignId,
@@ -38,6 +41,7 @@
     readonly: boolean;
     touch: () => void;
     onRoll?: (mod: number, label: string) => void;
+    onRollDice?: (parsed: ParsedDice, label: string) => void;
     onPvDelta?: (delta: number) => void;
     charId: string;
     campaignId: string;
@@ -68,6 +72,17 @@
   function onAttackClick(atkId: string) {
     const atk = sheet.attaques.find((a) => a.id === atkId);
     if (atk && onRoll) onRoll(Number(atk.bonus) || 0, `Attaque — ${atk.name}`);
+  }
+
+  function damageExpr(atk: (typeof sheet.attaques)[number]): ParsedDice | null {
+    return parseDiceCommand(String(atk.damage ?? ''));
+  }
+
+  function onDamageRollClick(e: MouseEvent, atk: (typeof sheet.attaques)[number]) {
+    e.stopPropagation();
+    if (!onRollDice) return;
+    const parsed = damageExpr(atk);
+    if (parsed) onRollDice(parsed, `Dégâts — ${atk.name}`);
   }
   function adjustPv(delta: number) {
     if (readonly || !onPvDelta) return;
@@ -453,7 +468,16 @@
       <div class="attack-row" onclick={() => onAttackClick(atk.id)} title="Cliquez pour lancer l'attaque">
         <span class="atk-name"><Editable {readonly} w={130} value={atk.name} onchange={(v) => (atk.name = String(v))} oncommit={touch} ontype={touch} /></span>
         <span class="atk-bonus"><Editable {readonly} type="number" min={-5} max={30} align="center" w={38} className="ed-accent" value={atk.bonus} onchange={(v) => (atk.bonus = Number(v))} oncommit={() => { atk.bonus = num(atk.bonus, -5, 30, 0); touch(); }} ontype={touch} /></span>
-        <span class="atk-dmg"><Editable {readonly} w={90} value={atk.damage} onchange={(v) => (atk.damage = String(v))} oncommit={touch} ontype={touch} /></span>
+        <span class="atk-dmg">
+          <Editable {readonly} w={90} value={atk.damage} onchange={(v) => (atk.damage = String(v))} oncommit={touch} ontype={touch} />
+          {#if onRollDice && damageExpr(atk)}
+            <button
+              class="atk-dmg-roll"
+              title="Lancer les dégâts ({atk.damage})"
+              onclick={(e) => onDamageRollClick(e, atk)}
+            ><ICONS.dice size={12} strokeWidth={2} aria-hidden="true" /></button>
+          {/if}
+        </span>
         {#if !readonly}
           <button class="row-x" title="Retirer cette attaque" onclick={(e) => { e.stopPropagation(); removeAttack(atk.id); }}>✕</button>
         {/if}
@@ -753,7 +777,17 @@
   }
   .atk-name { font-weight: 600; min-width: 0; }
   .atk-bonus { font-size: 12.5px; color: var(--accent-text); }
-  .atk-dmg { font-size: 12px; color: var(--text); }
+  .atk-dmg { font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 4px; }
+  .atk-dmg-roll {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px;
+    border: none;
+    background: none;
+    color: var(--text-3);
+    cursor: pointer;
+  }
+  .atk-dmg-roll:hover { color: var(--accent-text); }
 
   .armors-block { border-radius: var(--sketchy-5); }
   .armors-header {

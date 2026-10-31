@@ -23,6 +23,7 @@
   } from '@rollwith/shared/hd';
   import { applyLevelUp } from '@rollwith/shared/level-up';
   import { normalizeSheet } from '@rollwith/shared/sheet';
+  import type { ParsedDice } from '@rollwith/shared/dice';
   import { xpThreshold } from '$shared/rules';
   import ChoicePicker, { type ChoiceOption } from '$lib/components/ChoicePicker.svelte';
   import { bonusRacialText, classSummary, CARAC_LABELS_SHORT } from '$lib/hd-text';
@@ -35,11 +36,13 @@
   let {
     char,
     onRoll,
+    onRollDice,
     onPvDelta,
     embedded = false,
   }: {
     char: CharacterDetail;
     onRoll?: (mod: number, label: string) => void;
+    onRollDice?: (parsed: ParsedDice, label: string) => void;
     onPvDelta?: (delta: number) => void;
     embedded?: boolean;
   } = $props();
@@ -498,6 +501,7 @@
       {readonly}
       {touch}
       {onRoll}
+      {onRollDice}
       {onPvDelta}
       charId={char.id}
       campaignId={char.campaignId}

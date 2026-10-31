@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { api, type CharacterDetail } from '$lib/api';
   import { tableStore, connectWs, disconnectWs, sendWs, type TableStore } from '$lib/ws.svelte';
+  import type { ParsedDice } from '@rollwith/shared/dice';
   import CharacterSheet from '$lib/components/CharacterSheet.svelte';
   import DiceOverlay from '$lib/components/DiceOverlay.svelte';
   import Skeleton from '$lib/ds/Skeleton.svelte';
@@ -61,6 +62,10 @@
     sendWs({ type: 'dice.roll', sides: 20, n: 1, mod, label });
   }
 
+  function onRollDice(parsed: ParsedDice, label: string) {
+    sendWs({ type: 'dice.roll', sides: parsed.sides, n: parsed.n, mod: parsed.mod, drop: parsed.drop, label });
+  }
+
   function onPvDelta(delta: number) {
     if (!char) return;
     sendWs({ type: 'char.hp', charId: char.id, delta });
@@ -85,7 +90,7 @@
 {:else if error}
   <div class="center"><p class="error">{error}</p></div>
 {:else if char}
-  <CharacterSheet {char} {onRoll} {onPvDelta} />
+  <CharacterSheet {char} {onRoll} {onRollDice} {onPvDelta} />
   <DiceOverlay anim={store?.diceAnim ?? null} />
 {/if}
 
