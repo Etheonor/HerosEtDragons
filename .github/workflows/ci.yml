@@ -29,7 +29,10 @@ jobs:
 
       # `shared/dist` est gitignoré : api/ et web/ importent le domaine via ce
       # dossier, il doit exister avant tout typecheck (AGENTS.md §3).
-      - run: pnpm --filter shared build
+      # `web/build` l'est aussi : les tests d'intégration du DO lisent le
+      # wrangler.jsonc (assets.directory) via vitest-pool-workers — il exige
+      # que le répertoire existe. Ce script construit l'un puis l'autre.
+      - run: node scripts/web-build.mjs
 
       - run: pnpm check
 
@@ -60,6 +63,14 @@ jobs:
       # Clone frais = D1 local vide : appliquer les migrations avant que
       # `wrangler dev` ne serve l'API (le seed crée les lignes, pas le schéma).
       - run: pnpm db:migrate
+
+      # Le compendium e2e parcourt les 1 500+ fiches du DRS : un clone frais
+      # n'a aucune donnée. Cloner le DRS public et l'ingérer en local (les
+      # fixtures e2e n'en créent aucune).
+      - name: Ingestion du compendium DRS
+        run: |
+          git clone --depth 1 https://github.com/igwane/heros-et-dragons-drs "$RUNNER_TEMP/drs"
+          pnpm ingest -- --apply --local --drs "$RUNNER_TEMP/drs/docs"
 
       # Construit `shared` puis `web`, démarre `wrangler dev` sur :8787 et
       # rejoue la suite complète (scripts/e2e.mjs + playwright.config.ts).
