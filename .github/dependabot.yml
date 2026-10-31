@@ -10,6 +10,14 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 10
+    ignore:
+      # 0.13+ exige vitest ^4 en peer : à remonter dans une PR dédiée
+      # (vitest 3→4 + pool-workers ensemble), pas via le groupe hebdo.
+      - dependency-name: "@cloudflare/vitest-pool-workers"
+      # TS 7 = compilateur natif : migration dédiée, les majeures ne se
+      # proposent pas (PR #10 fermée pour ce motif).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       versions-mineures-et-patchs:
         update-types:
