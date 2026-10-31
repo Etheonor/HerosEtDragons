@@ -53,6 +53,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
 
+      # Les parsers de l'ingestion importent @rollwith/shared → dist (gitignoré).
+      - run: pnpm --filter shared build
+
       # Le mode dev (bypass auth pour l'e2e et les seeds) exige DEV_AUTH=1 ;
       # .dev.vars est gitignoré, on en pose un minimal. Les secrets Discord ne
       # servent pas : better-auth n'est initialisé qu'à la demande (createAuth).
