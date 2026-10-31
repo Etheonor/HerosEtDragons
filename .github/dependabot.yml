@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Dépendances JS/TS — le lockfile pnpm est unique et vit à la racine
+  # (workspaces : api, web, shared, tools/ingest). Groupes mineur+patch
+  # pour une seule PR par semaine au lieu d'une par paquet.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      versions-mineures-et-patchs:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    labels:
+      - dependencies
+
+  # Versions des actions GitHub (checkout, setup-node, pnpm…) — couvre
+  # notamment la dépréciation Node 20 des @v4 (annotation des runs CI).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencies
